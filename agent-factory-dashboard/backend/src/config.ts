@@ -1,0 +1,34 @@
+import path from 'path';
+
+export interface AppConfig {
+  port: number;
+  wsPort: number;
+  workspaceRoot: string;
+  hermesConfigPath: string;
+  artifactMaxBytes: number;
+  pollIntervalMs: number;
+  corsOrigin: string;
+  enableControl: boolean;
+  projectsRegistryPath: string;
+  allowProjectPaths: string[];
+}
+
+export function loadAppConfig(): AppConfig {
+  const workspaceRoot = process.env.AGENT_FACTORY_WORKSPACE || '/Users/hill/open5gs';
+  const projectsRegistryPath = process.env.AGENT_FACTORY_PROJECTS_REGISTRY || path.join(workspaceRoot, '.ai-agent', 'registry', 'projects.json');
+  const allowedRootsStr = process.env.AGENT_FACTORY_ALLOWED_PROJECT_ROOTS || `/Users/hill,/Users/hill/Desktop,${workspaceRoot}`;
+  const allowProjectPaths = allowedRootsStr.split(',').map((p) => p.trim()).filter(Boolean);
+  
+  return {
+    port: parseInt(process.env.PORT || '3011', 10),
+    wsPort: parseInt(process.env.WS_PORT || '3012', 10),
+    workspaceRoot,
+    hermesConfigPath: process.env.HERMES_CONFIG_PATH || '/Users/hill/.hermes/config.yaml',
+    artifactMaxBytes: parseInt(process.env.AGENT_FACTORY_ARTIFACT_MAX_BYTES || '100000', 10),
+    pollIntervalMs: parseInt(process.env.AGENT_FACTORY_POLL_INTERVAL_MS || '3000', 10),
+    corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5175',
+    enableControl: process.env.AGENT_FACTORY_ENABLE_CONTROL === 'true', // 默认为 false，纯只读监控
+    projectsRegistryPath,
+    allowProjectPaths,
+  };
+}

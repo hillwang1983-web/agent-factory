@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "hermes_bin": "hermes",
+  "default_cwd": "/Users/hill/open5gs",
+  "default_toolsets": "hermes-cli",
+  "default_model": "",
+  "agents": {
+    "requirement-analyst": {
+      "description": "Analyse ADU scope, identify boundaries, clarify acceptance criteria, and flag risks.",
+      "prompt": ".ai-agent/prompts/requirement-analyst-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "context-pack": {
+      "description": "Generate shared context and code/test map for an ADU.",
+      "prompt": ".ai-agent/prompts/context-pack-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "detail-designer": {
+      "description": "Produce actionable detailed design based on requirement analysis and code context.",
+      "prompt": ".ai-agent/prompts/detail-designer-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "contract": {
+      "description": "Create or refine ADU contract and acceptance assertions.",
+      "prompt": ".ai-agent/prompts/contract-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "testwriter": {
+      "description": "Write failing tests or validation scripts before implementation.",
+      "prompt": ".ai-agent/prompts/testwriter-agent.md",
+      "worktree": true,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli", "--worktree"]
+    },
+    "developer": {
+      "description": "Implement the minimal code needed to satisfy the contract and tests.",
+      "prompt": ".ai-agent/prompts/developer-agent.md",
+      "worktree": true,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli", "--worktree"]
+    },
+    "buildfix-debugger": {
+      "description": "Run validation, diagnose failure, and apply minimal debug fixes.",
+      "prompt": ".ai-agent/prompts/buildfix-debugger-agent.md",
+      "worktree": true,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli", "--worktree"]
+    },
+    "evidence": {
+      "description": "Collect evidence bundle and decide whether MVP debug can start.",
+      "prompt": ".ai-agent/prompts/evidence-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "code-reviewer": {
+      "description": "Review developer changes against approved analysis, detailed design, hard contract, tests, security boundaries, and maintainability rules.",
+      "prompt": ".ai-agent/prompts/code-reviewer-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "acceptance-reviewer": {
+      "description": "Verify final implementation against hard contract and approved requirement/design before evidence is created.",
+      "prompt": ".ai-agent/prompts/acceptance-reviewer-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "project-profiler": {
+      "description": "Analyze a local Git repository and generate a generic project profile plus project knowledge pack.",
+      "prompt": ".ai-agent/prompts/project-profiler-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    }
+  }
+}

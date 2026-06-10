@@ -1,0 +1,32 @@
+{
+  "name": "agent-factory-dashboard-backend",
+  "version": "1.0.0",
+  "description": "Standalone Backend for Agent Factory Dashboard",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsnd --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test:project-adu": "node tools/test-project-adu.js",
+    "test:review-gate": "node tools/test-review-gate.js",
+    "test:quality-gates": "node tools/test-quality-gates.js",
+    "test:onboarding": "node tools/test-project-onboarding.js"
+  },
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "pino": "^9.0.0",
+    "ws": "^8.16.0",
+    "yaml": "^2.3.4"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.24",
+    "@types/ws": "^8.5.10",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  }
+}

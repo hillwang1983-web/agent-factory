@@ -1,0 +1,71 @@
+import express from 'express';
+import cors from 'cors';
+import compression from 'compression';
+import pino from 'pino';
+import { loadAppConfig } from './config';
+import { FileAgentFactoryRepository } from './infrastructure/file-agent-factory-repository';
+import { AgentFactoryMonitorUseCase } from './application/agent-factory-monitor';
+import { createAgentFactoryRouter } from './interfaces/agent-factory-controller';
+import { initializeWebSocketServer } from './websocket/broadcaster';
+import { FileProjectRepository } from './infrastructure/file-project-repository';
+import { ProjectOnboardingUseCase } from './application/project-onboarding';
+
+async function main() {
+  const config = loadAppConfig();
+
+  const logger = pino({
+    level: 'info',
+  });
+
+  logger.info({ config }, 'Starting Standalone Agent Factory Dashboard Backend');
+
+  const repo = new FileAgentFactoryRepository(config.workspaceRoot, config.artifactMaxBytes, logger);
+  const monitor = new AgentFactoryMonitorUseCase(repo);
+
+  const projectRepo = new FileProjectRepository(config.projectsRegistryPath, config.workspaceRoot, config.allowProjectPaths, logger);
+  const projectOnboarding = new ProjectOnboardingUseCase(projectRepo, config.workspaceRoot, logger);
+
+  // Initialize WS Broadcaster
+  initializeWebSocketServer(config.wsPort, monitor, config.pollIntervalMs, logger);
+
+  const app = express();
+
+  app.use(cors({
+    origin: config.corsOrigin,
+    credentials: true,
+  }));
+  app.use(compression());
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  // Basic health check
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      status: 'ok',
+      time: new Date().toISOString(),
+      workspace: config.workspaceRoot,
+      controlEnabled: config.enableControl,
+    });
+  });
+
+  // Mount routes
+  app.use('/api/agent-factory', createAgentFactoryRouter(monitor, projectOnboarding, projectRepo, repo, logger));
+
+  // Error handling middleware
+  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    logger.error({ err }, 'Unhandled request error encountered');
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+    });
+  });
+
+  app.listen(config.port, '0.0.0.0', () => {
+    logger.info({ port: config.port }, 'HTTP Server running');
+  });
+}
+
+main().catch((err) => {
+  console.error('Fatal backend execution error:', err);
+  process.exit(1);
+});

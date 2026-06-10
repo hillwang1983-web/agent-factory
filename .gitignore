@@ -1,0 +1,73 @@
+# ── 独立 git 仓库，不并入本仓库 ─────────────────────────────────────────────
+open5gs/
+UERANSIM/
+open5gs-nms/
+kamailio/
+
+# ── ADU 运行时产物（每次流水线运行自动生成，不纳入版本管理）────────────────
+.ai-agent/registry/adu.json
+.ai-agent/registry/runs.json
+.ai-agent/registry/reviews.json
+.ai-agent/registry/projects.json
+.ai-agent/registry/token-budget.json
+.ai-agent/registry/artifact-edits.json
+
+# ── Agent 生成的文档 / 证据（输出物，非源代码）───────────────────────────────
+.ai-agent/analysis/
+.ai-agent/designs/
+.ai-agent/contracts/
+.ai-agent/context-packs/
+.ai-agent/evidence/
+.ai-agent/acceptance/
+.ai-agent/reviews/
+.ai-agent/runs/
+.ai-agent/locks/
+
+# ── 测试临时注册表 ────────────────────────────────────────────────────────────
+.ai-agent-test/
+
+# ── 回归报告（CI 输出，非源代码）─────────────────────────────────────────────
+regression_reports/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# ── Node.js / TypeScript ─────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.vite/
+
+# ── 环境变量与密钥 ────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+$AUTH_DB_PATH
+
+# ── 日志 ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS / 编辑器 ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── 根目录其他项目的报告文件（与 Agent Factory 无关）─────────────────────────
+5glan_*.md
+dnn_adaptive_*.md
+r4_option*.md
+test_broadcast.py
+test_igmp.py
+open5gs_control_point_requirements.md

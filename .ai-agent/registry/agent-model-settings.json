@@ -1,0 +1,46 @@
+{
+  "requirement-analyst": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "context-pack": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
+  },
+  "detail-designer": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "contract": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
+  },
+  "testwriter": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "developer": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "buildfix-debugger": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "evidence": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
+  },
+  "code-reviewer": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "acceptance-reviewer": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "project-profiler": {
+    "provider": "vertexai",
+    "model": "google/gemini-3.1-pro-preview"
+  }
+}
