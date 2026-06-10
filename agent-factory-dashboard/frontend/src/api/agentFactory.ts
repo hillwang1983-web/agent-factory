@@ -306,4 +306,32 @@ export const agentFactoryApi = {
       throw new Error(data.error || 'Failed to disable project');
     }
   },
+
+  async createIntakeDraft(projectId: string, formData: FormData): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/projects/${projectId}/intake-drafts`, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  async generateIntakeDraft(draftId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}/generate`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  async getIntakeDraft(draftId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  async updateIntakeDraft(draftId: string, updates: any): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  async registerIntakeDraft(draftId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}/register-adu`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
 };

@@ -44,6 +44,11 @@ interface AgentFactoryState {
   approveReview: (aduId: string, gate: 'analysis' | 'design', comment?: string) => Promise<void>;
   requestReviewRework: (aduId: string, gate: 'analysis' | 'design', comment: string) => Promise<void>;
   runNextStep: (aduId: string) => Promise<void>;
+  createIntakeDraft: (projectId: string, formData: FormData) => Promise<any>;
+  generateIntakeDraft: (draftId: string) => Promise<any>;
+  getIntakeDraft: (draftId: string) => Promise<any>;
+  updateIntakeDraft: (draftId: string, updates: any) => Promise<any>;
+  registerIntakeDraft: (draftId: string) => Promise<any>;
 }
 
 export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
@@ -336,6 +341,22 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
     // preventing the single-step button from briefly re-enabling during the window
     // between the API response and the next scheduled store refresh.
     await get().refresh();
+  },
+
+  createIntakeDraft: async (projectId, formData) => {
+    return await agentFactoryApi.createIntakeDraft(projectId, formData);
+  },
+  generateIntakeDraft: async (draftId) => {
+    return await agentFactoryApi.generateIntakeDraft(draftId);
+  },
+  getIntakeDraft: async (draftId) => {
+    return await agentFactoryApi.getIntakeDraft(draftId);
+  },
+  updateIntakeDraft: async (draftId, updates) => {
+    return await agentFactoryApi.updateIntakeDraft(draftId, updates);
+  },
+  registerIntakeDraft: async (draftId) => {
+    return await agentFactoryApi.registerIntakeDraft(draftId);
   },
 
   loadQualityReports: async (aduId) => {
