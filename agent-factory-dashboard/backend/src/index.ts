@@ -9,6 +9,8 @@ import { createAgentFactoryRouter } from './interfaces/agent-factory-controller'
 import { initializeWebSocketServer } from './websocket/broadcaster';
 import { FileProjectRepository } from './infrastructure/file-project-repository';
 import { ProjectOnboardingUseCase } from './application/project-onboarding';
+import { ProjectAduFactory } from './application/project-adu-factory';
+import { AduIntake } from './application/adu-intake';
 
 async function main() {
   const config = loadAppConfig();
@@ -24,6 +26,9 @@ async function main() {
 
   const projectRepo = new FileProjectRepository(config.projectsRegistryPath, config.workspaceRoot, config.allowProjectPaths, logger);
   const projectOnboarding = new ProjectOnboardingUseCase(projectRepo, config.workspaceRoot, logger);
+
+  const aduFactory = new ProjectAduFactory(projectRepo, repo);
+  const aduIntake = new AduIntake(projectRepo, aduFactory, config.workspaceRoot);
 
   // Initialize WS Broadcaster
   initializeWebSocketServer(config.wsPort, monitor, config.pollIntervalMs, logger);
@@ -49,7 +54,7 @@ async function main() {
   });
 
   // Mount routes
-  app.use('/api/agent-factory', createAgentFactoryRouter(monitor, projectOnboarding, projectRepo, repo, logger));
+  app.use('/api/agent-factory', createAgentFactoryRouter(monitor, projectOnboarding, projectRepo, repo, logger, aduIntake));
 
   // Error handling middleware
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

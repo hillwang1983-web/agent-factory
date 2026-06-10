@@ -24,6 +24,8 @@ function asyncHandler(
 import { ProjectRepository } from '../domain/project-repository';
 import { AgentFactoryRepository } from '../domain/agent-factory-repository';
 import { ProjectAduFactory } from '../application/project-adu-factory';
+import { AduIntake } from '../application/adu-intake';
+import multer from 'multer';
 
 export function createAgentFactoryRouter(
   monitor: AgentFactoryMonitorUseCase,
@@ -31,8 +33,10 @@ export function createAgentFactoryRouter(
   projectRepository: ProjectRepository,
   agentFactoryRepository: AgentFactoryRepository,
   logger: Logger,
+  aduIntake: AduIntake
 ): Router {
   const router = Router();
+  const upload = multer({ dest: '/tmp/' });
 
   const resolveWorkspaceRootOverride = async (aduId?: string): Promise<string | undefined> => {
     if (!aduId) return undefined;
@@ -1201,6 +1205,49 @@ export function createAgentFactoryRouter(
       logger.error({ err, path: filePath }, 'AgentFactory: saveEditableArtifactContent error');
       res.status(500).json({ success: false, error: 'Internal server error' });
     }
+  }));
+
+  // --- ADU Intake Drafts ---
+
+  router.post('/projects/:projectId/intake-drafts', requireControl, upload.array('files', 8), asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const result = await aduIntake.createDraft(
+        req.params.projectId,
+        req.body.rawText || '',
+        req.body.userHints || '',
+        req.body.requirementType || 'feature',
+        (req.files as Express.Multer.File[]) || []
+      );
+      res.status(201).json({ draft: result });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  }));
+
+  router.post('/intake-drafts/:draftId/generate', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    try {
+      await aduIntake.generateDraft(req.params.draftId);
+      res.json({ success: true, status: 'generating' });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  }));
+
+  router.get('/intake-drafts/:draftId', asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const result = await aduIntake.getDraft(req.params.draftId);
+      res.json(result);
+    } catch (e: any) { res.status(404).json({ error: e.message }); }
+  }));
+
+  router.put('/intake-drafts/:draftId', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const result = await aduIntake.updateDraft(req.params.draftId, req.body);
+      res.json({ success: true, draft: result });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  }));
+
+  router.post('/intake-drafts/:draftId/register-adu', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const result = await aduIntake.registerDraft(req.params.draftId);
+      res.json({ success: true, adu: { id: result.adu_id } });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
   }));
 
   return router;
