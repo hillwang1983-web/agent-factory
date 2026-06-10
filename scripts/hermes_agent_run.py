@@ -144,17 +144,78 @@ def extract_json_result(text):
     return None
 
 
+def handle_intake_draft(args, root, registry):
+    draft_id = args.intake_draft
+    intake_dir = root / ".ai-agent" / "intake" / draft_id
+    
+    with open(intake_dir / "raw-input.json") as f:
+        raw_input = json.load(f)
+    
+    # Assuming raw_input has keys like type, text, hints, etc.
+    # Load project info if possible
+    project_repo_path = root
+    
+    project_profile = load_project_profile(project_repo_path)
+    knowledge_pack = load_knowledge_pack(project_repo_path)
+    
+    prompt_path = root / ".ai-agent" / "prompts" / "adu-intake-agent.md"
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    
+    # Fill placeholders
+    prompt = prompt_text.replace("{PROJECT_PROFILE}", json.dumps(project_profile, indent=2))
+    prompt = prompt.replace("{KNOWLEDGE_PACK}", json.dumps(knowledge_pack, indent=2))
+    prompt = prompt.replace("{REQUIREMENT_TYPE}", raw_input.get("type", "feature"))
+    prompt = prompt.replace("{RAW_TEXT}", raw_input.get("text", ""))
+    prompt = prompt.replace("{USER_HINTS}", raw_input.get("hints", ""))
+    prompt = prompt.replace("{UPLOADED_FILES_CONTENT}", raw_input.get("files_content", ""))
+    prompt = prompt.replace("{DRAFT_ID}", draft_id)
+    
+    # Call hermes
+    agents = load_json(registry / "agents.json")
+    cmd = [agents.get("hermes_bin", "hermes")]
+    cmd.extend(agents.get("agents", {}).get("adu-intake-agent", {}).get("hermes_args", []))
+    cmd.extend(["-z", prompt])
+    
+    proc = subprocess.run(
+        cmd,
+        cwd=str(project_repo_path),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    
+    if proc.returncode != 0:
+        print(f"Hermes failed: {proc.stderr}")
+        sys.exit(1)
+        
+    result = extract_json_result(proc.stdout)
+    if not result:
+        print("Failed to parse JSON result from Hermes")
+        sys.exit(1)
+        
+    # Write files
+    (intake_dir / "draft.json").write_text(json.dumps(result["draft_content"], indent=2, ensure_ascii=False), encoding="utf-8")
+    (intake_dir / "intake-report.md").write_text(result["report_content"], encoding="utf-8")
+    
+    print(f"Draft {draft_id} processed successfully.")
+    sys.exit(0)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adu", required=False)
     parser.add_argument("--agent", required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--intake-draft", required=False)
     parser.add_argument("--project", required=False)
     parser.add_argument("--repo", required=False)
     args = parser.parse_args()
+    
+    if args.intake_draft:
+        handle_intake_draft(args, ROOT, REGISTRY)
 
     agents = load_json(REGISTRY / "agents.json")
     runs = load_json(REGISTRY / "runs.json")
+
 
     adu_data = None
     if args.agent == "project-profiler":
