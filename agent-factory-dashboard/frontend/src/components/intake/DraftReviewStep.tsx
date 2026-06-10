@@ -25,22 +25,24 @@ export const DraftReviewStep: React.FC<{ draftId: string, onRegistered: (aduId: 
     return (
         <div className=\"space-y-4\">
             <h2 className=\"text-lg font-bold\">Review Draft</h2>
-            <div className=\"space-y-2\">
-                <label>Title</label>
-                <input className=\"w-full p-2 border\" value={draft.title} onChange={(e) => handleUpdate({ title: e.target.value })} />
-            </div>
-            <div className=\"space-y-2\">
-                <label>Goal</label>
-                <textarea className=\"w-full p-2 border\" value={draft.goal} onChange={(e) => handleUpdate({ goal: e.target.value })} />
-            </div>
-            <div className=\"space-y-2\">
-                <label>Write Paths (JSON format)</label>
-                <textarea className=\"w-full p-2 border\" value={JSON.stringify(draft.preferredWritePaths)} onChange={(e) => handleUpdate({ preferredWritePaths: JSON.parse(e.target.value) })} />
-            </div>
-            <div className=\"space-y-2\">
-                <label>Required Commands (JSON format)</label>
-                <textarea className=\"w-full p-2 border\" value={JSON.stringify(draft.requiredCommands)} onChange={(e) => handleUpdate({ requiredCommands: JSON.parse(e.target.value) })} />
-            </div>
+            {/* Existing fields */}
+            <input value={draft.title} onChange={(e) => handleUpdate({ title: e.target.value })} />
+            <textarea value={draft.goal} onChange={(e) => handleUpdate({ goal: e.target.value })} />
+
+            {/* New fields */}
+            <select value={draft.risk} onChange={(e) => handleUpdate({ risk: e.target.value as any })}>
+                <option value=\"low\">Low</option>
+                <option value=\"medium\">Medium</option>
+                <option value=\"high\">High</option>
+            </select>
+            
+            <input type=\"checkbox\" checked={draft.analysisReviewRequired} onChange={(e) => handleUpdate({ analysisReviewRequired: e.target.checked })} /> Analysis Review Required
+            
+            {/* Fragile JSON fields, consider better UI for production */}
+            <textarea value={JSON.stringify(draft.preferredWritePaths)} onChange={(e) => {
+                try { handleUpdate({ preferredWritePaths: JSON.parse(e.target.value) }); } catch {}
+            }} />
+            
             <button className=\"bg-blue-500 text-white p-2\" onClick={handleRegister}>Register ADU</button>
         </div>
     );
