@@ -46,6 +46,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
         '.ai-agent/reviews/',
         '.ai-agent/acceptance/',
         '.ai-agent/evidence/',
+        '.ai-agent/intake/',
         'tests/ai-agent-mvp/'
       ].some(prefix => relativePath.replace(/\\/g, '/').startsWith(prefix));
       
@@ -289,7 +290,8 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       path.join(root, '.ai-agent', 'analysis'),
       path.join(root, '.ai-agent', 'designs'),
       path.join(root, '.ai-agent', 'reviews'),
-      path.join(root, '.ai-agent', 'acceptance')
+      path.join(root, '.ai-agent', 'acceptance'),
+      path.join(root, '.ai-agent', 'intake')
     ];
 
     // Resolve allowedDirs to real paths to be 100% robust
