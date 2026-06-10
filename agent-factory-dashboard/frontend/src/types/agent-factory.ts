@@ -224,3 +224,63 @@ export interface CreateProjectAduInput {
   designReviewRequired?: boolean;
   manualEvidenceMode?: boolean;
 }
+
+export type AgentFactoryIntakeDraftStatus =
+  | 'created'
+  | 'generating'
+  | 'draft_ready'
+  | 'generation_failed'
+  | 'registered'
+  | 'discarded';
+
+export interface AgentFactoryIntakeSourceFile {
+  file_id: string;
+  filename: string;
+  media_type: 'text/plain' | 'text/markdown' | 'application/json';
+  relative_path: string;
+  bytes: number;
+  truncated: boolean;
+  sha256: string;
+}
+
+export interface AgentFactoryIntakeRawInput {
+  raw_text: string;
+  user_hints?: string;
+  requirement_type: 'feature' | 'bugfix' | 'test' | 'docs' | 'refactor' | 'unknown';
+  files: AgentFactoryIntakeSourceFile[];
+}
+
+export interface AgentFactoryAduDraft {
+  draft_id: string;
+  project_id: string;
+  status: AgentFactoryIntakeDraftStatus;
+  confidence: 'high' | 'medium' | 'low';
+  aduId?: string;
+  title: string;
+  goal: string;
+  risk: 'low' | 'medium' | 'high';
+  targetLevel: 'mvp' | 'production';
+  preferredReadPaths: string[];
+  preferredWritePaths: string[];
+  requiredCommands: string[];
+  analysisReviewRequired: boolean;
+  designReviewRequired: boolean;
+  manualEvidenceMode: boolean;
+  scope: {
+    in_scope: string[];
+    out_of_scope: string[];
+  };
+  risks: string[];
+  questions: string[];
+  split_suggestions: Array<{
+    title: string;
+    reason: string;
+    suggested_goal: string;
+  }>;
+  source_summary: string;
+  created_at: string;
+  updated_at: string;
+  registered_adu_id?: string;
+  error?: string;
+}
+
