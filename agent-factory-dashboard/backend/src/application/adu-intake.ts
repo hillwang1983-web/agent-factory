@@ -10,6 +10,12 @@ import {
   AgentFactoryIntakeSourceFile
 } from '../domain/agent-factory';
 
+export interface UploadedFile {
+  path: string;
+  originalname: string;
+  size: number;
+}
+
 export class AduIntake {
   constructor(
     private projectRepo: FileProjectRepository,
@@ -32,8 +38,8 @@ export class AduIntake {
     projectId: string,
     rawText: string,
     userHints: string,
-    requirementType: any,
-    files: Express.Multer.File[]
+    requirementType: AgentFactoryIntakeRawInput['requirement_type'],
+    files: UploadedFile[]
   ): Promise<{ draft_id: string; status: string }> {
     const project = await this.projectRepo.getProject(projectId);
     if (!project || project.status !== 'profiled') {
@@ -59,6 +65,7 @@ export class AduIntake {
       if (fileBuffer.includes(0x00)) throw new Error(`File ${f.originalname} contains NUL bytes`);
       
       await fs.writeFile(destPath, fileBuffer);
+      await fs.unlink(f.path);
       const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
       let mediaType: any = 'text/plain';
@@ -117,13 +124,15 @@ export class AduIntake {
     await fs.writeFile(regPath, JSON.stringify(registry, null, 2), 'utf-8');
 
     const scriptPath = path.join(this.workspaceRoot, 'scripts', 'hermes_agent_run.py');
-    const child = spawn('python3', [scriptPath, '--intake-draft', draftId, '--project', meta.project_id, '--repo-root', meta.repo_path], {
+    const child = spawn('python3', [scriptPath, '--intake-draft', draftId, '--project', meta.project_id, '--repo', meta.repo_path, '--agent', 'adu-intake-agent'], {
         cwd: this.workspaceRoot
     });
 
     child.on('close', async (code) => {
         const freshRegistry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
         const fIndex = freshRegistry.drafts.findIndex((d: any) => d.draft_id === draftId);
+        if (fIndex === -1) return;
+        
         if (code === 0) {
             freshRegistry.drafts[fIndex].status = 'draft_ready';
             try {
@@ -133,6 +142,15 @@ export class AduIntake {
         } else {
             freshRegistry.drafts[fIndex].status = 'generation_failed';
         }
+        await fs.writeFile(regPath, JSON.stringify(freshRegistry, null, 2), 'utf-8');
+    });
+
+    child.on('error', async (err) => {
+        const freshRegistry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
+        const fIndex = freshRegistry.drafts.findIndex((d: any) => d.draft_id === draftId);
+        if (fIndex === -1) return;
+        
+        freshRegistry.drafts[fIndex].status = 'generation_failed';
         await fs.writeFile(regPath, JSON.stringify(freshRegistry, null, 2), 'utf-8');
     });
   }
