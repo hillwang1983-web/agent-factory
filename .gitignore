@@ -11,6 +11,7 @@ kamailio/
 .ai-agent/registry/projects.json
 .ai-agent/registry/token-budget.json
 .ai-agent/registry/artifact-edits.json
+.ai-agent/registry/intake-drafts.json
 
 # ── Agent 生成的文档 / 证据（输出物，非源代码）───────────────────────────────
 .ai-agent/analysis/
@@ -28,6 +29,8 @@ kamailio/
 
 # ── 回归报告（CI 输出，非源代码）─────────────────────────────────────────────
 regression_reports/
+.gstack/
+.playwright-mcp/
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
