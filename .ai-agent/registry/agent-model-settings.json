@@ -24,23 +24,43 @@
     "model": "deepseek-v4-pro"
   },
   "buildfix-debugger": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-pro"
+    "provider": "vertexai",
+    "model": "google/gemini-3.5-flash"
   },
   "evidence": {
     "provider": "deepseek",
     "model": "deepseek-v4-flash"
   },
   "code-reviewer": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-pro"
+    "provider": "vertexai",
+    "model": "google/gemini-3.5-flash"
   },
   "acceptance-reviewer": {
     "provider": "deepseek",
     "model": "deepseek-v4-pro"
   },
   "project-profiler": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.1-pro-preview"
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "adu-intake-agent": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "system-flow-designer": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "adu-splitter": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "rework-planner": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
+  },
+  "epic-acceptance-reviewer": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
   }
 }
