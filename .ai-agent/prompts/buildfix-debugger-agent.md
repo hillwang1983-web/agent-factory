@@ -19,7 +19,8 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
 - Run the validation commands listed in `.ai-agent/registry/adu.json`.
 - Do not run destructive commands.
 - Do not modify production code.
-- If a validation command fails, explain the root cause and propose the smallest fix.
+- If a validation command fails because the implementation is wrong or incomplete, explain the root cause, write the smallest required developer fix, and return `next_state: "build_rework"` so the workflow goes back to `developer`.
+- Use `human_gate` only for external blockers such as missing environment, hanging infrastructure, unavailable dependencies, or unsafe commands that prevent validation from running.
 - Write validation output summary to `.ai-agent/runs/{{ADU_ID}}-validation-summary.md`.
 - **LANGUAGE POLICY**: Write the validation summary and root cause explanations in Chinese (简体中文). Technical terms, logs, errors, and code remain in English.
 
@@ -35,7 +36,24 @@ End your final answer with a fenced JSON block:
   "commands_run": [],
   "artifacts": [".ai-agent/runs/{{ADU_ID}}-validation-summary.md"],
   "risks": [],
-  "next_agent": "evidence"
+  "next_agent": "acceptance-reviewer"
+}
+```
+
+If validation runs but fails due to implementation defects that developer can fix, use:
+
+```json
+{
+  "result": "success",
+  "next_state": "build_rework",
+  "changed_files": [".ai-agent/runs/{{ADU_ID}}-validation-summary.md"],
+  "commands_run": [],
+  "artifacts": [".ai-agent/runs/{{ADU_ID}}-validation-summary.md"],
+  "risks": ["Validation failed. Developer rework required."],
+  "required_developer_actions": [
+    "<concrete Chinese fix instruction for developer>"
+  ],
+  "next_agent": "developer"
 }
 ```
 

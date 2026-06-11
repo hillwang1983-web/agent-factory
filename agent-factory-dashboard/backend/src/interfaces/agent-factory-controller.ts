@@ -25,6 +25,7 @@ import { ProjectRepository } from '../domain/project-repository';
 import { AgentFactoryRepository } from '../domain/agent-factory-repository';
 import { ProjectAduFactory } from '../application/project-adu-factory';
 import { AduIntake } from '../application/adu-intake';
+import { EpicFactory } from '../application/epic-factory';
 import multer from 'multer';
 
 export function createAgentFactoryRouter(
@@ -33,7 +34,8 @@ export function createAgentFactoryRouter(
   projectRepository: ProjectRepository,
   agentFactoryRepository: AgentFactoryRepository,
   logger: Logger,
-  aduIntake: AduIntake
+  aduIntake: AduIntake,
+  epicFactory: EpicFactory
 ): Router {
   const router = Router();
   const upload = multer({ dest: '/tmp/' });
@@ -497,13 +499,13 @@ export function createAgentFactoryRouter(
       throw new Error(`Orchestrator script not found at ${orchestratorPath}`);
     }
 
-    if ((mode === 'start' || mode === 'continue') && activeOrchestrators.has(aduId)) {
-      throw new Error(`Orchestrator is already running for ADU ${aduId}`);
+    if (activeOrchestrators.has(aduId)) {
+      const err: any = new Error(`Orchestrator is already running for ADU ${aduId}`);
+      err.conflict = true;
+      throw err;
     }
 
-    if (mode === 'start' || mode === 'continue') {
-      activeOrchestrators.add(aduId);
-    }
+    activeOrchestrators.add(aduId);
 
     const { spawn } = await import('child_process');
     const spawnArgs = [orchestratorPath, '--adu', aduId, '--mode', mode, '--repo-root', workspaceRootOverride];
@@ -577,37 +579,70 @@ export function createAgentFactoryRouter(
     }
   }));
 
+  // PATCH /api/agent-factory/adus/:aduId/paths
+  router.patch('/adus/:aduId/paths', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { aduId } = req.params;
+    if (!/^[A-Za-z0-9_.-]+$/.test(aduId)) {
+      res.status(400).json({ success: false, error: 'Invalid aduId format' });
+      return;
+    }
+    const { add_write_paths = [], add_read_paths = [] } = req.body as {
+      add_write_paths?: string[];
+      add_read_paths?: string[];
+    };
+    if (!Array.isArray(add_write_paths) || !Array.isArray(add_read_paths)) {
+      res.status(400).json({ success: false, error: 'add_write_paths and add_read_paths must be arrays' });
+      return;
+    }
+    if (activeOrchestrators.has(aduId)) {
+      res.status(409).json({ success: false, error: 'Cannot modify paths while orchestrator is running' });
+      return;
+    }
+    try {
+      const result = await monitor.appendAduPaths(aduId, add_write_paths, add_read_paths);
+      res.json({ success: true, ...result });
+    } catch (err: unknown) {
+      if ((err as any).forbidden) {
+        res.status(403).json({ success: false, error: (err as Error).message });
+        return;
+      }
+      logger.error({ err, aduId }, 'AgentFactory: appendAduPaths error');
+      res.status(400).json({ success: false, error: (err as Error).message ?? 'Failed to update paths' });
+    }
+  }));
+
   // POST /api/agent-factory/adus/:aduId/pause
   router.post('/adus/:aduId/pause', requireControl, asyncHandler(async (req: Request, res: Response) => {
     const { aduId } = req.params;
+    if (!/^[A-Za-z0-9_.-]+$/.test(aduId)) {
+      res.status(400).json({ success: false, error: 'Invalid aduId format' });
+      return;
+    }
     try {
-      const adu = await monitor.getAdu(aduId);
-      if (!adu) {
-        res.status(404).json({ success: false, error: `ADU ${aduId} not found` });
-        return;
-      }
-      const result = await spawnOrchestrator(aduId, 'pause');
-      res.json(result);
+      await monitor.pauseAdu(aduId);
+      res.json({ success: true, message: 'ADU flagged for pause; running orchestrator will stop at next checkpoint' });
     } catch (err: unknown) {
-      logger.error({ err, aduId }, 'AgentFactory: pauseOrchestrator error');
-      res.status(500).json({ success: false, error: 'Failed to pause orchestrator' });
+      if ((err as any).notFound) { res.status(404).json({ success: false, error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ success: false, error: (err as Error).message }); return; }
+      logger.error({ err, aduId }, 'AgentFactory: pauseAdu error');
+      res.status(500).json({ success: false, error: 'Failed to pause ADU' });
     }
   }));
 
   // POST /api/agent-factory/adus/:aduId/cancel
   router.post('/adus/:aduId/cancel', requireControl, asyncHandler(async (req: Request, res: Response) => {
     const { aduId } = req.params;
+    if (!/^[A-Za-z0-9_.-]+$/.test(aduId)) {
+      res.status(400).json({ success: false, error: 'Invalid aduId format' });
+      return;
+    }
     try {
-      const adu = await monitor.getAdu(aduId);
-      if (!adu) {
-        res.status(404).json({ success: false, error: `ADU ${aduId} not found` });
-        return;
-      }
-      const result = await spawnOrchestrator(aduId, 'cancel');
-      res.json(result);
+      await monitor.cancelAdu(aduId);
+      res.json({ success: true, message: 'ADU canceled' });
     } catch (err: unknown) {
-      logger.error({ err, aduId }, 'AgentFactory: cancelOrchestrator error');
-      res.status(500).json({ success: false, error: 'Failed to cancel orchestrator' });
+      if ((err as any).notFound) { res.status(404).json({ success: false, error: (err as Error).message }); return; }
+      logger.error({ err, aduId }, 'AgentFactory: cancelAdu error');
+      res.status(500).json({ success: false, error: 'Failed to cancel ADU' });
     }
   }));
 
@@ -923,6 +958,27 @@ export function createAgentFactoryRouter(
       await monitor.repo.writeReviews(reviews);
 
       // Update ADU state
+      if (gate === 'design' && Array.isArray(adu.pending_design_write_paths) && adu.pending_design_write_paths.length > 0) {
+        const blockedPrefixes = ['.git/', '.agent-factory/', '.ai-agent/registry/', '~/', '/Users/', '/home/', '/etc/', '/tmp/', '/var/'];
+        const normalize = (raw: string): string | null => {
+          if (typeof raw !== 'string') return null;
+          const value = raw.trim().replace(/\\/g, '/');
+          if (!value || value.startsWith('/') || value.includes('\0')) return null;
+          if (value.split('/').includes('..')) return null;
+          if (blockedPrefixes.some((prefix) => value.startsWith(prefix) || value === prefix.replace(/\/$/, ''))) return null;
+          return value;
+        };
+        const safePaths = adu.pending_design_write_paths
+          .map((p) => normalize(p))
+          .filter((p): p is string => Boolean(p));
+        adu.allowed_write_paths = adu.allowed_write_paths ?? [];
+        adu.allowed_read_paths = adu.allowed_read_paths ?? [];
+        for (const pathToAdd of safePaths) {
+          if (!adu.allowed_write_paths.includes(pathToAdd)) adu.allowed_write_paths.push(pathToAdd);
+          if (!adu.allowed_read_paths.includes(pathToAdd)) adu.allowed_read_paths.push(pathToAdd);
+        }
+        adu.pending_design_write_paths = [];
+      }
       adu.state = nextState;
       await monitor.repo.writeAdus(adus);
 
@@ -1219,35 +1275,328 @@ export function createAgentFactoryRouter(
         (req.files as Express.Multer.File[]) || []
       );
       res.status(201).json({ draft: result });
-    } catch (e: any) { res.status(400).json({ error: e.message }); }
+    } catch (e: any) {
+      const status = e.status || (e.message?.includes('not found') || e.message?.includes('not profiled') ? 404 : 400);
+      res.status(status).json({ error: e.message });
+    }
   }));
 
   router.post('/intake-drafts/:draftId/generate', requireControl, asyncHandler(async (req: Request, res: Response) => {
     try {
       await aduIntake.generateDraft(req.params.draftId);
       res.json({ success: true, status: 'generating' });
-    } catch (e: any) { res.status(400).json({ error: e.message }); }
+    } catch (e: any) {
+      const status = e.message?.includes('not found') ? 404 : 400;
+      res.status(status).json({ error: e.message });
+    }
   }));
 
   router.get('/intake-drafts/:draftId', asyncHandler(async (req: Request, res: Response) => {
     try {
       const result = await aduIntake.getDraft(req.params.draftId);
       res.json(result);
-    } catch (e: any) { res.status(404).json({ error: e.message }); }
+    } catch (e: any) {
+      res.status(404).json({ error: e.message });
+    }
   }));
 
   router.put('/intake-drafts/:draftId', requireControl, asyncHandler(async (req: Request, res: Response) => {
     try {
       const result = await aduIntake.updateDraft(req.params.draftId, req.body);
       res.json({ success: true, draft: result });
-    } catch (e: any) { res.status(400).json({ error: e.message }); }
+    } catch (e: any) {
+      const status = e.message?.includes('not found') ? 404 : 400;
+      res.status(status).json({ error: e.message });
+    }
   }));
 
   router.post('/intake-drafts/:draftId/register-adu', requireControl, asyncHandler(async (req: Request, res: Response) => {
     try {
-      const result = await aduIntake.registerDraft(req.params.draftId);
+      const confirmed = req.body?.confirmed === true;
+      const result = await aduIntake.registerDraft(req.params.draftId, { confirmed });
       res.json({ success: true, adu: { id: result.adu_id } });
-    } catch (e: any) { res.status(400).json({ error: e.message }); }
+    } catch (e: any) {
+      const status = e.status || (e.message?.includes('not found') ? 404 : e.message?.includes('disabled') ? 403 : 400);
+      res.status(status).json({ error: e.message });
+    }
+  }));
+
+  // ── Phase 3: Epic Management ──
+
+  // GET /api/agent-factory/epics
+  router.get('/epics', asyncHandler(async (_req: Request, res: Response) => {
+    try {
+      const epics = await agentFactoryRepository.readEpics();
+      res.json({ epics });
+    } catch (err: unknown) {
+      logger.error({ err }, 'AgentFactory: listEpics error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }));
+
+  // POST /api/agent-factory/projects/:projectId/epics
+  router.post('/projects/:projectId/epics', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { projectId } = req.params;
+    if (!projectId || !projectId.match(/^[A-Za-z0-9_.-]+$/)) {
+      res.status(400).json({ error: 'Invalid projectId' });
+      return;
+    }
+    try {
+      const epic = await epicFactory.createForProject(projectId, req.body);
+      res.status(201).json({ epic });
+    } catch (err: any) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  }));
+
+  // GET /api/agent-factory/projects/:projectId/epics
+  router.get('/projects/:projectId/epics', asyncHandler(async (req: Request, res: Response) => {
+    const { projectId } = req.params;
+    if (!projectId || !projectId.match(/^[A-Za-z0-9_.-]+$/)) {
+      res.status(400).json({ error: 'Invalid projectId' });
+      return;
+    }
+    try {
+      const epics = await agentFactoryRepository.listEpicsByProject(projectId);
+      res.json({ project_id: projectId, epics });
+    } catch (err: unknown) {
+      logger.error({ err, projectId }, 'AgentFactory: listEpicsByProject error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }));
+
+  // GET /api/agent-factory/epics/:epicId
+  router.get('/epics/:epicId', asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    if (!epicId || !epicId.match(/^[A-Za-z0-9_.-]+$/)) {
+      res.status(400).json({ error: 'Invalid epicId' });
+      return;
+    }
+    try {
+      const epic = await agentFactoryRepository.getEpic(epicId);
+      if (!epic) {
+        res.status(404).json({ error: 'Epic not found' });
+        return;
+      }
+      res.json(epic);
+    } catch (err: unknown) {
+      logger.error({ err, epicId }, 'AgentFactory: getEpic error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }));
+
+  // GET /api/agent-factory/epics/:epicId/artifacts
+  router.get('/epics/:epicId/artifacts', asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    if (!epicId || !epicId.match(/^[A-Za-z0-9_.-]+$/)) {
+      res.status(400).json({ error: 'Invalid epicId' });
+      return;
+    }
+    try {
+      const epic = await agentFactoryRepository.getEpic(epicId);
+      if (!epic) {
+        res.status(404).json({ error: 'Epic not found' });
+        return;
+      }
+      const artifacts = await agentFactoryRepository.listEpicArtifacts(epicId, epic.repo_path);
+      res.json({ epicId, artifacts });
+    } catch (err: unknown) {
+      logger.error({ err, epicId }, 'AgentFactory: listEpicArtifacts error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }));
+
+  // GET /api/agent-factory/epics/:epicId/dag
+  router.get('/epics/:epicId/dag', asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    if (!epicId || !epicId.match(/^[A-Za-z0-9_.-]+$/)) {
+      res.status(400).json({ error: 'Invalid epicId' });
+      return;
+    }
+    try {
+      const epic = await agentFactoryRepository.getEpic(epicId);
+      if (!epic) {
+        res.status(404).json({ error: 'Epic not found' });
+        return;
+      }
+      const childAduViews: any[] = [];
+      for (const childId of epic.child_adus) {
+        try {
+          const adu = await agentFactoryRepository.getAduById(childId);
+          if (adu) childAduViews.push(adu);
+        } catch (_) { /* skip missing */ }
+      }
+      res.json({ epic, children: childAduViews, dependencies: epic.dependencies });
+    } catch (err: unknown) {
+      logger.error({ err, epicId }, 'AgentFactory: getEpicDag error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }));
+
+  // ── Phase 3: Epic Orchestration ──
+
+  const spawnEpicOrchestrator = async (epicId: string, mode: string): Promise<{ success: boolean; message: string }> => {
+    const epic = await agentFactoryRepository.getEpic(epicId);
+    if (!epic) {
+      throw Object.assign(new Error(`Epic ${epicId} not found`), { notFound: true });
+    }
+
+    // Check project status
+    const project = await projectOnboarding.getProject(epic.project_id);
+    if (project) {
+      if (project.status === 'disabled') {
+        throw Object.assign(new Error(`Project for Epic ${epicId} is disabled`), { forbidden: true });
+      }
+      if (project.status !== 'profiled') {
+        throw Object.assign(new Error(`Project is not profiled (status: ${project.status})`), { forbidden: true });
+      }
+    }
+
+    const orchestratorPath = path.join(config.workspaceRoot, 'scripts', 'hermes_epic_orchestrator.py');
+    if (!fs.existsSync(orchestratorPath)) {
+      throw new Error(`Epic orchestrator script not found at ${orchestratorPath}`);
+    }
+
+    if (activeOrchestrators.has(epicId)) {
+      throw Object.assign(new Error(`Orchestrator is already running for Epic ${epicId}`), { conflict: true });
+    }
+
+    activeOrchestrators.add(epicId);
+
+    const { spawn } = await import('child_process');
+    const spawnArgs = [
+      orchestratorPath,
+      '--epic', epicId,
+      '--mode', mode,
+      '--project', epic.project_id,
+      '--repo-root', epic.repo_path,
+    ];
+    const child = spawn('python3', spawnArgs, {
+      cwd: config.workspaceRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    });
+
+    let stdoutData = '';
+    child.stdout.on('data', (chunk) => {
+      stdoutData += chunk.toString();
+      let lineEnd = stdoutData.indexOf('\n');
+      while (lineEnd !== -1) {
+        const line = stdoutData.substring(0, lineEnd).trim();
+        stdoutData = stdoutData.substring(lineEnd + 1);
+        if (line) {
+          try {
+            const parsed = JSON.parse(line);
+            broadcastOrchestratorEvent(parsed);
+          } catch (_) {
+            logger.debug({ line }, 'Failed to parse line from epic orchestrator stdout');
+          }
+        }
+        lineEnd = stdoutData.indexOf('\n');
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      logger.error(`EpicOrchestrator stderr: ${chunk.toString()}`);
+    });
+
+    child.on('close', (code) => {
+      logger.info(`EpicOrchestrator closed with code ${code}`);
+      activeOrchestrators.delete(epicId);
+      broadcastOrchestratorEvent({ epic: epicId, action: 'closed', code });
+    });
+
+    return { success: true, message: `Epic orchestrator ${mode} dispatched` };
+  };
+
+  // POST /api/agent-factory/epics/:epicId/start
+  router.post('/epics/:epicId/start', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    try {
+      const result = await spawnEpicOrchestrator(epicId, 'start');
+      res.json(result);
+    } catch (err: unknown) {
+      if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }
+      if ((err as any).conflict) { res.status(409).json({ error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ error: (err as Error).message }); return; }
+      logger.error({ err, epicId }, 'AgentFactory: startEpic error');
+      res.status(500).json({ error: 'Failed to start Epic orchestrator' });
+    }
+  }));
+
+  // POST /api/agent-factory/epics/:epicId/continue
+  router.post('/epics/:epicId/continue', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    try {
+      const result = await spawnEpicOrchestrator(epicId, 'continue');
+      res.json(result);
+    } catch (err: unknown) {
+      if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }
+      if ((err as any).conflict) { res.status(409).json({ error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ error: (err as Error).message }); return; }
+      logger.error({ err, epicId }, 'AgentFactory: continueEpic error');
+      res.status(500).json({ error: 'Failed to continue Epic orchestrator' });
+    }
+  }));
+
+  // POST /api/agent-factory/epics/:epicId/step
+  router.post('/epics/:epicId/step', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    try {
+      const result = await spawnEpicOrchestrator(epicId, 'step');
+      res.json(result);
+    } catch (err: unknown) {
+      if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }
+      if ((err as any).conflict) { res.status(409).json({ error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ error: (err as Error).message }); return; }
+      logger.error({ err, epicId }, 'AgentFactory: stepEpic error');
+      res.status(500).json({ error: 'Failed to step Epic orchestrator' });
+    }
+  }));
+
+  // POST /api/agent-factory/epics/:epicId/pause
+  router.post('/epics/:epicId/pause', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    try {
+      const result = await spawnEpicOrchestrator(epicId, 'pause');
+      res.json(result);
+    } catch (err: unknown) {
+      if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }
+      if ((err as any).conflict) { res.status(409).json({ error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ error: (err as Error).message }); return; }
+      logger.error({ err, epicId }, 'AgentFactory: pauseEpic error');
+      res.status(500).json({ error: 'Failed to pause Epic' });
+    }
+  }));
+
+  // POST /api/agent-factory/epics/:epicId/cancel
+  router.post('/epics/:epicId/cancel', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    try {
+      const result = await spawnEpicOrchestrator(epicId, 'cancel');
+      res.json(result);
+    } catch (err: unknown) {
+      if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }
+      if ((err as any).conflict) { res.status(409).json({ error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ error: (err as Error).message }); return; }
+      logger.error({ err, epicId }, 'AgentFactory: cancelEpic error');
+      res.status(500).json({ error: 'Failed to cancel Epic' });
+    }
+  }));
+
+  // POST /api/agent-factory/epics/:epicId/materialize-child-adus
+  router.post('/epics/:epicId/materialize-child-adus', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { epicId } = req.params;
+    try {
+      const result = await spawnEpicOrchestrator(epicId, 'step');
+      res.json(result);
+    } catch (err: unknown) {
+      if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }
+      if ((err as any).conflict) { res.status(409).json({ error: (err as Error).message }); return; }
+      if ((err as any).forbidden) { res.status(403).json({ error: (err as Error).message }); return; }
+      logger.error({ err, epicId }, 'AgentFactory: materializeChildAdus error');
+      res.status(500).json({ error: 'Failed to materialize child ADUs' });
+    }
   }));
 
   return router;

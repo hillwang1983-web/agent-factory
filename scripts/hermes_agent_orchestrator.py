@@ -46,8 +46,10 @@ STATE_NEXT = {
     "designed": ("contract", "contracted"),
     "contracted": ("testwriter", "test_red"),
     "test_red": ("developer", "implemented"),
-    "code_rework": ("developer", "implemented"),
-    "acceptance_rework": ("developer", "implemented"),
+    "code_rework": ("rework-planner", "rework_planned"),
+    "build_rework": ("rework-planner", "rework_planned"),
+    "acceptance_rework": ("rework-planner", "rework_planned"),
+    "rework_planned": ("developer", "implemented"),
     "implemented": ("code-reviewer", "code_reviewed"),
     "code_reviewed": ("buildfix-debugger", "debugged"),
     "debugged": ("acceptance-reviewer", "acceptance_reviewed"),
@@ -81,24 +83,36 @@ def ensure_adu_fields(adu):
     if "review_counters" not in adu or not isinstance(adu["review_counters"], dict):
         adu["review_counters"] = {
             "code_review_failures": 0,
+            "buildfix_failures": 0,
             "acceptance_review_failures": 0
         }
     else:
         if "code_review_failures" not in adu["review_counters"]:
             adu["review_counters"]["code_review_failures"] = 0
+        if "buildfix_failures" not in adu["review_counters"]:
+            adu["review_counters"]["buildfix_failures"] = 0
         if "acceptance_review_failures" not in adu["review_counters"]:
             adu["review_counters"]["acceptance_review_failures"] = 0
 
     if "review_limits" not in adu or not isinstance(adu["review_limits"], dict):
         adu["review_limits"] = {
-            "max_code_review_failures": 2,
-            "max_acceptance_review_failures": 2
+            "max_code_review_failures": 5,
+            "max_buildfix_failures": 5,
+            "max_acceptance_review_failures": 5
         }
     else:
         if "max_code_review_failures" not in adu["review_limits"]:
-            adu["review_limits"]["max_code_review_failures"] = 2
+            adu["review_limits"]["max_code_review_failures"] = 5
+        elif adu["review_limits"]["max_code_review_failures"] < 5:
+            adu["review_limits"]["max_code_review_failures"] = 5
+        if "max_buildfix_failures" not in adu["review_limits"]:
+            adu["review_limits"]["max_buildfix_failures"] = 5
+        elif adu["review_limits"]["max_buildfix_failures"] < 5:
+            adu["review_limits"]["max_buildfix_failures"] = 5
         if "max_acceptance_review_failures" not in adu["review_limits"]:
-            adu["review_limits"]["max_acceptance_review_failures"] = 2
+            adu["review_limits"]["max_acceptance_review_failures"] = 5
+        elif adu["review_limits"]["max_acceptance_review_failures"] < 5:
+            adu["review_limits"]["max_acceptance_review_failures"] = 5
 
 def check_token_budget(agent_id: str, input_tokens: int, output_tokens: int):
     """Check token budget using correct key names from token-budget.json:
@@ -309,6 +323,7 @@ def main():
             adu["retry_count"] = 0
             if "review_counters" in adu:
                 adu["review_counters"]["code_review_failures"] = 0
+                adu["review_counters"]["buildfix_failures"] = 0
                 adu["review_counters"]["acceptance_review_failures"] = 0
             save_json(adu_path, adu_data)
             broadcast_event("agent_factory_orchestrator_event", {"adu": args.adu, "action": "started", "state": "created"})
@@ -316,13 +331,30 @@ def main():
             adu["paused"] = False
             if adu.get("state") == "human_gate":
                 adu["human_gate_required"] = False
+                adu["retry_count"] = 0
+                pre_gate = adu.pop("pre_gate_state", None)
+                if pre_gate and pre_gate not in ("human_gate", "evidenced", "canceled"):
+                    adu["state"] = pre_gate
                 if "review_counters" in adu:
                     adu["review_counters"]["code_review_failures"] = 0
+                    adu["review_counters"]["buildfix_failures"] = 0
                     adu["review_counters"]["acceptance_review_failures"] = 0
             save_json(adu_path, adu_data)
             broadcast_event("agent_factory_orchestrator_event", {"adu": args.adu, "action": "continued"})
+        if args.mode == "step" and adu.get("state") == "human_gate":
+            adu["human_gate_required"] = False
+            adu["retry_count"] = 0
+            pre_gate = adu.pop("pre_gate_state", None)
+            if pre_gate and pre_gate not in ("human_gate", "evidenced", "canceled"):
+                adu["state"] = pre_gate
+            if "review_counters" in adu:
+                adu["review_counters"]["code_review_failures"] = 0
+                adu["review_counters"]["buildfix_failures"] = 0
+                adu["review_counters"]["acceptance_review_failures"] = 0
+            save_json(adu_path, adu_data)
 
         # For start / continue / step we advance the state machine until done
+        had_failure = False
         while True:
             # Check for pause / cancel flag before proceeding (re-load from registry to be reactive)
             adu_data = load_json(adu_path)
@@ -487,11 +519,13 @@ def main():
                     "stderr": error_msg,
                 })
                 # Do not advance state — keep current_state
+                had_failure = True
                 break
 
             # Token budget enforcement using correct keys
             budget_check = check_token_budget(next_agent, input_tokens, output_tokens)
             if budget_check["status"] == "hardStop":
+                adu["pre_gate_state"] = current_state
                 adu["state"] = "human_gate"
                 adu["human_gate_required"] = True
                 save_json(adu_path, adu_data)
@@ -501,16 +535,24 @@ def main():
                 broadcast_event("agent_factory_token_warning", {"adu": args.adu, "agent": next_agent, "status": "warning", "ratio": budget_check.get("ratio")})
 
             # ── P1-1 FIX: Only advance state after successful run ──
-            if next_agent in ("code-reviewer", "acceptance-reviewer"):
+            if next_agent in ("code-reviewer", "buildfix-debugger", "acceptance-reviewer"):
                 actual_state = adu.get("state")
                 if actual_state == "code_rework":
                     adu["review_counters"]["code_review_failures"] = int(adu["review_counters"].get("code_review_failures", 0)) + 1
-                    if adu["review_counters"]["code_review_failures"] > adu["review_limits"].get("max_code_review_failures", 2):
+                    if adu["review_counters"]["code_review_failures"] > adu["review_limits"].get("max_code_review_failures", 5):
+                        adu["pre_gate_state"] = actual_state
+                        adu["state"] = "human_gate"
+                        adu["human_gate_required"] = True
+                elif actual_state == "build_rework":
+                    adu["review_counters"]["buildfix_failures"] = int(adu["review_counters"].get("buildfix_failures", 0)) + 1
+                    if adu["review_counters"]["buildfix_failures"] > adu["review_limits"].get("max_buildfix_failures", 5):
+                        adu["pre_gate_state"] = actual_state
                         adu["state"] = "human_gate"
                         adu["human_gate_required"] = True
                 elif actual_state == "acceptance_rework":
                     adu["review_counters"]["acceptance_review_failures"] = int(adu["review_counters"].get("acceptance_review_failures", 0)) + 1
-                    if adu["review_counters"]["acceptance_review_failures"] > adu["review_limits"].get("max_acceptance_review_failures", 2):
+                    if adu["review_counters"]["acceptance_review_failures"] > adu["review_limits"].get("max_acceptance_review_failures", 5):
+                        adu["pre_gate_state"] = actual_state
                         adu["state"] = "human_gate"
                         adu["human_gate_required"] = True
             else:
@@ -583,6 +625,8 @@ def main():
     finally:
         if args.mode in ("start", "continue", "step"):
             release_lock(args.adu, project_id, repo_root=repo_path)
+        if had_failure:
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

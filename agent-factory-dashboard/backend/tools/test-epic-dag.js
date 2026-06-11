@@ -1,0 +1,227 @@
+#!/usr/bin/env node
+/**
+ * Integration tests for Epic DAG validation.
+ * Tests split-plan validation and Epic state aggregation logic.
+ */
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+let passed = 0;
+let failed = 0;
+
+function assert(label, fn) {
+  try {
+    fn();
+    console.log(`✅  ${label}`);
+    passed++;
+  } catch (e) {
+    console.error(`❌  ${label}: ${e.message}`);
+    failed++;
+  }
+}
+
+const ROOT = path.resolve(__dirname, '..', '..', '..');
+const VALIDATE_SPLIT = path.join(ROOT, 'scripts', 'validate_epic_split_plan.py');
+const VALIDATE_FLOW = path.join(ROOT, 'scripts', 'validate_epic_flow.py');
+const VALIDATE_ACCEPTANCE = path.join(ROOT, 'scripts', 'validate_epic_acceptance.py');
+
+function runValidator(script, jsonPath) {
+  try {
+    execFileSync('python3', [script, jsonPath], { stdio: 'pipe' });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, stderr: e.stderr?.toString() || '' };
+  }
+}
+
+function writeTempJSON(filename, data) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'epic-dag-test-'));
+  const filePath = path.join(tmpDir, filename);
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  return { dir: tmpDir, path: filePath };
+}
+
+function cleanup(temp) {
+  fs.rmSync(temp.dir, { recursive: true, force: true });
+}
+
+async function main() {
+  console.log('── Epic DAG Tests ──\n');
+
+  // Test 1: Valid split-plan passes
+  assert('valid split-plan passes', () => {
+    const plan = {
+      version: 1,
+      epic_id: 'EPIC-2026-0001',
+      decision: 'split_required',
+      reason: 'Cross-module requirement',
+      child_adus: [
+        { id: 'ADU-001', title: 'DBI', goal: 'Add model', scope: 'DBI only',
+          allowed_write_paths: ['lib/dbi/'], required_commands: ['make'], acceptance_summary: 'Tests pass' },
+        { id: 'ADU-002', title: 'CLI', goal: 'Add CLI', scope: 'CLI only',
+          allowed_write_paths: ['src/cli/'], required_commands: ['make'], acceptance_summary: 'CLI works' },
+      ],
+      dependencies: [{ from: 'ADU-001', to: 'ADU-002', reason: 'CLI needs DBI' }],
+    };
+    const tmp = writeTempJSON('split-plan.json', plan);
+    const result = runValidator(VALIDATE_SPLIT, tmp.path);
+    cleanup(tmp);
+    if (!result.ok) throw new Error(`Expected pass, got: ${result.stderr}`);
+  });
+
+  // Test 2: Split-plan with cycle fails
+  assert('split-plan with cycle fails', () => {
+    const plan = {
+      version: 1, epic_id: 'EPIC-X', decision: 'split_required',
+      reason: 'Test', child_adus: [
+        { id: 'A', title: 'A', goal: 'A', scope: 'A', allowed_write_paths: ['a/'], required_commands: ['make'], acceptance_summary: 'ok' },
+        { id: 'B', title: 'B', goal: 'B', scope: 'B', allowed_write_paths: ['b/'], required_commands: ['make'], acceptance_summary: 'ok' },
+      ],
+      dependencies: [
+        { from: 'A', to: 'B', reason: 'A->B' },
+        { from: 'B', to: 'A', reason: 'B->A' },
+      ],
+    };
+    const tmp = writeTempJSON('split-plan.json', plan);
+    const result = runValidator(VALIDATE_SPLIT, tmp.path);
+    cleanup(tmp);
+    if (result.ok) throw new Error('Expected fail for cycle, but passed');
+  });
+
+  // Test 3: Dependency ref to non-existent ADU fails
+  assert('dependency to non-existent child ADU fails', () => {
+    const plan = {
+      version: 1, epic_id: 'EPIC-X', decision: 'split_required',
+      reason: 'Test', child_adus: [
+        { id: 'A', title: 'A', goal: 'A', scope: 'A', allowed_write_paths: ['a/'], required_commands: ['make'], acceptance_summary: 'ok' },
+      ],
+      dependencies: [{ from: 'NONEXISTENT', to: 'A', reason: 'bad ref' }],
+    };
+    const tmp = writeTempJSON('split-plan.json', plan);
+    const result = runValidator(VALIDATE_SPLIT, tmp.path);
+    cleanup(tmp);
+    if (result.ok) throw new Error('Expected fail for bad reference, but passed');
+  });
+
+  // Test 4: single_adu with >1 child fails
+  assert('single_adu with >1 child ADU fails', () => {
+    const plan = {
+      version: 1, epic_id: 'EPIC-X', decision: 'single_adu',
+      reason: 'Test', child_adus: [
+        { id: 'A', title: 'A', goal: 'A', scope: 'A', allowed_write_paths: ['a/'], required_commands: ['make'], acceptance_summary: 'ok' },
+        { id: 'B', title: 'B', goal: 'B', scope: 'B', allowed_write_paths: ['b/'], required_commands: ['make'], acceptance_summary: 'ok' },
+      ],
+      dependencies: [],
+    };
+    const tmp = writeTempJSON('split-plan.json', plan);
+    const result = runValidator(VALIDATE_SPLIT, tmp.path);
+    cleanup(tmp);
+    if (result.ok) throw new Error('Expected fail for single_adu with 2 children, but passed');
+  });
+
+  // Test 5: split_required with <2 children fails
+  assert('split_required with only 1 child fails', () => {
+    const plan = {
+      version: 1, epic_id: 'EPIC-X', decision: 'split_required',
+      reason: 'Test', child_adus: [
+        { id: 'A', title: 'A', goal: 'A', scope: 'A', allowed_write_paths: ['a/'], required_commands: ['make'], acceptance_summary: 'ok' },
+      ],
+      dependencies: [],
+    };
+    const tmp = writeTempJSON('split-plan.json', plan);
+    const result = runValidator(VALIDATE_SPLIT, tmp.path);
+    cleanup(tmp);
+    if (result.ok) throw new Error('Expected fail for split_required with 1 child, but passed');
+  });
+
+  // Test 6: Valid system-flow passes
+  assert('valid system-flow passes', () => {
+    const flow = {
+      version: 1, epic_id: 'EPIC-X',
+      business_operations: [
+        { id: 'OP-1', name: 'Suspend', entrypoints: ['CLI'], state_changes: ['DB update'], runtime_effects: ['Reject reg'] },
+      ],
+      module_flows: [
+        { operation_id: 'OP-1', steps: [{ order: 1, module: 'DBI', path_candidates: ['lib/dbi/'], responsibility: 'Persist' }] },
+      ],
+      acceptance_points: ['Registration is rejected'],
+      open_questions: [],
+    };
+    const tmp = writeTempJSON('system-flow.json', flow);
+    const result = runValidator(VALIDATE_FLOW, tmp.path);
+    cleanup(tmp);
+    if (!result.ok) throw new Error(`Expected pass, got: ${result.stderr}`);
+  });
+
+  // Test 7: Empty business_operations fails
+  assert('empty business_operations fails', () => {
+    const flow = {
+      version: 1, epic_id: 'EPIC-X',
+      business_operations: [],
+      acceptance_points: ['something'],
+    };
+    const tmp = writeTempJSON('system-flow.json', flow);
+    const result = runValidator(VALIDATE_FLOW, tmp.path);
+    cleanup(tmp);
+    if (result.ok) throw new Error('Expected fail for empty business_operations, but passed');
+  });
+
+  // Test 8: Epic acceptance pass with all children evidenced
+  assert('epic acceptance pass validated', () => {
+    const acceptance = {
+      version: 1, epic_id: 'EPIC-X',
+      epic_acceptance_status: 'pass',
+      evidenced_child_adus: ['ADU-001', 'ADU-002'],
+      required_child_adus: ['ADU-001', 'ADU-002'],
+      acceptance_points_covered: [{ point: 'Works', status: 'pass', evidence: 'test' }],
+      unresolved_findings: [],
+    };
+    const tmp = writeTempJSON('epic-acceptance.json', acceptance);
+    const result = runValidator(VALIDATE_ACCEPTANCE, tmp.path);
+    cleanup(tmp);
+    if (!result.ok) throw new Error(`Expected pass, got: ${result.stderr}`);
+  });
+
+  // Test 9: Pass with unresolved P1 fails
+  assert('pass with unresolved P1 fails', () => {
+    const acceptance = {
+      version: 1, epic_id: 'EPIC-X',
+      epic_acceptance_status: 'pass',
+      evidenced_child_adus: ['ADU-001'],
+      required_child_adus: ['ADU-001'],
+      acceptance_points_covered: [{ point: 'Works', status: 'pass', evidence: 'test' }],
+      unresolved_findings: [{ severity: 'P1', description: 'not fixed' }],
+    };
+    const tmp = writeTempJSON('epic-acceptance.json', acceptance);
+    const result = runValidator(VALIDATE_ACCEPTANCE, tmp.path);
+    cleanup(tmp);
+    if (result.ok) throw new Error('Expected fail for pass with P1, but passed');
+  });
+
+  // Test 10 + 11: Run Python integration tests for orchestration closure
+  // These exercise run_child_adu failure detection, step_epic blocked return,
+  // and runner artifact-gating (not just direct validator calls).
+  assert('orchestrator integration: child failure detected, artifact gating works', () => {
+    const { execFileSync } = require('child_process');
+    const integTest = path.join(ROOT, 'scripts', 'test_epic_orchestrator_integration.py');
+    try {
+      const out = execFileSync('python3', [integTest], {
+        stdio: 'pipe',
+        timeout: 30000,
+      }).toString();
+      if (!out.includes('Results: 3 passed, 0 failed')) {
+        throw new Error(`Integration tests did not all pass:\n${out}`);
+      }
+    } catch (e) {
+      if (e.stdout) throw new Error(e.stdout.toString());
+      throw e;
+    }
+  });
+
+  console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);
+  process.exit(failed > 0 ? 1 : 0);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

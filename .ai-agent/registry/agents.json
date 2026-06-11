@@ -70,6 +70,36 @@
       "prompt": ".ai-agent/prompts/project-profiler-agent.md",
       "worktree": false,
       "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "adu-intake-agent": {
+      "description": "Convert raw requirement text and uploaded files into a structured ADU draft.",
+      "prompt": ".ai-agent/prompts/adu-intake-agent.md",
+      "worktree": false,
+      "hermes_args": ["--provider", "deepseek", "--model", "deepseek-v4-flash", "-t", "hermes-cli"]
+    },
+    "system-flow-designer": {
+      "description": "Design end-to-end system flows, call graphs, data flows, and hard integration acceptance points for an Epic.",
+      "prompt": ".ai-agent/prompts/system-flow-designer-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "adu-splitter": {
+      "description": "Decide whether an Epic should be a single ADU or split into a DAG of child ADUs.",
+      "prompt": ".ai-agent/prompts/adu-splitter-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "rework-planner": {
+      "description": "Convert quality gate failures into a minimal, executable developer rework plan.",
+      "prompt": ".ai-agent/prompts/rework-planner-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
+    },
+    "epic-acceptance-reviewer": {
+      "description": "Verify the whole Epic end-to-end after all required child ADUs are evidenced.",
+      "prompt": ".ai-agent/prompts/epic-acceptance-reviewer-agent.md",
+      "worktree": false,
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
     }
   }
 }

@@ -107,13 +107,31 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
         </div>
         
         {/* Rework indicators */}
-        {(adu.state === 'code_rework' || adu.state === 'acceptance_rework') && (
-          <div className="flex items-center gap-1.5 bg-red-950/40 border border-red-500/30 px-2.5 py-1 rounded text-red-400 text-[10px] animate-pulse">
+        {(adu.state === 'code_rework' || adu.state === 'build_rework' || adu.state === 'acceptance_rework') && (
+          <div className={`flex items-center gap-1.5 border px-2.5 py-1 rounded text-[10px] ${
+            adu.health?.status === 'running'
+              ? 'bg-blue-950/40 border-blue-500/30 text-blue-400 animate-pulse'
+              : 'bg-amber-950/40 border-amber-500/30 text-amber-400'
+          }`}>
             <AlertTriangle className="w-3.5 h-3.5" />
-            <span>整改返工中 (@developer)</span>
+            <span>
+              {adu.health?.status === 'running'
+                ? '整改执行中 (@developer)'
+                : adu.state === 'build_rework'
+                  ? '调试失败待整改 — 点击「单步执行」或「继续自动」触发 developer'
+                  : '待整改 — 点击「单步执行」或「继续自动」触发 developer'}
+            </span>
             {adu.review_counters && (
               <span className="font-mono ml-0.5">
-                (重试: {adu.state === 'code_rework' ? adu.review_counters.code_review_failures : adu.review_counters.acceptance_review_failures}/2)
+                (重试: {adu.state === 'code_rework'
+                  ? adu.review_counters.code_review_failures
+                  : adu.state === 'build_rework'
+                    ? (adu.review_counters.buildfix_failures ?? 0)
+                    : adu.review_counters.acceptance_review_failures}/{adu.state === 'build_rework'
+                  ? (adu.review_limits?.max_buildfix_failures ?? 5)
+                  : adu.state === 'code_rework'
+                    ? (adu.review_limits?.max_code_review_failures ?? 5)
+                    : (adu.review_limits?.max_acceptance_review_failures ?? 5)})
               </span>
             )}
           </div>

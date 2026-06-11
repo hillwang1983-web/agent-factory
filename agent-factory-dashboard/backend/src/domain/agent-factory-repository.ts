@@ -5,6 +5,7 @@ import {
   AgentFactoryRun,
   AgentFactoryReview,
   AgentFactoryArtifactEdit,
+  AgentFactoryEpic,
 } from './agent-factory';
 
 export interface AgentFactoryRepository {
@@ -25,4 +26,10 @@ export interface AgentFactoryRepository {
   readEdits(): Promise<AgentFactoryArtifactEdit[]>;
   writeEdits(edits: AgentFactoryArtifactEdit[]): Promise<void>;
   writeTextArtifact(path: string, content: string, workspaceRootOverride?: string): Promise<{ sha256: string; bytes: number }>;
+  // Phase 3: Epic
+  readEpics(): Promise<AgentFactoryEpic[]>;
+  saveEpic(epic: AgentFactoryEpic): Promise<void>;
+  getEpic(epicId: string): Promise<AgentFactoryEpic | null>;
+  listEpicsByProject(projectId: string): Promise<AgentFactoryEpic[]>;
+  listEpicArtifacts(epicId: string, repoPath: string): Promise<AgentFactoryArtifact[]>;
 }

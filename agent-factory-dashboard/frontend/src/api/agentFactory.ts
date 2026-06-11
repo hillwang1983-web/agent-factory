@@ -1,4 +1,4 @@
-import type { AgentFactoryDashboard, AgentFactoryRun, QualityReports, AgentFactoryProject, CreateProjectAduInput } from '../types/agent-factory';
+import type { AgentFactoryDashboard, AgentFactoryRun, QualityReports, AgentFactoryProject, CreateProjectAduInput, AgentFactoryEpic, CreateEpicInput } from '../types/agent-factory';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -123,6 +123,18 @@ export const agentFactoryApi = {
     if (!res.ok) {
       const txt = await res.text();
       throw new Error(`Failed to run next step: ${txt}`);
+    }
+  },
+
+  async appendAduPaths(aduId: string, addWritePaths: string[], addReadPaths: string[]): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/paths`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ add_write_paths: addWritePaths, add_read_paths: addReadPaths }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error ?? `Failed to update paths`);
     }
   },
 
@@ -329,9 +341,94 @@ export const agentFactoryApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
-  async registerIntakeDraft(draftId: string): Promise<any> {
-    const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}/register-adu`, { method: 'POST' });
+  async registerIntakeDraft(draftId: string, confirmed = false): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}/register-adu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmed }),
+    });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+
+  // ── Phase 3: Epic ──
+
+  async fetchEpics(): Promise<{ epics: AgentFactoryEpic[] }> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics`);
+    if (!res.ok) throw new Error('Failed to fetch Epics');
+    return res.json();
+  },
+
+  async createEpic(projectId: string, input: CreateEpicInput): Promise<{ epic: AgentFactoryEpic }> {
+    const res = await fetch(`${API_URL}/api/agent-factory/projects/${projectId}/epics`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to create Epic');
+    }
+    return res.json();
+  },
+
+  async getEpic(epicId: string): Promise<AgentFactoryEpic> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}`);
+    if (!res.ok) throw new Error('Failed to fetch Epic');
+    return res.json();
+  },
+
+  async getEpicDag(epicId: string): Promise<{ epic: AgentFactoryEpic; children: any[]; dependencies: any[] }> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/dag`);
+    if (!res.ok) throw new Error('Failed to fetch Epic DAG');
+    return res.json();
+  },
+
+  async startEpic(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/start`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to start Epic'); }
+    return res.json();
+  },
+
+  async continueEpic(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/continue`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to continue Epic'); }
+    return res.json();
+  },
+
+  async stepEpic(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/step`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to step Epic'); }
+    return res.json();
+  },
+
+  async cancelEpic(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/cancel`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to cancel Epic'); }
+    return res.json();
+  },
+
+  async pauseEpic(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/pause`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to pause Epic'); }
+    return res.json();
+  },
+
+  async materializeChildAdus(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/materialize-child-adus`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to materialize child ADUs'); }
+    return res.json();
+  },
 };
+
+// Named exports for direct use in components
+export const createIntakeDraft = (projectId: string, formData: FormData) =>
+  agentFactoryApi.createIntakeDraft(projectId, formData);
+export const generateIntakeDraft = (draftId: string) =>
+  agentFactoryApi.generateIntakeDraft(draftId);
+export const getIntakeDraft = (draftId: string) =>
+  agentFactoryApi.getIntakeDraft(draftId);
+export const updateIntakeDraft = (draftId: string, updates: any) =>
+  agentFactoryApi.updateIntakeDraft(draftId, updates);
+export const registerIntakeDraft = (draftId: string, confirmed = false) =>
+  agentFactoryApi.registerIntakeDraft(draftId, confirmed);

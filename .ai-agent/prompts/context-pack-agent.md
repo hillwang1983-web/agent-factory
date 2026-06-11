@@ -37,6 +37,6 @@ End your final answer with a fenced JSON block:
   "commands_run": [],
   "artifacts": [".ai-agent/context-packs/{{ADU_ID}}.md"],
   "risks": [],
-  "next_agent": "contract"
+  "next_agent": "detail-designer"
 }
 ```

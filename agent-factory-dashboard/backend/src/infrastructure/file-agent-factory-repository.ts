@@ -9,6 +9,7 @@ import {
   AgentFactoryRun,
   AgentFactoryReview,
   AgentFactoryArtifactEdit,
+  AgentFactoryEpic,
 } from '../domain/agent-factory';
 
 export class FileAgentFactoryRepository implements AgentFactoryRepository {
@@ -47,6 +48,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
         '.ai-agent/acceptance/',
         '.ai-agent/evidence/',
         '.ai-agent/intake/',
+        '.ai-agent/epics/',
         'tests/ai-agent-mvp/'
       ].some(prefix => relativePath.replace(/\\/g, '/').startsWith(prefix));
       
@@ -291,7 +293,8 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       path.join(root, '.ai-agent', 'designs'),
       path.join(root, '.ai-agent', 'reviews'),
       path.join(root, '.ai-agent', 'acceptance'),
-      path.join(root, '.ai-agent', 'intake')
+      path.join(root, '.ai-agent', 'intake'),
+      path.join(root, '.ai-agent', 'epics')
     ];
 
     // Resolve allowedDirs to real paths to be 100% robust
@@ -454,5 +457,72 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       sha256,
       bytes: byteLength
     };
+  }
+
+  // ── Phase 3: Epic ──
+
+  async readEpics(): Promise<AgentFactoryEpic[]> {
+    const epicsPath = this.resolveSafePath('.ai-agent/registry/epics.json');
+    try {
+      const data = await fs.readFile(epicsPath, 'utf-8');
+      const parsed = JSON.parse(data) as { version?: number; epics?: AgentFactoryEpic[] };
+      return parsed.epics || [];
+    } catch (err: unknown) {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code === 'ENOENT') {
+        this.logger.warn('epics.json registry not found, returning empty list');
+        return [];
+      }
+      this.logger.error({ err }, 'Failed to read epics.json');
+      throw err;
+    }
+  }
+
+  async saveEpic(epic: AgentFactoryEpic): Promise<void> {
+    const epics = await this.readEpics();
+    const existingIndex = epics.findIndex(e => e.id === epic.id);
+    if (existingIndex >= 0) {
+      epics[existingIndex] = epic;
+    } else {
+      epics.push(epic);
+    }
+    const epicsPath = this.resolveSafePath('.ai-agent/registry/epics.json');
+    try {
+      await fs.mkdir(path.dirname(epicsPath), { recursive: true });
+      const data = { version: 1, epics };
+      const tmpPath = epicsPath + '.tmp';
+      await fs.writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+      await fs.rename(tmpPath, epicsPath);
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to write epics.json');
+      throw err;
+    }
+  }
+
+  async getEpic(epicId: string): Promise<AgentFactoryEpic | null> {
+    const epics = await this.readEpics();
+    return epics.find(e => e.id === epicId) || null;
+  }
+
+  async listEpicsByProject(projectId: string): Promise<AgentFactoryEpic[]> {
+    const epics = await this.readEpics();
+    return epics.filter(e => e.project_id === projectId);
+  }
+
+  async listEpicArtifacts(epicId: string, repoPath: string): Promise<AgentFactoryArtifact[]> {
+    const epicDir = `.ai-agent/epics/${epicId}`;
+    const fullDir = path.join(repoPath, epicDir);
+    try {
+      const files = await fs.readdir(fullDir);
+      const paths = files.map(f => `${epicDir}/${f}`);
+      return this.listArtifacts(paths, repoPath);
+    } catch (err: unknown) {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code === 'ENOENT') {
+        return [];
+      }
+      this.logger.error({ err, epicDir }, 'Failed to list Epic artifacts');
+      throw err;
+    }
   }
 }

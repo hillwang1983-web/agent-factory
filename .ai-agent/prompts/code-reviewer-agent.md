@@ -24,6 +24,17 @@ Read these files before judging:
 5. Latest `developer` run under `.ai-agent/runs/`
 6. Current changed files from the workspace (run git diff if necessary)
 
+## Path Expansion Requests
+
+Check the runtime payload for `adu.pending_path_requests`. If this list is non-empty, the developer is requesting write access to files currently outside `allowed_write_paths`.
+
+For each requested path, evaluate:
+1. Is the path within the project's source tree (not system/config paths)?
+2. Is modifying this file consistent with the ADU's stated goal and detailed design?
+3. Does granting access pose a security or integrity risk (e.g., build scripts, auth code unrelated to the ADU)?
+
+Include your evaluation in the `path_expansion_decisions` field of both the JSON artifact and your final response JSON. Approve paths that are clearly in-scope; reject anything that is out-of-scope or risky. An empty `approved_write_paths` list in your response means all requests were denied.
+
 ## Review Criteria
 
 You must fail the review (i.e. return status "fail") if any item is true:
@@ -77,10 +88,17 @@ You MUST write these two files:
   "required_developer_actions": [
     "Concrete action in Chinese required to fix this issue"
   ],
-  "next_state": "code_reviewed" 
+  "path_expansion_decisions": [
+    {
+      "path": "src/module/file.c",
+      "decision": "approved",
+      "reason": "In-scope per ADU goal"
+    }
+  ],
+  "next_state": "code_reviewed"
 }
 ```
-*Note: Set "review_status" to "fail" and "next_state" to "code_rework" if you find critical code issues.*
+*Note: Set "review_status" to "fail" and "next_state" to "code_rework" if you find critical code issues. Always include `path_expansion_decisions` (can be empty list `[]`) when `adu.pending_path_requests` is present.*
 
 ### Markdown Report Schema (.md)
 
@@ -121,6 +139,7 @@ End your final response with exactly one fenced JSON block:
     ".ai-agent/reviews/{{ADU_ID}}-code-review.json",
     ".ai-agent/reviews/{{ADU_ID}}-code-review.md"
   ],
+  "approved_write_paths": [],
   "risks": [],
   "next_agent": "buildfix-debugger"
 }
@@ -140,6 +159,7 @@ End your final response with exactly one fenced JSON block:
     ".ai-agent/reviews/{{ADU_ID}}-code-review.json",
     ".ai-agent/reviews/{{ADU_ID}}-code-review.md"
   ],
+  "approved_write_paths": [],
   "risks": [
     "Code review failed. Developer rework required."
   ],

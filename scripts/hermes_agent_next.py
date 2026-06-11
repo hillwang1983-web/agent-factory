@@ -16,6 +16,7 @@ NEXT_AGENT = {
     "contracted": "testwriter",
     "test_red": "developer",
     "code_rework": "developer",
+    "build_rework": "developer",
     "acceptance_rework": "developer",
     "implemented": "code-reviewer",
     "code_reviewed": "buildfix-debugger",

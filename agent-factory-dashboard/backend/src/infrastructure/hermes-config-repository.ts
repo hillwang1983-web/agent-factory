@@ -38,76 +38,93 @@ export class HermesConfigRepository {
   }
 
   async readConfig(): Promise<HermesConfig> {
-    let raw: RawHermesConfig;
+    const hermesDir = path.dirname(this.configPath);
 
+    // Load models_dev_cache.json — used as fallback when a provider lists no models
+    let cacheData: any = null;
+    const cachePath = path.join(hermesDir, 'models_dev_cache.json');
     try {
-      const content = await fs.readFile(this.configPath, 'utf-8');
-      raw = YAML.parse(content) as RawHermesConfig;
-    } catch (err: unknown) {
-      const error = err as NodeJS.ErrnoException;
-      if (error.code === 'ENOENT') {
-        this.logger.warn({ path: this.configPath }, 'Hermes config not found, returning empty model list');
-        return { models: [], defaultModel: null, defaultProvider: null };
-      }
-      this.logger.error({ err, path: this.configPath }, 'Failed to read Hermes config');
-      throw err;
+      cacheData = JSON.parse(await fs.readFile(cachePath, 'utf-8'));
+    } catch (e) {
+      this.logger.debug({ cachePath }, 'No models_dev_cache.json found');
     }
 
-    if (!raw) {
+    // Collect all config sources: global config + all profile configs
+    const configSources: RawHermesConfig[] = [];
+
+    // Global config
+    try {
+      const content = await fs.readFile(this.configPath, 'utf-8');
+      const parsed = YAML.parse(content) as RawHermesConfig;
+      if (parsed) configSources.push(parsed);
+    } catch (err: unknown) {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code !== 'ENOENT') {
+        this.logger.error({ err, path: this.configPath }, 'Failed to read Hermes config');
+        throw err;
+      }
+      this.logger.warn({ path: this.configPath }, 'Hermes config not found');
+    }
+
+    // Profile configs — each profile in ~/.hermes/profiles/<name>/config.yaml
+    const profilesDir = path.join(hermesDir, 'profiles');
+    try {
+      const profileNames = await fs.readdir(profilesDir);
+      for (const profileName of profileNames) {
+        const profileConfigPath = path.join(profilesDir, profileName, 'config.yaml');
+        try {
+          const content = await fs.readFile(profileConfigPath, 'utf-8');
+          const parsed = YAML.parse(content) as RawHermesConfig;
+          if (parsed) configSources.push(parsed);
+        } catch {
+          // profile has no config.yaml or it's unreadable — skip
+        }
+      }
+    } catch {
+      // no profiles directory — fine
+    }
+
+    if (configSources.length === 0) {
       return { models: [], defaultModel: null, defaultProvider: null };
     }
 
-    const defaultModel = raw.model?.default ?? null;
-    const defaultProvider = raw.model?.provider ?? null;
+    // Use model defaults from the first source that defines them
+    const primarySource = configSources[0];
+    const defaultModel = primarySource.model?.default ?? null;
+    const defaultProvider = primarySource.model?.provider ?? null;
 
+    // Merge providers across all sources; last write wins for duplicate provider+model pairs
+    const seenKeys = new Set<string>();
     const models: HermesModelOption[] = [];
 
-    // Attempt to load models_dev_cache.json from the same directory as config.yaml
-    let cacheData: any = null;
-    const cachePath = path.join(path.dirname(this.configPath), 'models_dev_cache.json');
-    try {
-      const cacheContent = await fs.readFile(cachePath, 'utf-8');
-      cacheData = JSON.parse(cacheContent);
-    } catch (e) {
-      this.logger.debug({ cachePath }, 'No models_dev_cache.json found at config dir or failed to parse it');
-    }
+    const pushModels = (providerName: string, rawModels: string[] | Record<string, unknown>) => {
+      const list = Array.isArray(rawModels) ? rawModels : Object.keys(rawModels);
+      for (const modelId of list) {
+        if (typeof modelId !== 'string') continue;
+        const key = `${providerName}/${modelId}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        models.push({
+          provider: providerName,
+          model: modelId,
+          label: `${providerName} / ${modelId}`,
+          isDefault: modelId === defaultModel,
+          source: 'hermes-config',
+        });
+      }
+    };
 
-    if (raw.providers) {
-      for (const [providerName, providerConf] of Object.entries(raw.providers)) {
+    for (const src of configSources) {
+      if (!src.providers) continue;
+      for (const [providerName, providerConf] of Object.entries(src.providers)) {
         let rawModels = providerConf?.models;
 
-        // If config.yaml has no models specified for this provider, try to load from cacheData
-        if (!rawModels || (Array.isArray(rawModels) && rawModels.length === 0) || (typeof rawModels === 'object' && Object.keys(rawModels).length === 0)) {
-          if (cacheData && cacheData[providerName] && cacheData[providerName].models) {
-            rawModels = cacheData[providerName].models;
-          }
+        // If no models listed in config, fall back to cache
+        if (!rawModels || (Array.isArray(rawModels) ? rawModels.length === 0 : Object.keys(rawModels).length === 0)) {
+          rawModels = cacheData?.[providerName]?.models ?? null;
         }
 
-        if (rawModels) {
-          if (Array.isArray(rawModels)) {
-            for (const modelId of rawModels) {
-              if (typeof modelId === 'string') {
-                models.push({
-                  provider: providerName,
-                  model: modelId,
-                  label: `${providerName} / ${modelId}`,
-                  isDefault: modelId === defaultModel,
-                  source: 'hermes-config',
-                });
-              }
-            }
-          } else if (typeof rawModels === 'object' && rawModels !== null) {
-            for (const modelId of Object.keys(rawModels)) {
-              models.push({
-                provider: providerName,
-                model: modelId,
-                label: `${providerName} / ${modelId}`,
-                isDefault: modelId === defaultModel,
-                source: 'hermes-config',
-              });
-            }
-          }
-        }
+        if (rawModels) pushModels(providerName, rawModels as string[] | Record<string, unknown>);
       }
     }
 

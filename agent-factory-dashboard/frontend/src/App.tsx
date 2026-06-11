@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { AgentFactoryPage } from './components/agent-factory/AgentFactoryPage';
 import { ProjectsPage } from './components/projects/ProjectsPage';
+import { EpicsPage } from './components/epics/EpicsPage';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgentFactoryStore } from './stores/agentFactory';
-import { LayoutDashboard, FolderGit2, Folder } from 'lucide-react';
+import { LayoutDashboard, FolderGit2, Folder, Layers } from 'lucide-react';
 
 function App() {
   // Enabled status web socket
   useWebSocket(true);
 
-  const [view, setView] = useState<'dashboard' | 'projects'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'projects' | 'epics'>('dashboard');
   const { projects, selectedProjectId, selectProject } = useAgentFactoryStore();
 
   return (
@@ -40,6 +41,17 @@ function App() {
             >
               <LayoutDashboard className="h-3.5 w-3.5" />
               任务看板
+            </button>
+            <button
+              onClick={() => setView('epics')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                view === 'epics'
+                  ? 'bg-cyan-600 text-white shadow-md animate-in fade-in duration-150'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              Epic 编排
             </button>
             <button
               onClick={() => setView('projects')}
@@ -83,7 +95,7 @@ function App() {
       </header>
 
       <main className="flex-1 p-6 overflow-auto">
-        {view === 'dashboard' ? <AgentFactoryPage /> : <ProjectsPage />}
+        {view === 'dashboard' ? <AgentFactoryPage /> : view === 'epics' ? <EpicsPage /> : <ProjectsPage />}
       </main>
     </div>
   );

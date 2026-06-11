@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAgentFactoryStore } from '../../stores/agentFactory';
+import { agentFactoryApi } from '../../api/agentFactory';
 import { SummaryStrip } from './SummaryStrip';
 import { AduQueuePanel } from './AduQueuePanel';
 import { WorkflowTimeline } from './WorkflowTimeline';
@@ -12,7 +13,7 @@ import { TokenBudgetChart } from './TokenBudgetChart';
 import { ReviewGatePanel } from './ReviewGatePanel';
 import { QualityReportBadge } from './QualityReportBadge';
 import { QualityReportPanel } from './QualityReportPanel';
-import { FileText, Shield, Terminal, RefreshCw, FolderOpen } from 'lucide-react';
+import { FileText, Shield, Terminal, RefreshCw, FolderOpen, Plus } from 'lucide-react';
 import { ProjectContextPanel } from './ProjectContextPanel';
 
 export function AgentFactoryPage(): JSX.Element {
@@ -25,6 +26,26 @@ export function AgentFactoryPage(): JSX.Element {
     openArtifact,
     qualityReports,
   } = useAgentFactoryStore();
+
+  const [newWritePath, setNewWritePath] = useState('');
+  const [addPathLoading, setAddPathLoading] = useState(false);
+  const [addPathError, setAddPathError] = useState<string | null>(null);
+
+  const handleAddWritePath = async (aduId: string) => {
+    const p = newWritePath.trim();
+    if (!p) return;
+    setAddPathLoading(true);
+    setAddPathError(null);
+    try {
+      await agentFactoryApi.appendAduPaths(aduId, [p], []);
+      setNewWritePath('');
+      await refresh();
+    } catch (e: any) {
+      setAddPathError(e?.message ?? '添加失败');
+    } finally {
+      setAddPathLoading(false);
+    }
+  };
 
   useEffect(() => {
     void refresh();
@@ -148,6 +169,34 @@ export function AgentFactoryPage(): JSX.Element {
                         <li key={p}>{p}</li>
                       ))}
                     </ul>
+                    {/* Inline add path — only available when ADU is not running/terminal */}
+                    {!['evidenced', 'canceled'].includes(selectedAdu.state) &&
+                      selectedAdu.health?.status !== 'running' && (
+                      <div className="pt-1 space-y-1">
+                        <div className="flex gap-1">
+                          <input
+                            type="text"
+                            value={newWritePath}
+                            onChange={(e) => { setNewWritePath(e.target.value); setAddPathError(null); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void handleAddWritePath(selectedAdu.id); }}
+                            placeholder="src/module/file.c"
+                            className="flex-1 bg-nms-surface-1 border border-nms-surface-3 text-[10px] text-nms-text font-mono rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-nms-accent placeholder-nms-text-dim/40"
+                          />
+                          <button
+                            onClick={() => void handleAddWritePath(selectedAdu.id)}
+                            disabled={addPathLoading || !newWritePath.trim()}
+                            className="flex items-center gap-0.5 px-1.5 py-0.5 bg-nms-accent/20 border border-nms-accent/40 rounded text-[10px] text-nms-accent hover:bg-nms-accent/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="添加到写权限路径"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            {addPathLoading ? '…' : '添加'}
+                          </button>
+                        </div>
+                        {addPathError && (
+                          <div className="text-[10px] text-red-400">{addPathError}</div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="bg-nms-surface-2/30 border border-nms-surface-3/50 p-3 rounded-lg space-y-1">

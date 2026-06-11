@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentFactoryDashboard, QualityReports, AgentFactoryProject } from '../types/agent-factory';
+import type { AgentFactoryDashboard, QualityReports, AgentFactoryProject, AgentFactoryEpic, CreateEpicInput } from '../types/agent-factory';
 import { agentFactoryApi } from '../api/agentFactory';
 
 interface AgentFactoryState {
@@ -23,8 +23,22 @@ interface AgentFactoryState {
   activeArtifactContent: string | null;
   activeArtifactSha256: string | null;
   activeArtifactLoading: boolean;
-  
+  // Phase 3: Epic
+  epics: AgentFactoryEpic[];
+  selectedEpicId: string | null;
+  epicDag: { epic: AgentFactoryEpic | null; children: any[]; dependencies: any[] } | null;
+
   refresh: () => Promise<void>;
+  fetchEpics: () => Promise<void>;
+  createEpic: (projectId: string, input: CreateEpicInput) => Promise<AgentFactoryEpic>;
+  selectEpic: (epicId: string | null) => void;
+  loadEpicDag: (epicId: string) => Promise<void>;
+  startEpic: (epicId: string) => Promise<void>;
+  continueEpic: (epicId: string) => Promise<void>;
+  stepEpic: (epicId: string) => Promise<void>;
+  cancelEpic: (epicId: string) => Promise<void>;
+  pauseEpic: (epicId: string) => Promise<void>;
+  materializeChildAdus: (epicId: string) => Promise<void>;
   setDashboard: (dashboard: AgentFactoryDashboard) => void;
   fetchProjects: () => Promise<void>;
   selectProject: (projectId: string | null) => void;
@@ -359,6 +373,10 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
     return await agentFactoryApi.registerIntakeDraft(draftId);
   },
 
+  epics: [],
+  selectedEpicId: null,
+  epicDag: null,
+
   loadQualityReports: async (aduId) => {
     try {
       const reports = await agentFactoryApi.fetchQualityReports(aduId);
@@ -367,5 +385,71 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
       console.error('Failed to load quality reports', e);
       set({ qualityReports: null });
     }
-  }
+  },
+
+  // ── Phase 3: Epic ──
+
+  fetchEpics: async () => {
+    try {
+      const { epics } = await agentFactoryApi.fetchEpics();
+      set({ epics });
+    } catch (e) {
+      console.error('Failed to fetch Epics', e);
+    }
+  },
+
+  createEpic: async (projectId, input) => {
+    const { epic } = await agentFactoryApi.createEpic(projectId, input);
+    await get().fetchEpics();
+    return epic;
+  },
+
+  selectEpic: (epicId) => {
+    set({ selectedEpicId: epicId });
+    if (epicId) void get().loadEpicDag(epicId);
+  },
+
+  loadEpicDag: async (epicId) => {
+    try {
+      const dag = await agentFactoryApi.getEpicDag(epicId);
+      set({ epicDag: dag });
+    } catch (e) {
+      console.error('Failed to load Epic DAG', e);
+      set({ epicDag: null });
+    }
+  },
+
+  startEpic: async (epicId) => {
+    await agentFactoryApi.startEpic(epicId);
+    await get().fetchEpics();
+    void get().loadEpicDag(epicId);
+  },
+
+  continueEpic: async (epicId) => {
+    await agentFactoryApi.continueEpic(epicId);
+    await get().fetchEpics();
+    void get().loadEpicDag(epicId);
+  },
+
+  stepEpic: async (epicId) => {
+    await agentFactoryApi.stepEpic(epicId);
+    await get().fetchEpics();
+    void get().loadEpicDag(epicId);
+  },
+
+  cancelEpic: async (epicId) => {
+    await agentFactoryApi.cancelEpic(epicId);
+    await get().fetchEpics();
+  },
+
+  pauseEpic: async (epicId) => {
+    await agentFactoryApi.pauseEpic(epicId);
+    await get().fetchEpics();
+  },
+
+  materializeChildAdus: async (epicId) => {
+    await agentFactoryApi.materializeChildAdus(epicId);
+    await get().fetchEpics();
+    void get().loadEpicDag(epicId);
+  },
 }));

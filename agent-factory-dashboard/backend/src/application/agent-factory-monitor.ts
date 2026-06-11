@@ -52,6 +52,7 @@ const NEXT_AGENT_BY_STATE: Record<string, string | null> = {
   contracted: 'testwriter',
   test_red: 'developer',
   code_rework: 'developer',
+  build_rework: 'developer',
   acceptance_rework: 'developer',
   implemented: 'code-reviewer',
   code_reviewed: 'buildfix-debugger',
@@ -123,7 +124,11 @@ export class AgentFactoryMonitorUseCase {
       // Workflow Timeline
       const workflow: AgentFactoryWorkflowStep[] = WORKFLOW_STEPS_CONFIG.map((step) => {
         const stepOrderIndex = STATE_ORDER.indexOf(step.state);
-        const orderState = adu.state === 'code_rework' || adu.state === 'acceptance_rework' ? 'test_red' : adu.state;
+        const orderState = adu.state === 'code_rework' || adu.state === 'acceptance_rework'
+          ? 'test_red'
+          : adu.state === 'build_rework'
+            ? 'code_reviewed'
+            : adu.state;
         const aduOrderIndex = STATE_ORDER.indexOf(orderState);
 
         let status: AgentFactoryWorkflowStep['status'] = 'pending';
@@ -158,6 +163,8 @@ export class AgentFactoryMonitorUseCase {
             status = 'pending';
           }
         } else if (adu.state === 'code_rework' && step.state === 'test_red') {
+          status = 'failed';
+        } else if (adu.state === 'build_rework' && step.state === 'code_reviewed') {
           status = 'failed';
         } else if (adu.state === 'acceptance_rework' && step.state === 'test_red') {
           status = 'failed';
@@ -205,7 +212,7 @@ export class AgentFactoryMonitorUseCase {
         // override a successfully completed ADU.
         healthStatus = 'healthy';
         reasons.push('All factory steps completed successfully. Evidence package created.');
-      } else if (adu.state === 'human_gate' || adu.human_gate_required) {
+      } else if (adu.state === 'human_gate') {
         healthStatus = 'blocked';
         reasons.push('Human gate triggered. Blocked due to execution failure or compliance rule.');
       } else if (
@@ -405,6 +412,75 @@ export class AgentFactoryMonitorUseCase {
       throw new Error(`ADU ${aduId} not found`);
     }
     adu.language = language;
+    await this.repo.writeAdus(adus);
+  }
+
+  async appendAduPaths(
+    aduId: string,
+    addWritePaths: string[],
+    addReadPaths: string[],
+  ): Promise<{ allowed_write_paths: string[]; allowed_read_paths: string[] }> {
+    const BLOCKED_PREFIXES = [
+      '.git/', '.agent-factory/', '~/', '/Users/', '/home/', '/etc/', '/tmp/', '/var/',
+    ];
+
+    const validate = (p: string, field: string): string => {
+      const v = p.trim().replace(/\\/g, '/');
+      if (!v) throw new Error(`${field}: path must not be empty`);
+      if (v.startsWith('/')) throw new Error(`${field}: absolute path not allowed — got "${p}"`);
+      if (v.includes('..')) throw new Error(`${field}: ".." not allowed — got "${p}"`);
+      if (v.includes('\0')) throw new Error(`${field}: NUL bytes not allowed`);
+      for (const prefix of BLOCKED_PREFIXES) {
+        if (v.startsWith(prefix) || v === prefix.replace(/\/$/, ''))
+          throw new Error(`${field}: blocked path "${p}"`);
+      }
+      return v;
+    };
+
+    const validatedWrite = addWritePaths.map((p) => validate(p, 'allowed_write_paths'));
+    const validatedRead = addReadPaths.map((p) => validate(p, 'allowed_read_paths'));
+
+    const adus = await this.repo.readAdus();
+    const adu = adus.find((a) => a.id === aduId);
+    if (!adu) throw new Error(`ADU ${aduId} not found`);
+
+    const TERMINAL = ['evidenced', 'canceled'];
+    if (TERMINAL.includes(adu.state)) {
+      throw Object.assign(new Error(`Cannot modify paths on a ${adu.state} ADU`), { forbidden: true });
+    }
+
+    adu.allowed_write_paths = adu.allowed_write_paths ?? [];
+    adu.allowed_read_paths = adu.allowed_read_paths ?? [];
+
+    for (const p of validatedWrite) {
+      if (!adu.allowed_write_paths.includes(p)) adu.allowed_write_paths.push(p);
+    }
+    for (const p of validatedRead) {
+      if (!adu.allowed_read_paths.includes(p)) adu.allowed_read_paths.push(p);
+    }
+
+    await this.repo.writeAdus(adus);
+    return { allowed_write_paths: adu.allowed_write_paths, allowed_read_paths: adu.allowed_read_paths };
+  }
+
+  async pauseAdu(aduId: string): Promise<void> {
+    const adus = await this.repo.readAdus();
+    const adu = adus.find((a) => a.id === aduId);
+    if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
+    if (['evidenced', 'canceled'].includes(adu.state)) {
+      throw Object.assign(new Error(`Cannot pause a ${adu.state} ADU`), { forbidden: true });
+    }
+    (adu as any).paused = true;
+    await this.repo.writeAdus(adus);
+  }
+
+  async cancelAdu(aduId: string): Promise<void> {
+    const adus = await this.repo.readAdus();
+    const adu = adus.find((a) => a.id === aduId);
+    if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
+    if (adu.state === 'canceled') return;
+    adu.state = 'canceled';
+    (adu as any).paused = false;
     await this.repo.writeAdus(adus);
   }
 }
