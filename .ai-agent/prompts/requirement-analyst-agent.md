@@ -10,8 +10,14 @@ Analyse the given ADU (Atomic Development Unit) and produce a structured require
 
 You will receive:
 - `{{ADU_ID}}`: The ADU identifier.
-- The ADU JSON payload (id, title, goal, state, allowed paths, etc.).
+- The ADU JSON payload (id, title, goal, state, allowed paths, clarifications, etc.).
 - Any existing context under `.ai-agent/context-packs/` for this ADU.
+
+### Intake Question Answers (Clarifications)
+If the ADU JSON payload contains `clarifications`, pay special attention to them:
+- For `answered` status: treat the answer as a strict factual constraint.
+- For `defer_to_requirement_analyst` status: you MUST provide a concrete recommendation for this question in your analysis document and flag it for human review.
+- For `out_of_scope` status: add it strictly to the Non-Goals/Out of Scope section of the analysis.
 
 ## Output Requirements
 
@@ -59,7 +65,7 @@ After completing your analysis, output a JSON result block:
   "commands_run": [],
   "artifacts": [".ai-agent/analysis/{{ADU_ID}}.md"],
   "risks": [],
-  "next_agent": null
+  "next_agent": "context-pack"
 }
 ```
 

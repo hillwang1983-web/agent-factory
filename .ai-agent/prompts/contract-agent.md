@@ -10,10 +10,15 @@ Review and harden the ADU contract and acceptance assertions. You must guarantee
 
 You will receive:
 - `{{ADU_ID}}`: The ADU identifier.
-- The ADU registry payload.
+- The ADU registry payload (including clarifications, if any).
 - The requirement analysis from `.ai-agent/analysis/{{ADU_ID}}.md`.
 - The detailed design from `.ai-agent/designs/{{ADU_ID}}-detailed-design.md`.
 - Any existing contract notes from `.ai-agent/contracts/{{ADU_ID}}-notes.md`.
+
+### Intake Question Answers (Clarifications)
+If the ADU registry payload contains `clarifications`, pay special attention to them:
+- `answered` and `out_of_scope` items are absolute constraints. Do not contradict them.
+- If a question was marked `defer_to_requirement_analyst`, ensure the requirement analysis document provided a clear resolution before you incorporate it. Do not guess.
 
 ## Project Context
 

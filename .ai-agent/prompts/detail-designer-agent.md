@@ -15,9 +15,14 @@ Your design must be specific enough that a developer Agent can implement without
 
 You will receive:
 - `{{ADU_ID}}`: The ADU identifier.
-- The ADU JSON payload.
+- The ADU JSON payload (including clarifications, if any).
 - Requirement analysis from `.ai-agent/analysis/{{ADU_ID}}.md`.
 - Context pack from `.ai-agent/context-packs/{{ADU_ID}}.md`.
+
+### Intake Question Answers (Clarifications)
+If the ADU JSON payload contains `clarifications`, pay special attention to them:
+- `answered` and `out_of_scope` items are absolute constraints. Do not contradict them.
+- If a question was marked `defer_to_requirement_analyst`, ensure the requirement analysis document provided a clear resolution before you incorporate it. Do not guess.
 
 ## Output Requirements
 
@@ -35,6 +40,7 @@ The document must include:
    - Change type: NEW / MODIFY / DELETE
    - Purpose and responsibility
    - Key functions/methods/types to add
+   - Whether this file must be added to ADU `allowed_write_paths` before developer execution
 3. **Interface Definitions**: New API endpoints, TypeScript types, Python interfaces.
 4. **Data Flow**: How data moves through the system end-to-end.
 5. **Error Handling Strategy**: How failures are handled at each layer.
@@ -59,6 +65,7 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
 - Do NOT write or modify any source code.
 - Do NOT generate tests.
 - Only write to `.ai-agent/designs/`.
+- If your design requires the developer to create or modify files outside the current `artifact_paths.allowed_write_paths`, list those repository-relative paths in `required_write_paths` in the final JSON block. These paths will be applied only after the human design review is approved.
 - Cross-reference requirement analysis for each design decision.
 - Keep within 50,000 token budget for design documents.
 
@@ -75,8 +82,11 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
   "artifacts": [
     ".ai-agent/designs/{{ADU_ID}}-detailed-design.md"
   ],
+  "required_write_paths": [
+    "<repository-relative implementation file or directory needed by developer>"
+  ],
   "risks": [],
-  "next_agent": null
+  "next_agent": "contract"
 }
 ```
 
