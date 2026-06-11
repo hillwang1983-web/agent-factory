@@ -316,6 +316,80 @@ async function run() {
     eq(createdAdu.clarifications[0].status, 'out_of_scope', 'status is out_of_scope');
   });
 
+  // T18: registerDraft fails with empty question
+  await assertThrows('T18: registerDraft fails with empty question', async () => {
+    const { intake } = await makeIntake(tmp);
+    const { draft_id } = await intake.createDraft('test-proj', 'text', '', 'feature', []);
+    const meta_reg = JSON.parse(await fs.readFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), 'utf-8'));
+    const meta = meta_reg.drafts.find(d => d.draft_id === draft_id);
+    const draftPath = path.join(meta.repo_path, meta.draft_path);
+    await fs.mkdir(path.dirname(draftPath), { recursive: true });
+    await fs.writeFile(draftPath, JSON.stringify({
+      draft_id, project_id: 'test-proj', title: 'T', goal: 'Original Goal Text', risk: 'low',
+      targetLevel: 'mvp', preferredReadPaths: [], preferredWritePaths: [], requiredCommands: ['python3 tests/run.py'],
+      analysisReviewRequired: false, designReviewRequired: true, manualEvidenceMode: false,
+      confidence: 'high', questions: ['   '], question_answers: [{
+        question: '   ',
+        answer: 'My Answer',
+        status: 'answered',
+        impact: 'design'
+      }], status: 'draft_ready'
+    }), 'utf-8');
+    meta_reg.drafts.find(d => d.draft_id === draft_id).status = 'draft_ready';
+    await fs.writeFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), JSON.stringify(meta_reg, null, 2));
+    await intake.registerDraft(draft_id);
+  }, e => e.message.includes('question must not be empty'));
+
+  // T19: registerDraft fails with oversized single answer
+  await assertThrows('T19: registerDraft fails with oversized single answer', async () => {
+    const { intake } = await makeIntake(tmp);
+    const { draft_id } = await intake.createDraft('test-proj', 'text', '', 'feature', []);
+    const meta_reg = JSON.parse(await fs.readFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), 'utf-8'));
+    const meta = meta_reg.drafts.find(d => d.draft_id === draft_id);
+    const draftPath = path.join(meta.repo_path, meta.draft_path);
+    await fs.mkdir(path.dirname(draftPath), { recursive: true });
+    await fs.writeFile(draftPath, JSON.stringify({
+      draft_id, project_id: 'test-proj', title: 'T', goal: 'Original Goal Text', risk: 'low',
+      targetLevel: 'mvp', preferredReadPaths: [], preferredWritePaths: [], requiredCommands: ['python3 tests/run.py'],
+      analysisReviewRequired: false, designReviewRequired: true, manualEvidenceMode: false,
+      confidence: 'high', questions: ['Q?'], question_answers: [{
+        question: 'Q?',
+        answer: 'a'.repeat(4001),
+        status: 'answered',
+        impact: 'design'
+      }], status: 'draft_ready'
+    }), 'utf-8');
+    meta_reg.drafts.find(d => d.draft_id === draft_id).status = 'draft_ready';
+    await fs.writeFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), JSON.stringify(meta_reg, null, 2));
+    await intake.registerDraft(draft_id);
+  }, e => e.message.includes('single answer must not exceed 4000'));
+
+  // T20: registerDraft fails with oversized total answers
+  await assertThrows('T20: registerDraft fails with oversized total answers', async () => {
+    const { intake } = await makeIntake(tmp);
+    const { draft_id } = await intake.createDraft('test-proj', 'text', '', 'feature', []);
+    const meta_reg = JSON.parse(await fs.readFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), 'utf-8'));
+    const meta = meta_reg.drafts.find(d => d.draft_id === draft_id);
+    const draftPath = path.join(meta.repo_path, meta.draft_path);
+    await fs.mkdir(path.dirname(draftPath), { recursive: true });
+    await fs.writeFile(draftPath, JSON.stringify({
+      draft_id, project_id: 'test-proj', title: 'T', goal: 'Original Goal Text', risk: 'low',
+      targetLevel: 'mvp', preferredReadPaths: [], preferredWritePaths: [], requiredCommands: ['python3 tests/run.py'],
+      analysisReviewRequired: false, designReviewRequired: true, manualEvidenceMode: false,
+      confidence: 'high', questions: ['Q1?', 'Q2?', 'Q3?', 'Q4?', 'Q5?', 'Q6?'], question_answers: [
+        { question: 'Q1?', answer: 'a'.repeat(3500), status: 'answered', impact: 'design' },
+        { question: 'Q2?', answer: 'b'.repeat(3500), status: 'answered', impact: 'design' },
+        { question: 'Q3?', answer: 'c'.repeat(3500), status: 'answered', impact: 'design' },
+        { question: 'Q4?', answer: 'd'.repeat(3500), status: 'answered', impact: 'design' },
+        { question: 'Q5?', answer: 'e'.repeat(3500), status: 'answered', impact: 'design' },
+        { question: 'Q6?', answer: 'f'.repeat(3500), status: 'answered', impact: 'design' }
+      ], status: 'draft_ready'
+    }), 'utf-8');
+    meta_reg.drafts.find(d => d.draft_id === draft_id).status = 'draft_ready';
+    await fs.writeFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), JSON.stringify(meta_reg, null, 2));
+    await intake.registerDraft(draft_id);
+  }, e => e.message.includes('total answers length must not exceed 20000'));
+
   // T14: Tests use isolated registry (never pollute real registry)
   await assert('T14: isolated registry — no production files touched', async () => {
     const realRegistry = path.join(process.env.HOME || '/Users/hill', 'open5gs', '.ai-agent', 'registry', 'intake-drafts.json');

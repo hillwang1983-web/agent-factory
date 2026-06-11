@@ -330,6 +330,10 @@ export class AduIntake {
       }
 
       const questionAnswers = this.normalizeQuestionAnswers(draft);
+
+      // Enforce question answers validation on registration to prevent bypasses
+      validateDraftFields({ question_answers: questionAnswers });
+
       const unresolved = questionAnswers.filter(a => {
         if (a.status === 'unanswered') return true;
         if (a.status === 'answered' && (!a.answer || !a.answer.trim())) return true;
