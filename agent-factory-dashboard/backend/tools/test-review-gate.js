@@ -113,7 +113,8 @@ async function runTests() {
     console.log('\n--- Test Case 3: Concurrent process lock (Expected: 409) ---');
     const lockDir = path.join(workspaceRoot, '.ai-agent', 'locks');
     fs.mkdirSync(lockDir, { recursive: true });
-    const lockPath = path.join(lockDir, `${aduId}.lock`);
+    const projectId = aduData.adus[aduIndex].project_id || 'default-open5gs';
+    const lockPath = path.join(lockDir, `${projectId}__${aduId}.lock`);
     
     const lockData = {
       adu_id: aduId,
