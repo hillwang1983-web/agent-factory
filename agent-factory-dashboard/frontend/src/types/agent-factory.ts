@@ -70,6 +70,8 @@ export interface AgentFactoryAduView {
   human_gate_required: boolean;
   paused?: boolean;
   language?: string;
+  clarifications?: AgentFactoryDraftQuestionAnswer[];
+  source_summary?: string;
   next_agent: string | null;
   latest_run: AgentFactoryRun | null;
   runs: AgentFactoryRun[];
@@ -97,10 +99,12 @@ export interface AgentFactoryAduView {
   };
   review_counters?: {
     code_review_failures: number;
+    buildfix_failures?: number;
     acceptance_review_failures: number;
   };
   review_limits?: {
     max_code_review_failures: number;
+    max_buildfix_failures?: number;
     max_acceptance_review_failures: number;
   };
   project_id?: string;
@@ -112,6 +116,12 @@ export interface AgentFactoryAduView {
   command_policy?: AgentFactoryCommandPolicy;
   created_at?: string;
   updated_at?: string;
+  parent_epic_id?: string;
+  depends_on?: string[];
+  scope?: string;
+  integration_role?: string;
+  epic_sequence?: number;
+  rework_plan_path?: string;
 }
 
 export interface AgentFactoryProject {
@@ -223,6 +233,30 @@ export interface CreateProjectAduInput {
   analysisReviewRequired?: boolean;
   designReviewRequired?: boolean;
   manualEvidenceMode?: boolean;
+  clarifications?: AgentFactoryDraftQuestionAnswer[];
+  sourceSummary?: string;
+}
+
+export type AgentFactoryDraftQuestionAnswerStatus =
+  | 'unanswered'
+  | 'answered'
+  | 'defer_to_requirement_analyst'
+  | 'out_of_scope';
+
+export type AgentFactoryDraftQuestionAnswerImpact =
+  | 'scope'
+  | 'acceptance_criteria'
+  | 'design'
+  | 'implementation'
+  | 'test'
+  | 'unknown';
+
+export interface AgentFactoryDraftQuestionAnswer {
+  question: string;
+  answer: string;
+  status: AgentFactoryDraftQuestionAnswerStatus;
+  impact: AgentFactoryDraftQuestionAnswerImpact;
+  updated_at?: string;
 }
 
 export type AgentFactoryIntakeDraftStatus =
@@ -272,6 +306,7 @@ export interface AgentFactoryAduDraft {
   };
   risks: string[];
   questions: string[];
+  question_answers?: AgentFactoryDraftQuestionAnswer[];
   split_suggestions: Array<{
     title: string;
     reason: string;
@@ -284,3 +319,70 @@ export interface AgentFactoryAduDraft {
   error?: string;
 }
 
+// ── Phase 3: Epic ──
+
+export type AgentFactoryEpicState =
+  | 'created'
+  | 'flow_designed'
+  | 'split_decision'
+  | 'single_adu_selected'
+  | 'split_required'
+  | 'epic_planned'
+  | 'child_adus_created'
+  | 'child_adus_running'
+  | 'child_adus_blocked'
+  | 'child_adus_evidenced'
+  | 'epic_acceptance'
+  | 'epic_evidenced'
+  | 'epic_failed'
+  | 'human_gate'
+  | 'canceled';
+
+export interface AgentFactoryEpicDependency {
+  from: string;
+  to: string;
+  reason: string;
+}
+
+export interface AgentFactoryEpic {
+  id: string;
+  project_id: string;
+  project_name?: string;
+  repo_path: string;
+  title: string;
+  source_requirement: string;
+  state: AgentFactoryEpicState;
+  risk: 'low' | 'medium' | 'high' | string;
+  target_level: 'mvp' | 'production' | string;
+  language: string;
+  system_flow_path?: string;
+  split_plan_path?: string;
+  child_adus: string[];
+  dependencies: AgentFactoryEpicDependency[];
+  acceptance_path?: string;
+  summary?: {
+    total_child_adus: number;
+    evidenced_child_adus: number;
+    blocked_child_adus: number;
+    running_child_adus: number;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateEpicInput {
+  title: string;
+  source_requirement: string;
+  risk?: string;
+  target_level?: string;
+  language?: string;
+}
+
+export interface AgentFactoryEpicView extends AgentFactoryEpic {
+  child_adu_views?: AgentFactoryAduView[];
+  next_agent: string | null;
+  health: {
+    status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
+    reasons: string[];
+  };
+}
