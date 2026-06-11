@@ -62,9 +62,16 @@ function validateDraftFields(updates: Partial<AgentFactoryAduDraft>): void {
     if (!Array.isArray(updates.question_answers)) {
       throw new Error('question_answers must be an array');
     }
+    let totalLength = 0;
     for (const qa of updates.question_answers) {
       if (typeof qa.question !== 'string' || typeof qa.answer !== 'string') {
         throw new Error('question and answer must be strings');
+      }
+      if (!qa.question || !qa.question.trim()) {
+        throw new Error('question must not be empty');
+      }
+      if (qa.answer.length > 4000) {
+        throw new Error('single answer must not exceed 4000 characters');
       }
       if (!['unanswered', 'answered', 'defer_to_requirement_analyst', 'out_of_scope'].includes(qa.status)) {
         throw new Error(`Invalid status: ${qa.status}`);
@@ -72,6 +79,10 @@ function validateDraftFields(updates: Partial<AgentFactoryAduDraft>): void {
       if (!['scope', 'acceptance_criteria', 'design', 'implementation', 'test', 'unknown'].includes(qa.impact)) {
         throw new Error(`Invalid impact: ${qa.impact}`);
       }
+      totalLength += qa.answer.length;
+    }
+    if (totalLength > 20000) {
+      throw new Error('total answers length must not exceed 20000 characters');
     }
   }
 }

@@ -41,7 +41,14 @@ export const DraftReviewStep: React.FC<{ draftId: string, onRegistered: (aduId: 
 
     const handleChange = (updates: Partial<AgentFactoryAduDraft>) => {
         setDraft(prev => {
-            const next = prev ? { ...prev, ...updates } : null;
+            if (!prev) return null;
+            const next = { ...prev, ...updates };
+            if (updates.question_answers) {
+                const hasDeferral = updates.question_answers.some(a => a.status === 'defer_to_requirement_analyst');
+                if (hasDeferral) {
+                    next.analysisReviewRequired = true;
+                }
+            }
             draftRef.current = next;
             return next;
         });

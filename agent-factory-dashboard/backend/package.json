@@ -8,9 +8,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test:project-adu": "node tools/test-project-adu.js",
+    "test:adu-intake": "node tools/test-adu-intake.js",
     "test:review-gate": "node tools/test-review-gate.js",
     "test:quality-gates": "node tools/test-quality-gates.js",
-    "test:onboarding": "node tools/test-project-onboarding.js"
+    "test:onboarding": "node tools/test-project-onboarding.js",
+    "test:epic-factory": "node tools/test-epic-factory.js",
+    "test:epic-dag": "node tools/test-epic-dag.js"
   },
   "dependencies": {
     "compression": "^1.7.4",
