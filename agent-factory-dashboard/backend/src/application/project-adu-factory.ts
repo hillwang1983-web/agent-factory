@@ -161,6 +161,8 @@ export class ProjectAduFactory {
       artifacts: [],
       human_gate_required: true,
       language: 'zh',
+      clarifications: input.clarifications || [],
+      source_summary: input.sourceSummary || '',
       review_policy: {
         analysis_review_required: input.analysisReviewRequired !== false,
         design_review_required: input.designReviewRequired !== false,
@@ -169,6 +171,16 @@ export class ProjectAduFactory {
         mode: 'allowlist',
         allowed_commands: allowedCommands,
         blocked_command_patterns: BLOCKED_COMMAND_PATTERNS,
+      },
+      review_counters: {
+        code_review_failures: 0,
+        buildfix_failures: 0,
+        acceptance_review_failures: 0,
+      },
+      review_limits: {
+        max_code_review_failures: 5,
+        max_buildfix_failures: 5,
+        max_acceptance_review_failures: 5,
       },
       created_at: now,
       updated_at: now,
