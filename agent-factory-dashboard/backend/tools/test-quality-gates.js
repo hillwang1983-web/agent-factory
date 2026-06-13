@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-function runCommand(cmd, cwd) {
+function runCommand(cmd, cwd, env = {}) {
   console.log(`Running command: ${cmd}`);
   try {
-    const stdout = execSync(cmd, { cwd, encoding: 'utf-8' });
+    const stdout = execSync(cmd, { cwd, encoding: 'utf-8', env: { ...process.env, ...env } });
     return { status: 0, stdout };
   } catch (error) {
     return { status: error.status || 1, stderr: error.stderr || error.message, stdout: error.stdout };
@@ -16,12 +16,12 @@ async function runTests() {
   console.log('--- STARTING QUALITY GATES integration tests ---');
   const workspaceRoot = process.env.WORKSPACE_ROOT || '/Users/hill/open5gs';
   const aduId = 'REQ-MVP-004';
-  
+
   console.log(`Workspace Root: ${workspaceRoot}`);
 
   const registryAduPath = path.join(workspaceRoot, '.ai-agent', 'registry', 'adu.json');
   const registryAgentsPath = path.join(workspaceRoot, '.ai-agent', 'registry', 'agents.json');
-  
+
   // Backups
   const aduBackup = fs.readFileSync(registryAduPath, 'utf-8');
   const agentsBackup = fs.readFileSync(registryAgentsPath, 'utf-8');
@@ -67,7 +67,7 @@ async function runTests() {
     // TEST CASE 1: Code Review Fail Routing
     // ==========================================
     console.log('\n--- Test Case 1: Code Review Fail Routing ---');
-    
+
     // Write simulated failed code review report
     const mockCodeReviewFail = {
       version: 1,
@@ -117,7 +117,7 @@ async function runTests() {
     if (orchCRResult.status !== 0) {
       console.log('Orchestrator CR stderr:', orchCRResult.stderr);
     }
-    
+
     // Load registry and assert transition
     const updatedAduData = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
     const finalAdu = updatedAduData.adus.find(a => a.id === aduId);
@@ -136,7 +136,7 @@ async function runTests() {
     // TEST CASE 2: Acceptance Fail Routing
     // ==========================================
     console.log('\n--- Test Case 2: Acceptance Fail Routing ---');
-    
+
     // Write simulated failed acceptance review report
     const mockAcceptanceFail = {
       version: 1,
@@ -196,20 +196,109 @@ async function runTests() {
     console.log('  [PASS] Correctly transitioned state to acceptance_rework and incremented acceptance_review_failures counter.');
 
     // ==========================================
-    // TEST CASE 3: Evidence cannot run before acceptance
+    // TEST CASE 3: Environment-only acceptance failure opens human gate
     // ==========================================
-    console.log('\n--- Test Case 3: Evidence cannot run before acceptance ---');
-    
-    // Set state back to "debugged"
+    console.log('\n--- Test Case 3: Environment-only acceptance failure opens human gate ---');
+
+    const mockAcceptanceEnvGate = {
+      version: 1,
+      adu_id: aduId,
+      acceptance_status: "fail",
+      summary: "Runtime verification requires MongoDB + WebUI environment",
+      assertion_results: [
+        { assertion_id: "A1", status: "pass" },
+        { assertion_id: "A2", status: "not_verified" }
+      ],
+      negative_assertion_results: [
+        { assertion_id: "N1", status: "pass" }
+      ],
+      mismatch_findings: [],
+      missing_evidence: [
+        {
+          assertion_id: "A2",
+          required_artifact: ".ai-agent/evidence/REQ-MVP-004.json",
+          detail: "Requires MongoDB + WebUI runtime environment and HTTP/curl verification."
+        }
+      ],
+      next_state: "acceptance_rework"
+    };
+    fs.writeFileSync(acceptanceJsonPath, JSON.stringify(mockAcceptanceEnvGate, null, 2), 'utf-8');
+    fs.writeFileSync(acceptanceMdPath, '# Mock Acceptance Review Md\nEnvironment gate', 'utf-8');
+
+    const aduDataEnvGate = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
+    const aduIdxEnvGate = aduDataEnvGate.adus.findIndex(a => a.id === aduId);
+    aduDataEnvGate.adus[aduIdxEnvGate].state = 'debugged';
+    aduDataEnvGate.adus[aduIdxEnvGate].human_gate_required = false;
+    delete aduDataEnvGate.adus[aduIdxEnvGate].gate_type;
+    delete aduDataEnvGate.adus[aduIdxEnvGate].pre_gate_state;
+    aduDataEnvGate.adus[aduIdxEnvGate].review_counters.acceptance_review_failures = 0;
+    fs.writeFileSync(registryAduPath, JSON.stringify(aduDataEnvGate, null, 2), 'utf-8');
+
+    const envGateResult = runCommand(
+      `python3 scripts/hermes_agent_orchestrator.py --adu ${aduId} --mode step ${orchProjectArgs}`,
+      workspaceRoot,
+      { MOCK_HERMES_ACCEPTANCE_STATUS: 'pass' }
+    );
+    console.log('Orchestrator environment gate stdout:', envGateResult.stdout);
+
+    const updatedAfterEnvGate = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
+    const envGateAdu = updatedAfterEnvGate.adus.find(a => a.id === aduId);
+    console.log(`New ADU state after environment-only acceptance fail: ${envGateAdu.state}`);
+    if (envGateAdu.state !== 'human_gate') {
+      throw new Error(`Expected environment-only acceptance fail to open 'human_gate', got '${envGateAdu.state}'`);
+    }
+    if (envGateAdu.gate_type !== 'environment_verification_required') {
+      throw new Error(`Expected gate_type environment_verification_required, got '${envGateAdu.gate_type}'`);
+    }
+    if (envGateAdu.human_gate_required !== true) {
+      throw new Error('Expected human_gate_required to be true for environment verification gate.');
+    }
+    console.log('  [PASS] Environment-only acceptance failure opened human gate for operator judgment.');
+
+    // ==========================================
+    // TEST CASE 4: Acceptance artifact overrides inconsistent stdout
+    // ==========================================
+    console.log('\n--- Test Case 4: Acceptance artifact overrides inconsistent stdout ---');
+
+    fs.writeFileSync(acceptanceJsonPath, JSON.stringify(mockAcceptanceFail, null, 2), 'utf-8');
+    fs.writeFileSync(acceptanceMdPath, '# Mock Acceptance Review Md\nFail', 'utf-8');
+
     const aduData3 = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
     const aduIdx3 = aduData3.adus.findIndex(a => a.id === aduId);
     aduData3.adus[aduIdx3].state = 'debugged';
+    aduData3.adus[aduIdx3].review_counters.acceptance_review_failures = 0;
     fs.writeFileSync(registryAduPath, JSON.stringify(aduData3, null, 2), 'utf-8');
+
+    const mismatchResult = runCommand(
+      `python3 scripts/hermes_agent_orchestrator.py --adu ${aduId} --mode step ${orchProjectArgs}`,
+      workspaceRoot,
+      { MOCK_HERMES_ACCEPTANCE_STATUS: 'pass' }
+    );
+    console.log('Orchestrator mismatch stdout:', mismatchResult.stdout);
+
+    const updatedAfterMismatch = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
+    const mismatchAdu = updatedAfterMismatch.adus.find(a => a.id === aduId);
+    console.log(`New ADU state after inconsistent acceptance stdout/artifact: ${mismatchAdu.state}`);
+    if (mismatchAdu.state !== 'acceptance_rework') {
+      throw new Error(`Expected artifact fail to force 'acceptance_rework', got '${mismatchAdu.state}'`);
+    }
+    console.log('  [PASS] Acceptance artifact fail overrode inconsistent stdout pass.');
+
+    // ==========================================
+    // TEST CASE 5: Evidence cannot run before acceptance
+    // ==========================================
+    console.log('\n--- Test Case 5: Evidence cannot run before acceptance ---');
+
+    // Set state back to "debugged"
+    const aduData4 = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
+    const aduIdx4 = aduData4.adus.findIndex(a => a.id === aduId);
+    aduData4.adus[aduIdx4].state = 'debugged';
+    fs.writeFileSync(registryAduPath, JSON.stringify(aduData4, null, 2), 'utf-8');
 
     // Query hermes_agent_next.py run check
     const nextAgentResult = runCommand(`python3 scripts/hermes_agent_next.py`, workspaceRoot);
     console.log(`Next agent output line: ${nextAgentResult.stdout.split('\n')[0]}`);
-    
+
     // Assert next agent is "acceptance-reviewer", not "evidence"
     if (!nextAgentResult.stdout.includes('--agent acceptance-reviewer')) {
       throw new Error(`Expected next agent command to target 'acceptance-reviewer', but got output: ${nextAgentResult.stdout}`);
@@ -217,9 +306,9 @@ async function runTests() {
     console.log('  [PASS] Verified next agent from state debugged is acceptance-reviewer and not evidence.');
 
     // ==========================================
-    // TEST CASE 4: Contract missing verification command directly
+    // TEST CASE 6: Contract missing verification command directly
     // ==========================================
-    console.log('\n--- Test Case 4: Contract missing verification command directly ---');
+    console.log('\n--- Test Case 6: Contract missing verification command directly ---');
     const mockContractInvalid = {
       version: 2,
       adu_id: aduId,
@@ -274,9 +363,9 @@ async function runTests() {
     console.log('  [PASS] Successfully rejected contract with missing verification fields.');
 
     // ==========================================
-    // TEST CASE 5: Contract validation failure state rollback
+    // TEST CASE 7: Contract validation failure state rollback
     // ==========================================
-    console.log('\n--- Test Case 5: Contract validation failure state rollback ---');
+    console.log('\n--- Test Case 7: Contract validation failure state rollback ---');
 
     // Explicitly write the invalid contract (missing verification_command) so the validator will fail.
     // This makes the test self-contained and independent of TC4 side-effects.
@@ -318,10 +407,10 @@ async function runTests() {
     fs.writeFileSync(contractJsonPath, JSON.stringify(mockContractRollback, null, 2), 'utf-8');
 
     // Set ADU state to "designed"
-    const aduData4 = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
-    const aduIdx4 = aduData4.adus.findIndex(a => a.id === aduId);
-    aduData4.adus[aduIdx4].state = 'designed';
-    fs.writeFileSync(registryAduPath, JSON.stringify(aduData4, null, 2), 'utf-8');
+    const aduData5 = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
+    const aduIdx5 = aduData5.adus.findIndex(a => a.id === aduId);
+    aduData5.adus[aduIdx5].state = 'designed';
+    fs.writeFileSync(registryAduPath, JSON.stringify(aduData5, null, 2), 'utf-8');
 
     // Run orchestrator step: mock-hermes reports success, but validate_agent_contract.py must then
     // reject the invalid contract and cause hermes_agent_run.py to flip result to "failed".
@@ -352,9 +441,9 @@ async function runTests() {
     console.log('  [PASS] Correctly rolled back/maintained designed state when contract validation failed.');
 
     // ==========================================
-    // TEST CASE 6: Code review pass with P1/P2 findings rejected
+    // TEST CASE 8: Code review pass with P1/P2 findings rejected
     // ==========================================
-    console.log('\n--- Test Case 6: Code review pass with P1/P2 findings rejected ---');
+    console.log('\n--- Test Case 8: Code review pass with P1/P2 findings rejected ---');
     const mockCodeReviewPassInvalid = {
       version: 1,
       adu_id: aduId,
@@ -376,7 +465,7 @@ async function runTests() {
       next_state: "code_reviewed"
     };
     fs.writeFileSync(codeReviewJsonPath, JSON.stringify(mockCodeReviewPassInvalid, null, 2), 'utf-8');
-    
+
     const valCRPassInvalidResult = runCommand(`python3 scripts/validate_quality_report.py --adu ${aduId} --kind code-review`, workspaceRoot);
     console.log(`CR Pass Validator status code: ${valCRPassInvalidResult.status}`);
     console.log(`CR Pass Validator stdout/stderr: ${valCRPassInvalidResult.stderr || valCRPassInvalidResult.stdout}`);
@@ -386,10 +475,10 @@ async function runTests() {
     console.log('  [PASS] Successfully rejected pass code-review report containing P1 findings.');
 
     // ==========================================
-    // TEST CASE 7: Empty acceptance pass rejected
+    // TEST CASE 9: Empty acceptance pass rejected
     // ==========================================
-    console.log('\n--- Test Case 7: Empty acceptance pass rejected ---');
-    
+    console.log('\n--- Test Case 9: Empty acceptance pass rejected ---');
+
     // Write valid contract first to define must_pass assertions
     const mockContractValid = {
       version: 2,
@@ -471,7 +560,7 @@ async function runTests() {
     } else if (fs.existsSync(codeReviewJsonPath)) {
       fs.unlinkSync(codeReviewJsonPath);
     }
-    
+
     if (codeReviewMdBackup) {
       fs.writeFileSync(codeReviewMdPath, codeReviewMdBackup, 'utf-8');
     } else if (fs.existsSync(codeReviewMdPath)) {

@@ -23,10 +23,13 @@ if (promptArg.includes('Code Reviewer Agent') || promptArg.includes('# Code Revi
     "next_agent": "developer"
   }, null, 2) + '\n```');
 } else if (promptArg.includes('Acceptance Reviewer Agent') || promptArg.includes('# Acceptance Reviewer')) {
+  const acceptanceStatus = process.env.MOCK_HERMES_ACCEPTANCE_STATUS || 'fail';
+  const nextState = acceptanceStatus === 'pass' ? 'acceptance_reviewed' : 'acceptance_rework';
+  const nextAgent = acceptanceStatus === 'pass' ? 'evidence' : 'developer';
   console.log('```json\n' + JSON.stringify({
     "result": "success",
-    "acceptance_status": "fail",
-    "next_state": "acceptance_rework",
+    "acceptance_status": acceptanceStatus,
+    "next_state": nextState,
     "changed_files": [
       ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.json",
       ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.md"
@@ -36,9 +39,9 @@ if (promptArg.includes('Code Reviewer Agent') || promptArg.includes('# Code Revi
       ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.md"
     ],
     "risks": [
-      "Acceptance review failed. Developer rework required."
+      acceptanceStatus === 'pass' ? "Acceptance review passed." : "Acceptance review failed. Developer rework required."
     ],
-    "next_agent": "developer"
+    "next_agent": nextAgent
   }, null, 2) + '\n```');
 } else {
   console.log('```json\n' + JSON.stringify({

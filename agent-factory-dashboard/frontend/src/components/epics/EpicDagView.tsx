@@ -1,8 +1,8 @@
-import type { AgentFactoryEpic } from '../../types/agent-factory';
+import type { AgentFactoryEpicView } from '../../types/agent-factory';
 
 interface Props {
-  epic: AgentFactoryEpic;
-  dag: { epic: AgentFactoryEpic | null; children: any[]; dependencies: any[] } | null;
+  epic: AgentFactoryEpicView;
+  dag: { epic: AgentFactoryEpicView | null; children: any[]; dependencies: any[] } | null;
 }
 
 const STATE_COLORS: Record<string, string> = {
@@ -26,9 +26,34 @@ const STATE_COLORS: Record<string, string> = {
   canceled: 'bg-slate-600',
 };
 
+const PHASES = [
+  { id: 'flow', label: 'System Flow' },
+  { id: 'split', label: 'Split Plan' },
+  { id: 'child_adus', label: 'Child ADUs' },
+  { id: 'epic_acceptance', label: 'Epic Acceptance' },
+  { id: 'completed', label: 'Completed' },
+];
+
 export function EpicDagView({ epic, dag }: Props) {
   const children = dag?.children || [];
   const deps = dag?.dependencies || epic.dependencies || [];
+
+  const progress = epic.progress || {
+    current_phase: 'flow',
+    completed_phases: [],
+    child_summary: { total: 0, evidenced: 0, blocked: 0, running: 0 }
+  };
+
+  const emptyMessageByState: Record<string, string> = {
+    created: '暂无子 ADU — 请先点击“启动”执行系统链路设计。',
+    flow_designed: '系统链路设计已完成 — 请点击“单步执行”生成拆分方案。',
+    split_decision: '拆分方案已生成 — 请点击“单步执行”确认拆分决策。',
+    split_required: '拆分方案要求创建子 ADU — 请点击“生成子ADU”或“单步执行”。',
+    epic_planned: 'Epic 已规划 — 正在等待子 ADU 创建结果刷新。',
+    child_adus_created: '子 ADU 已创建 — 正在加载子 ADU DAG。',
+    child_adus_running: '子 ADU 正在运行 — 正在等待状态刷新。',
+    child_adus_blocked: '子 ADU 阻塞 — 请查看子 ADU 状态和审核门。',
+  };
 
   // Build tree: find root nodes (no dependencies FROM other children to them)
   const depTargets = new Set(deps.map((d: any) => d.to));
@@ -66,6 +91,33 @@ export function EpicDagView({ epic, dag }: Props) {
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+      {/* Epic Progress Phases */}
+      <div className="flex items-center justify-between gap-1 mb-6 bg-slate-950 p-2.5 rounded border border-slate-800/40">
+        {PHASES.map((p, idx) => {
+          const isCurrent = progress.current_phase === p.id;
+          const isCompleted = progress.completed_phases.includes(p.id);
+          const isFailed = progress.current_phase === 'failed';
+
+          let statusColor = 'text-slate-500 border-slate-850 bg-slate-900/10';
+          if (isCompleted) statusColor = 'text-green-400 border-green-500/30 bg-green-500/5';
+          else if (isCurrent) {
+            statusColor = isFailed ? 'text-red-400 border-red-500/30 bg-red-500/5' : 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5 font-semibold';
+          }
+
+          return (
+            <div key={p.id} className="flex-1 flex items-center gap-1 min-w-0">
+              <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[9px] truncate ${statusColor}`}>
+                <span className="font-mono text-[8px] opacity-75">{idx + 1}.</span>
+                <span>{p.label}</span>
+              </div>
+              {idx < PHASES.length - 1 && (
+                <span className="text-slate-700 text-[10px] font-mono select-none px-0.5">→</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       <div className="text-xs font-semibold text-slate-400 mb-3">Epic DAG</div>
       <div className="mb-3 flex items-center gap-2">
         <span className="inline-block w-3 h-3 rounded bg-cyan-500" />
@@ -76,7 +128,7 @@ export function EpicDagView({ epic, dag }: Props) {
         {roots.map((root: any) => renderNode(root))}
         {children.length === 0 && (
           <div className="text-xs text-slate-600 py-2">
-            {epic.child_adus.length === 0 ? '暂无子 ADU — 请先启动 Epic 进行系统链路设计和拆分' : '加载中...'}
+            {epic.child_adus.length === 0 ? (emptyMessageByState[epic.state] || '暂无子 ADU') : '加载中...'}
           </div>
         )}
       </div>

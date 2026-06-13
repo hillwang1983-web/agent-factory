@@ -5,7 +5,17 @@ import { EpicDagView } from './EpicDagView';
 import { EpicControlPanel } from './EpicControlPanel';
 import { EpicChildAduTable } from './EpicChildAduTable';
 import { EpicOverviewPanel } from './EpicOverviewPanel';
-import { Layers, Plus } from 'lucide-react';
+import { Layers, Plus, X } from 'lucide-react';
+import { WorkflowTimeline } from '../agent-factory/WorkflowTimeline';
+import { QualityReportPanel } from '../agent-factory/QualityReportPanel';
+import { ReviewGatePanel } from '../agent-factory/ReviewGatePanel';
+import { OrchestratorControlPanel } from '../agent-factory/OrchestratorControlPanel';
+import { TokenBudgetChart } from '../agent-factory/TokenBudgetChart';
+import { WritePathExpansionPanel } from '../agent-factory/WritePathExpansionPanel';
+import { OperationStatusBanner } from '../operations/OperationStatusBanner';
+import { OperationEventTimeline } from '../operations/OperationEventTimeline';
+import { EvidenceMatrixPanel } from '../evidence/EvidenceMatrixPanel';
+
 
 const EPIC_STATE_LABELS: Record<string, string> = {
   created: '已创建',
@@ -27,17 +37,37 @@ const EPIC_STATE_LABELS: Record<string, string> = {
 
 export function EpicsPage() {
   const {
-    projects, epics, selectedEpicId, epicDag,
-    fetchEpics, selectEpic, createEpic, refresh,
+    projects, epics, selectedEpicId, epicDag, dashboard,
+    fetchEpics, selectEpic, createEpic, refresh, loadEpicDag, selectAdu,
+    activeOperations,
   } = useAgentFactoryStore();
+
+
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedProject, setSelectedProject] = useState<string>('');
+  const [activeChildAduId, setActiveChildAduId] = useState<string | null>(null);
+
 
   useEffect(() => {
     fetchEpics();
     refresh();
-  }, []);
+  }, [fetchEpics, refresh]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchEpics();
+      if (selectedEpicId) {
+        void loadEpicDag(selectedEpicId);
+      }
+      if (activeChildAduId) {
+        void refresh();
+      }
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [fetchEpics, loadEpicDag, selectedEpicId, activeChildAduId, refresh]);
+
 
   const handleCreateEpic = async (projectId: string, input: any) => {
     await createEpic(projectId, input);
@@ -45,6 +75,8 @@ export function EpicsPage() {
   };
 
   const selectedEpic = epics.find(e => e.id === selectedEpicId) || null;
+  const selectedChildAdu = dashboard?.adus.find((a) => a.id === activeChildAduId) || null;
+
   const profiledProjects = projects.filter(p => p.status === 'profiled');
 
   return (
@@ -116,7 +148,15 @@ export function EpicsPage() {
           {selectedEpic ? (
             <>
               <EpicDagView epic={selectedEpic} dag={epicDag} />
-              <EpicChildAduTable children={epicDag?.children || []} />
+               <EpicChildAduTable
+                children={epicDag?.children || []}
+                onSelectAdu={(aduId) => {
+                  selectAdu(aduId);
+                  setActiveChildAduId(aduId);
+                }}
+                selectedAduId={activeChildAduId}
+              />
+
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">
@@ -136,6 +176,48 @@ export function EpicsPage() {
         </div>
       </div>
 
+      {/* Child ADU sliding details Drawer */}
+      {selectedChildAdu && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity"
+            onClick={() => { setActiveChildAduId(null); selectAdu(''); }}
+          />
+          <div className="fixed inset-y-0 right-0 w-[550px] bg-slate-900 border-l border-slate-800 shadow-2xl z-50 flex flex-col transition-all duration-300 ease-in-out">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-10">
+              <div className="min-w-0">
+                <span className="font-mono text-xs font-bold text-cyan-400">{selectedChildAdu.id}</span>
+                <h3 className="text-sm font-semibold text-white truncate mt-0.5" title={selectedChildAdu.title}>
+                  {selectedChildAdu.title}
+                </h3>
+              </div>
+              <button
+                onClick={() => { setActiveChildAduId(null); selectAdu(''); }}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-6">
+              <OperationStatusBanner targetType="adu" targetId={selectedChildAdu.id} />
+              <OrchestratorControlPanel aduId={selectedChildAdu.id} />
+              <WorkflowTimeline adu={selectedChildAdu} />
+              <EvidenceMatrixPanel aduId={selectedChildAdu.id} />
+              <QualityReportPanel adu={selectedChildAdu} />
+              <ReviewGatePanel aduId={selectedChildAdu.id} />
+              <WritePathExpansionPanel aduId={selectedChildAdu.id} />
+              <OperationEventTimeline operationId={activeOperations[selectedChildAdu.id]?.operation_id || activeOperations[selectedChildAdu.id]?.id || null} />
+              <TokenBudgetChart aduId={selectedChildAdu.id} />
+            </div>
+
+          </div>
+        </>
+      )}
+
       {/* Create Modal */}
       {showCreateModal && (
         <CreateEpicModal
@@ -145,6 +227,7 @@ export function EpicsPage() {
           onCreate={handleCreateEpic}
         />
       )}
+
     </div>
   );
 }

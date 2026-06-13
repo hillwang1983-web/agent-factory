@@ -159,16 +159,19 @@ def make_repo(tmpdir, adu_id, kind, report_data, contract_data=None):
     return str(repo)
 
 
-def make_registry(tmpdir, adu_id, repo_path):
+def make_registry(tmpdir, adu_id, repo_path, adu_extra=None):
     reg = Path(tmpdir) / "registry"
     reg.mkdir(parents=True, exist_ok=True)
+    adu = {"id": adu_id, "project_id": "proj-A", "repo_path": repo_path, "state": "implemented",
+           "title": "t", "goal": "g", "retry_count": 0, "max_retries": 3, "risk": "low",
+           "target_level": "mvp", "allowed_read_paths": [], "allowed_write_paths": [".ai-agent/"],
+           "required_commands": [], "required_evidence": [], "artifacts": [],
+           "human_gate_required": False}
+    if adu_extra:
+        adu.update(adu_extra)
     (reg / "adu.json").write_text(json.dumps({
         "version": 1,
-        "adus": [{"id": adu_id, "project_id": "proj-A", "repo_path": repo_path, "state": "implemented",
-                  "title": "t", "goal": "g", "retry_count": 0, "max_retries": 3, "risk": "low",
-                  "target_level": "mvp", "allowed_read_paths": [], "allowed_write_paths": [".ai-agent/"],
-                  "required_commands": [], "required_evidence": [], "artifacts": [],
-                  "human_gate_required": False}]
+        "adus": [adu]
     }), encoding="utf-8")
     return str(reg)
 
@@ -286,6 +289,45 @@ with tempfile.TemporaryDirectory() as tmp:
     reg = make_registry(tmp, "REQ-T14", repo)
     assert_pass("T14: well-formed fail code-review → exit 0", "REQ-T14", "code-review",
                 repo_root=repo, extra_env={"AGENT_FACTORY_REGISTRY_DIR": reg})
+
+# T15 — acceptance pass may include a waived assertion only when covered by an approved environment waiver
+with tempfile.TemporaryDirectory() as tmp:
+    report = minimal_acceptance_review("REQ-T15", status="pass")
+    report["assertion_results"][1]["status"] = "waived"
+    report["assertion_results"][1]["observed_result"] = "Skipped due to approved environment waiver waiver-REQ-T15-001"
+    report["missing_evidence"] = [{
+        "assertion_id": "A2",
+        "required_artifact": "Docker regression output",
+        "detail": "Covered by approved environment waiver waiver-REQ-T15-001"
+    }]
+    contract = minimal_contract("REQ-T15")
+    repo = make_repo(tmp, "REQ-T15", "acceptance", report, contract_data=contract)
+    reg = make_registry(tmp, "REQ-T15", repo, adu_extra={
+        "human_gate_waivers": [{
+            "waiver_id": "waiver-REQ-T15-001",
+            "type": "environment",
+            "from_state": "human_gate",
+            "pre_gate_state": "code_reviewed",
+            "to_state": "debugged",
+            "comment": "Docker regression environment unavailable on this host.",
+            "approved_by": "local-user",
+            "created_at": "2026-06-12T00:00:00Z"
+        }]
+    })
+    assert_pass("T15: acceptance pass allows waived assertion with approved environment waiver → exit 0",
+                "REQ-T15", "acceptance", repo_root=repo,
+                extra_env={"AGENT_FACTORY_REGISTRY_DIR": reg})
+
+# T16 — acceptance pass with waived assertion but no approved environment waiver → fail
+with tempfile.TemporaryDirectory() as tmp:
+    report = minimal_acceptance_review("REQ-T16", status="pass")
+    report["assertion_results"][1]["status"] = "waived"
+    contract = minimal_contract("REQ-T16")
+    repo = make_repo(tmp, "REQ-T16", "acceptance", report, contract_data=contract)
+    reg = make_registry(tmp, "REQ-T16", repo)
+    assert_fail("T16: acceptance pass rejects waived assertion without approved environment waiver → fail",
+                "REQ-T16", "acceptance", repo_root=repo,
+                extra_env={"AGENT_FACTORY_REGISTRY_DIR": reg})
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 

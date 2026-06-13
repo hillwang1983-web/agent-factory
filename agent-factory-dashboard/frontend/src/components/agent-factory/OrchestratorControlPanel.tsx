@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { RefreshCw, Play, Pause, X, Lock, SkipForward, AlertTriangle } from 'lucide-react';
 import { agentFactoryApi } from '../../api/agentFactory';
 import { useAgentFactoryStore } from '../../stores/agentFactory';
+import { HumanGateDispositionPanel } from './HumanGateDispositionPanel';
 
 interface OrchestratorControlPanelProps {
   aduId?: string;
@@ -105,24 +106,13 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
         </div>
       )}
 
-      {isHumanGate && (
-        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-md text-xs text-red-400">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <div className="space-y-1.5">
-            <div className="font-semibold">管道已停在人工干预节点 (Human Gate)。</div>
-            <div className="text-red-300/90">
-              编排器因超出最大重试次数或触发 Token 预算硬停止保护而暂停。请查阅右侧运行日志确认具体原因。
-            </div>
-            <div className="text-red-300/90">
-              确认原因并处理后，点击下方 <span className="font-semibold text-red-300">「继续自动」</span> 按钮可从上一检查点恢复自动流转；也可点击 <span className="font-semibold text-red-300">「单步执行」</span> 逐步推进以便观察每步结果。
-            </div>
-          </div>
-        </div>
+      {isHumanGate && adu && (
+        <HumanGateDispositionPanel adu={adu} />
       )}
 
       {error && <div className="text-sm text-red-400">{error}</div>}
       {actionLabel && <div className="text-xs text-nms-text-dim">{actionLabel}</div>}
-      
+
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-2">
           <button
@@ -133,7 +123,7 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
           >
             <Play className="w-3.5 h-3.5" /> {startButtonText}
           </button>
-          
+
           <button
             onClick={() => void handleAction('step')}
             disabled={isStepDisabled}
@@ -150,7 +140,7 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
           >
             <Pause className="w-3.5 h-3.5" /> 暂停
           </button>
-          
+
           <button
             onClick={() => void handleAction('continue')}
             disabled={isContinueDisabled}
@@ -158,7 +148,7 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
           >
             <RefreshCw className="w-3.5 h-3.5" /> 继续自动
           </button>
-          
+
           <button
             onClick={() => void handleAction('cancel')}
             disabled={isCancelDisabled}

@@ -53,9 +53,27 @@ export interface AgentFactoryAdu {
   artifacts: string[];
   human_gate_required: boolean;
   paused?: boolean;
+  pre_gate_state?: string;
   language?: string;
   clarifications?: AgentFactoryDraftQuestionAnswer[];
   source_summary?: string;
+  gate_type?: string;
+  write_path_policy?: {
+    mode: 'strict_with_expansion' | string;
+    auto_approve_derived: boolean;
+    human_approval_required_for_medium_risk: boolean;
+    max_expansion_paths_per_request: number;
+  };
+  write_path_expansions?: Array<{
+    request_id: string;
+    source_agent: string;
+    requested_paths: string[];
+    approved_paths: string[];
+    decision: 'auto_approved' | 'pending_human_approval' | 'approved' | 'rejected' | 'blocked';
+    reason: string;
+    created_at: string;
+    updated_at: string;
+  }>;
   review_policy?: AgentFactoryReviewPolicy;
   command_policy?: AgentFactoryCommandPolicy;
   created_at?: string;
@@ -88,7 +106,16 @@ export interface AgentFactoryAdu {
       status: string;
     }>;
   };
+  clarification_questions?: Array<{
+    id: string;
+    question: string;
+    blocking: boolean;
+    status: 'pending' | 'answered' | 'deferred';
+    answer?: string | null;
+    answered_at?: string | null;
+  }>;
 }
+
 
 export interface AgentFactoryAgentConfig {
   description: string;
@@ -102,6 +129,7 @@ export interface AgentFactoryRun {
   adu_id: string;
   agent: string;
   returncode: number;
+  effective_returncode?: number;
   result: string;
   run_dir: string;
   parsed_result: {
@@ -148,6 +176,11 @@ export interface AgentFactoryAduView extends AgentFactoryAdu {
   health: {
     status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
     reasons: string[];
+  };
+  display_status: {
+    kind: 'completed' | 'running' | 'blocked' | 'failed' | 'active' | 'stale' | 'canceled';
+    label: string;
+    reason: string;
   };
 }
 
@@ -378,5 +411,17 @@ export interface AgentFactoryEpicView extends AgentFactoryEpic {
   health: {
     status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
     reasons: string[];
+  };
+  progress: {
+    current_phase: 'flow' | 'split' | 'child_adus' | 'epic_acceptance' | 'completed' | 'failed';
+    completed_phases: string[];
+    current_agent: string | null;
+    next_action: string | null;
+    child_summary: {
+      total: number;
+      evidenced: number;
+      blocked: number;
+      running: number;
+    };
   };
 }

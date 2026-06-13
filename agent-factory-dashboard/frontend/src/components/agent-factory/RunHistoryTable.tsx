@@ -76,7 +76,7 @@ export function RunHistoryTable({ runs }: RunHistoryTableProps): JSX.Element {
                     {run.agent}
                   </td>
                   <td className="py-2.5 px-3">
-                    {getResultBadge(run.result, run.returncode)}
+                    {getResultBadge(run.result, run.effective_returncode ?? run.returncode)}
                   </td>
                   <td className="py-2.5 px-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">

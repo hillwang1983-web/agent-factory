@@ -1,4 +1,4 @@
-import type { AgentFactoryDashboard, AgentFactoryRun, QualityReports, AgentFactoryProject, CreateProjectAduInput, AgentFactoryEpic, CreateEpicInput } from '../types/agent-factory';
+import type { AgentFactoryDashboard, AgentFactoryRun, QualityReports, AgentFactoryProject, CreateProjectAduInput, CreateEpicInput, AgentFactoryEpicView } from '../types/agent-factory';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -105,6 +105,35 @@ export const agentFactoryApi = {
     }
   },
 
+  async waiveHumanGate(aduId: string, params: { reasonType: 'environment'; comment: string }): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/human-gate/waive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to waive human gate');
+    }
+  },
+
+  async disposeHumanGate(aduId: string, params: {
+    disposition: 'environment_waiver' | 'accept_risk' | 'request_rework' | 'provide_missing_evidence' | 'external_dependency_block' | 'cancel_adu';
+    comment: string;
+    affectedAssertions?: string[];
+  }): Promise<{ success: boolean; state: string; disposition: any }> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/human-gate/disposition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to dispose human gate');
+    }
+    return res.json();
+  },
+
   async fetchTokenBudget(aduId?: string): Promise<any> {
     const url = aduId
       ? `${API_URL}/api/agent-factory/token-budget?aduId=${aduId}`
@@ -116,7 +145,7 @@ export const agentFactoryApi = {
     return res.json();
   },
 
-  async runNextStep(aduId: string): Promise<void> {
+  async runNextStep(aduId: string): Promise<any> {
     const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/run-next-step`, {
       method: 'POST',
     });
@@ -124,6 +153,7 @@ export const agentFactoryApi = {
       const txt = await res.text();
       throw new Error(`Failed to run next step: ${txt}`);
     }
+    return res.json();
   },
 
   async appendAduPaths(aduId: string, addWritePaths: string[], addReadPaths: string[]): Promise<void> {
@@ -353,13 +383,13 @@ export const agentFactoryApi = {
 
   // ── Phase 3: Epic ──
 
-  async fetchEpics(): Promise<{ epics: AgentFactoryEpic[] }> {
+  async fetchEpics(): Promise<{ epics: AgentFactoryEpicView[] }> {
     const res = await fetch(`${API_URL}/api/agent-factory/epics`);
     if (!res.ok) throw new Error('Failed to fetch Epics');
     return res.json();
   },
 
-  async createEpic(projectId: string, input: CreateEpicInput): Promise<{ epic: AgentFactoryEpic }> {
+  async createEpic(projectId: string, input: CreateEpicInput): Promise<{ epic: AgentFactoryEpicView }> {
     const res = await fetch(`${API_URL}/api/agent-factory/projects/${projectId}/epics`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -372,13 +402,13 @@ export const agentFactoryApi = {
     return res.json();
   },
 
-  async getEpic(epicId: string): Promise<AgentFactoryEpic> {
+  async getEpic(epicId: string): Promise<AgentFactoryEpicView> {
     const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}`);
     if (!res.ok) throw new Error('Failed to fetch Epic');
     return res.json();
   },
 
-  async getEpicDag(epicId: string): Promise<{ epic: AgentFactoryEpic; children: any[]; dependencies: any[] }> {
+  async getEpicDag(epicId: string): Promise<{ epic: AgentFactoryEpicView; children: any[]; dependencies: any[] }> {
     const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/dag`);
     if (!res.ok) throw new Error('Failed to fetch Epic DAG');
     return res.json();
@@ -419,7 +449,199 @@ export const agentFactoryApi = {
     if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to materialize child ADUs'); }
     return res.json();
   },
+
+  async fetchWritePathExpansions(aduId: string): Promise<{ aduId: string; requests: any[] }> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/write-path-expansions`);
+    if (!res.ok) throw new Error('Failed to fetch write path expansions');
+    return res.json();
+  },
+
+  async approveWritePathExpansion(aduId: string, requestId: string, comment?: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/write-path-expansions/${requestId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to approve write path expansion');
+    }
+    return res.json();
+  },
+
+  async rejectWritePathExpansion(aduId: string, requestId: string, comment?: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/write-path-expansions/${requestId}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to reject write path expansion');
+    }
+    return res.json();
+  },
+
+  async getOperation(operationId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/operations/${operationId}`);
+    if (!res.ok) throw new Error(`Failed to fetch operation ${operationId}`);
+    return res.json();
+  },
+
+  async getLatestOperation(targetType: 'adu' | 'epic', targetId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/${targetType}s/${targetId}/operations/latest`);
+    if (!res.ok) throw new Error(`Failed to fetch latest operation for ${targetType} ${targetId}`);
+    return res.json();
+  },
+
+  async fetchOperations(params?: { targetId?: string; scope?: string }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.targetId) query.append('targetId', params.targetId);
+    if (params?.scope) query.append('scope', params.scope);
+    const res = await fetch(`${API_URL}/api/agent-factory/operations?${query.toString()}`);
+    if (!res.ok) throw new Error('Failed to fetch operations');
+    return res.json();
+  },
+
+  async fetchOperationEvents(operationId: string): Promise<any[]> {
+    const res = await fetch(`${API_URL}/api/agent-factory/operations/${operationId}/events`);
+    if (!res.ok) throw new Error('Failed to fetch operation events');
+    return res.json();
+  },
+
+  async fetchEvents(params?: { targetId?: string; operationId?: string; limit?: number }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.targetId) query.append('targetId', params.targetId);
+    if (params?.operationId) query.append('operationId', params.operationId);
+    if (params?.limit) query.append('limit', String(params.limit));
+    const res = await fetch(`${API_URL}/api/agent-factory/events?${query.toString()}`);
+    if (!res.ok) throw new Error('Failed to fetch events');
+    return res.json();
+  },
+
+  async fetchHumanGates(status?: string): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (status) query.append('status', status);
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates?${query.toString()}`);
+    if (!res.ok) throw new Error('Failed to fetch human gates');
+    return res.json();
+  },
+
+  async fetchHumanGate(gateId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates/${gateId}`);
+    if (!res.ok) throw new Error('Failed to fetch human gate');
+    return res.json();
+  },
+
+  async submitRuntimeResult(gateId: string, params: { command: string; exitCode: number; output: string }): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates/${gateId}/runtime-result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Failed to submit runtime result');
+  },
+
+  async approveWaiver(gateId: string, params: { assertion_ids: string[]; waiver_type: string; reason: string; risk: string; follow_up: string; operator: string }): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates/${gateId}/waive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Failed to approve waiver');
+  },
+
+  async requestHumanGateRework(gateId: string, params: { targetAgent: 'developer' | 'rework-planner'; instruction: string }): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates/${gateId}/request-rework`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Failed to request rework');
+  },
+
+  async cancelGate(gateId: string, reason: string): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates/${gateId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) throw new Error('Failed to cancel gate');
+  },
+
+  async approveGate(gateId: string, comment?: string): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/human-gates/${gateId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment }),
+    });
+    if (!res.ok) throw new Error('Failed to approve gate');
+  },
+
+  async fetchEvidenceMatrix(aduId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/evidence-matrix`);
+    if (!res.ok) throw new Error('Failed to fetch evidence matrix');
+    return res.json();
+  },
+
+  async validateEvidence(aduId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/validate-evidence`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to validate evidence');
+    return res.json();
+  },
+
+  async fetchTokenGovernance(): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/token-governance`);
+    if (!res.ok) throw new Error('Failed to fetch token governance config');
+    return res.json();
+  },
+
+  async updateTokenGovernance(configData: any): Promise<void> {
+    const res = await fetch(`${API_URL}/api/agent-factory/token-governance`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(configData),
+    });
+    if (!res.ok) throw new Error('Failed to update token governance');
+  },
+
+  async estimateNextRun(aduId: string, agent: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/token-governance/estimate-next-run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aduId, agent }),
+    });
+    if (!res.ok) throw new Error('Failed to estimate next run');
+    return res.json();
+  },
+
+  async reconcileEpic(epicId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/epics/${epicId}/reconcile`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to reconcile epic');
+    return res.json();
+  },
+
+  async answerClarification(aduId: string, questionId: string, params: { answer?: string; status?: 'pending' | 'answered' | 'deferred' }): Promise<any> {
+
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/clarifications/${questionId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to submit clarification');
+    }
+    return res.json();
+  },
 };
+
 
 // Named exports for direct use in components
 export const createIntakeDraft = (projectId: string, formData: FormData) =>
@@ -432,3 +654,7 @@ export const updateIntakeDraft = (draftId: string, updates: any) =>
   agentFactoryApi.updateIntakeDraft(draftId, updates);
 export const registerIntakeDraft = (draftId: string, confirmed = false) =>
   agentFactoryApi.registerIntakeDraft(draftId, confirmed);
+export const getOperation = (operationId: string) =>
+  agentFactoryApi.getOperation(operationId);
+export const getLatestOperation = (targetType: 'adu' | 'epic', targetId: string) =>
+  agentFactoryApi.getLatestOperation(targetType, targetId);

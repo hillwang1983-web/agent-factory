@@ -40,7 +40,7 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
   - Include at least 1 `negative_assertion` for forbidden folders, files, or side-effects.
   - Every assertion must have a specific, measurable `expected_evidence`. **NEVER** use vague words (such as `works correctly`, `implemented`, `looks good`, `as expected`, `normal`).
   - Define `evidence_requirements` linking assertion results to expected output fields in `.ai-agent/evidence/{{ADU_ID}}.json`.
-- **Allowed Write Paths**: Ensure the contract's `allowed_write_paths` matches or is narrower than the ADU's allowed write paths.
+- **Allowed Write Paths**: List all repository-relative paths the developer is allowed to write to under `scope.allowed_write_paths`. If any path is broader than the ADU's allowed write paths, list it anyway. The contract validator will evaluate it against the policy engine: low-risk derived paths will be auto-approved, while higher-risk paths will pause the workflow for human approval. Blocked paths will fail validation.
 - **Do not modify production code**.
 - **LANGUAGE POLICY**: Write the contract notes in Chinese (简体中文). Variables, code snippets, fields, and commands in the JSON file remain in English.
 
@@ -152,6 +152,8 @@ The notes file must follow this Chinese structure:
 ## Final Response JSON Block
 
 End your final response with exactly one fenced JSON block:
+
+The fenced JSON block must be valid JSON parsable by `json.loads`. If a string value mentions a quoted code word, either remove the quotes or escape them as `\"...\"`. Do not emit bare double quotes inside JSON string values.
 
 ```json
 {

@@ -142,6 +142,7 @@ async function main() {
       version: 1, epic_id: 'EPIC-X',
       business_operations: [
         { id: 'OP-1', name: 'Suspend', entrypoints: ['CLI'], state_changes: ['DB update'], runtime_effects: ['Reject reg'] },
+        { id: 'OP-QUERY', name: '查询状态', entrypoints: ['GET /status'], state_changes: [], runtime_effects: ['Return current status'] },
       ],
       module_flows: [
         { operation_id: 'OP-1', steps: [{ order: 1, module: 'DBI', path_candidates: ['lib/dbi/'], responsibility: 'Persist' }] },
@@ -217,6 +218,90 @@ async function main() {
     } catch (e) {
       if (e.stdout) throw new Error(e.stdout.toString());
       throw e;
+    }
+  });
+
+  // Test 12: epic split pre-derivation rule matching multiple derived paths logs unique audits
+  assert('epic split pre-derivation rule matching multiple derived paths logs unique audits', () => {
+    const rules = {
+      version: 1,
+      rules: [
+        {
+          id: "multi-derive-rule",
+          project_glob: "*",
+          when_requested_path_matches: ["lib/app/*.c"],
+          allow_derived_paths: ["lib/app/meson.build", "lib/app/ogs-app.h"],
+          risk: "low",
+          reason: "Multi-derived path test"
+        }
+      ]
+    };
+    const rulesTemp = writeTempJSON('path-derivation-rules.json', rules);
+
+    const plan = {
+      version: 1,
+      epic_id: 'EPIC-MULTI-TEST',
+      decision: 'split_required',
+      reason: 'Multi-derived test',
+      child_adus: [
+        {
+          id: 'ADU-001',
+          title: 'Test',
+          goal: 'Test multiple derived paths',
+          scope: 'Testing scope',
+          allowed_write_paths: ['lib/app/main.c'],
+          required_commands: [],
+          acceptance_summary: 'OK'
+        },
+        {
+          id: 'ADU-002',
+          title: 'Dummy',
+          goal: 'Dummy goal',
+          scope: 'Dummy scope',
+          allowed_write_paths: ['lib/other/file.c'],
+          required_commands: [],
+          acceptance_summary: 'OK'
+        }
+      ],
+      dependencies: []
+    };
+    const planTemp = writeTempJSON('split-plan.json', plan);
+
+    try {
+      // Run validator with AGENT_FACTORY_RULES_PATH
+      execFileSync('python3', [VALIDATE_SPLIT, planTemp.path], {
+        env: {
+          ...process.env,
+          AGENT_FACTORY_RULES_PATH: rulesTemp.path
+        },
+        stdio: 'pipe'
+      });
+
+      // Load written back plan
+      const updatedPlan = JSON.parse(fs.readFileSync(planTemp.path, 'utf-8'));
+      const adu = updatedPlan.child_adus.find((a) => a.id === 'ADU-001');
+      if (!adu) throw new Error('Child ADU-001 not found in updated plan');
+
+      const expansions = adu.write_path_expansions || [];
+      if (expansions.length !== 2) {
+        throw new Error(`Expected exactly 2 write_path_expansions, got ${expansions.length}: ${JSON.stringify(expansions)}`);
+      }
+
+      // Check unique request IDs
+      const reqIds = expansions.map((e) => e.request_id);
+      const uniqueReqIds = [...new Set(reqIds)];
+      if (uniqueReqIds.length !== 2) {
+        throw new Error(`Expected request_ids to be unique, got: ${JSON.stringify(reqIds)}`);
+      }
+
+      // Check paths
+      const paths = expansions.map((e) => e.requested_paths[0]);
+      if (!paths.includes('lib/app/meson.build') || !paths.includes('lib/app/ogs-app.h')) {
+        throw new Error(`Expected derived paths meson.build and ogs-app.h, got: ${JSON.stringify(paths)}`);
+      }
+    } finally {
+      cleanup(rulesTemp);
+      cleanup(planTemp);
     }
   });
 

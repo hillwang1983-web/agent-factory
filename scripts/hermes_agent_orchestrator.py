@@ -238,6 +238,7 @@ def main():
     parser.add_argument("--mode", choices=["start", "continue", "pause", "cancel", "step"], required=True)
     parser.add_argument("--project", required=False, help="Project ID")
     parser.add_argument("--repo-root", required=False, help="Repository root path")
+    parser.add_argument("--operation-id", required=False, help="Orchestration operation identifier")
     args = parser.parse_args()
 
     adu_path = REGISTRY / "adu.json"
@@ -375,7 +376,7 @@ def main():
                 break
 
             current_state = adu.get("state", "created")
-            
+
             # Review gate blocking logic
             if current_state in ("analysis_review", "design_review"):
                 gate = "analysis" if current_state == "analysis_review" else "design"
@@ -397,7 +398,7 @@ def main():
                     continue  # Next iteration: process the new state
 
                 art_path = f".ai-agent/analysis/{args.adu}.md" if gate == "analysis" else f".ai-agent/designs/{args.adu}-detailed-design.md"
-                
+
                 # Check and insert pending review record
                 reviews_path = REGISTRY / "reviews.json"
                 reviews_wrapper = {"version": 1, "reviews": []}
@@ -408,7 +409,7 @@ def main():
                             reviews_wrapper = {"version": 1, "reviews": []}
                     except Exception:
                         reviews_wrapper = {"version": 1, "reviews": []}
-                
+
                 reviews_list = reviews_wrapper.get("reviews", [])
                 if not isinstance(reviews_list, list):
                     reviews_list = []
@@ -420,7 +421,7 @@ def main():
                     if isinstance(r, dict) and r.get("adu_id") == args.adu and r.get("gate") == gate and r.get("status") == "pending":
                         has_pending = True
                         break
-                
+
                 if not has_pending:
                     now_str = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
                     new_review = {
@@ -461,6 +462,83 @@ def main():
                 broadcast_event("agent_factory_orchestrator_event", {"adu": args.adu, "state": current_state, "action": "completed"})
                 break
 
+            # Check Token Budget before running agent
+            budget_ok = True
+            try:
+                budget_cmd = [
+                    sys.executable,
+                    str(ROOT / "scripts" / "context_budget.py"),
+                    "--agent", next_agent,
+                    "--adu", args.adu,
+                    "--repo-root", repo_path,
+                    "--registry-dir", str(REGISTRY),
+                    "--mode", "check"
+                ]
+                budget_proc = subprocess.run(budget_cmd, cwd=str(ROOT), capture_output=True, text=True)
+                if budget_proc.returncode == 2:
+                    budget_ok = False
+                    adu["state"] = "human_gate"
+                    adu["human_gate_required"] = True
+                    adu["gate_type"] = "token_budget_approval"
+                    adu["pre_gate_state"] = current_state
+                    save_json(adu_path, adu_data)
+
+                    gates_path = REGISTRY / "human-gates.json"
+                    gates_data = {"version": 1, "gates": []}
+                    if gates_path.exists():
+                        try:
+                            gates_data = load_json(gates_path)
+                        except Exception:
+                            pass
+
+                    gate_id = f"gate-{args.adu}-token_budget_approval-{int(time.time() * 1000)}"
+                    new_gate = {
+                        "gate_id": gate_id,
+                        "scope": "adu",
+                        "target_id": args.adu,
+                        "epic_id": adu.get("epic_id"),
+                        "project_id": project_id,
+                        "gate_type": "token_budget_approval",
+                        "status": "pending",
+                        "title": "Token Budget Hard Stop Blocked",
+                        "reason": f"Estimated context size exceeds the hard budget limit for agent '{next_agent}'.",
+                        "source_agent": next_agent,
+                        "pre_gate_state": current_state,
+                        "available_actions": ["approve", "cancel"],
+                        "created_at": dt.datetime.now(dt.timezone.utc).isoformat()
+                    }
+                    existing_gates = gates_data.get("gates", [])
+                    existing_gates = [g for g in existing_gates if not (g.get("target_id") == args.adu and g.get("gate_type") == "token_budget_approval" and g.get("status") == "pending")]
+                    existing_gates.append(new_gate)
+                    gates_data["gates"] = existing_gates
+                    save_json(gates_path, gates_data)
+
+                    broadcast_event("agent_factory_orchestrator_event", {
+                        "adu": args.adu,
+                        "action": "paused_at_gate",
+                        "gate_type": "token_budget_approval",
+                        "message": "Token budget hard stop triggered. Human approval required."
+                    })
+                    print(json.dumps({
+                        "event": "human_gate_opened",
+                        "gate_type": "token_budget_approval",
+                        "gate_id": gate_id,
+                        "message": "Token budget hard stop triggered. Human approval required."
+                    }))
+                    break
+                elif budget_proc.returncode == 0:
+                    try:
+                        b_data = json.loads(budget_proc.stdout)
+                        if b_data.get("budget_status") == "warning":
+                            print(json.dumps({
+                                "event": "token_budget_warning",
+                                "message": f"Estimated input tokens ({b_data.get('estimated_input_tokens')}) exceeds warning threshold."
+                            }))
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"WARNING: failed to run token budget check: {e}", file=sys.stderr)
+
             # Run the agent
             update_lock_heartbeat(args.adu, args.mode, project_id, repo_root=repo_path)
             rc, out, err = run_agent(args.adu, next_agent, project_id, repo_path)
@@ -498,6 +576,36 @@ def main():
                 output_tokens = token_usage.get("outputTokens", 0)
             except Exception:
                 pass
+
+            if adu.get("state") == "human_gate" or rc == 20 or (result_json and result_json.get("result") == "human_gate"):
+                # Force state in memory and update files if needed
+                adu["state"] = "human_gate"
+                adu["human_gate_required"] = True
+                parsed_result = result_json.get("parsed_result", {}) if result_json else {}
+                gate_type = None
+                if result_json:
+                    gate_type = result_json.get("gate_type") or parsed_result.get("gate_type")
+                if gate_type:
+                    adu["gate_type"] = gate_type
+                elif rc == 20:
+                    adu["gate_type"] = "write_path_expansion"
+
+                # Save to adu.json to ensure persistence
+                save_json(adu_path, adu_data)
+
+                action_str = "paused_at_gate"
+                if adu.get("gate_type") == "write_path_expansion":
+                    action_str = "paused_at_write_path_gate"
+                elif adu.get("gate_type") == "environment_verification_required":
+                    action_str = "paused_at_environment_verification_gate"
+
+                broadcast_event("agent_factory_orchestrator_event", {
+                    "adu": args.adu,
+                    "agent": next_agent,
+                    "state": "human_gate",
+                    "action": action_str,
+                })
+                break
 
 
 

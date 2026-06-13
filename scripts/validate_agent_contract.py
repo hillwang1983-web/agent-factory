@@ -84,18 +84,18 @@ def main():
             if field not in ass:
                 print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] missing field '{field}'", file=sys.stderr)
                 return 1
-        
+
         # Check verification commands / steps
         v_cmd = ass.get("verification_command")
         m_steps = ass.get("manual_verification_steps")
-        
+
         has_v_cmd = isinstance(v_cmd, str) and len(v_cmd.strip()) > 0
         has_m_steps = False
         if isinstance(m_steps, str) and len(m_steps.strip()) > 0:
             has_m_steps = True
         elif isinstance(m_steps, list) and len(m_steps) > 0 and all(isinstance(s, str) and len(s.strip()) > 0 for s in m_steps):
             has_m_steps = True
-            
+
         if not has_v_cmd and not has_m_steps:
             print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] must provide a non-empty 'verification_command' or 'manual_verification_steps'", file=sys.stderr)
             return 1
@@ -149,7 +149,7 @@ def main():
             if field not in evr:
                 print(f"FAIL contract {adu_id}: evidence_requirements[{idx}] missing field '{field}'", file=sys.stderr)
                 return 1
-        
+
         ref_ass = evr.get("assertion_id")
         if ref_ass not in assertion_ids:
             print(f"FAIL contract {adu_id}: evidence_requirements[{idx}].assertion_id ('{ref_ass}') does not map to any active acceptance or negative assertion id", file=sys.stderr)
@@ -234,11 +234,12 @@ def main():
                     )
                     return 1
 
+    disallowed_paths = []
     for cp in contract_allowed_paths:
         if not isinstance(cp, str):
             print(f"FAIL contract {adu_id}: scope.allowed_write_paths items must be strings", file=sys.stderr)
             return 1
-        
+
         cp_parts = Path(os.path.normpath(cp)).parts
         matched = False
         for ap in adu_allowed_paths:
@@ -247,8 +248,112 @@ def main():
                 matched = True
                 break
         if not matched:
-            print(f"FAIL contract {adu_id}: contract allowed write path '{cp}' is broader than ADU allowed write paths ({adu_allowed_paths})", file=sys.stderr)
+            disallowed_paths.append(cp)
+
+    if disallowed_paths:
+        import subprocess
+        import datetime
+        import uuid
+
+        policy_script = Path(__file__).parent / "write_path_policy.py"
+        cmd = [sys.executable, str(policy_script), "--adu", adu_id, "--requested-paths", json.dumps(disallowed_paths)]
+        cmd.extend(["--registry-dir", str(global_registry)])
+        if args.repo_root:
+            cmd.extend(["--repo-root", str(args.repo_root)])
+
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            policy_result = json.loads(res.stdout)
+        except Exception as e:
+            print(f"FAIL contract {adu_id}: Failed to evaluate write path policy: {e}", file=sys.stderr)
             return 1
+
+        result_str = policy_result.get("result")
+        reason = policy_result.get("reason", "")
+
+        if result_str == "blocked":
+            print(f"FAIL contract {adu_id}: contract allowed write paths {policy_result.get('blocked_paths')} are blocked by policy. Reason: {reason}", file=sys.stderr)
+            return 1
+
+        now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+        request_id = f"req-{uuid.uuid4().hex[:8]}"
+
+        # 1. Update write-path-expansion-requests.json
+        req_file = global_registry / "write-path-expansion-requests.json"
+        req_data = {"version": 1, "requests": []}
+        if req_file.exists():
+            try:
+                req_data = json.loads(req_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # Check for an existing duplicate pending request to avoid spamming
+        existing_req = None
+        for r in req_data.setdefault("requests", []):
+            if r.get("adu_id") == adu_id and r.get("decision") == "pending_human_approval" and sorted(r.get("requested_paths", [])) == sorted(disallowed_paths):
+                existing_req = r
+                break
+
+        if existing_req:
+            request_id = existing_req["request_id"]
+        else:
+            req_data["requests"].append({
+                "request_id": request_id,
+                "adu_id": adu_id,
+                "source_agent": "contract_validator",
+                "requested_paths": disallowed_paths,
+                "decision": "auto_approved" if result_str == "approved" else "pending_human_approval",
+                "reason": reason,
+                "created_at": now_str,
+                "updated_at": now_str
+            })
+            try:
+                req_file.write_text(json.dumps(req_data, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:
+                print(f"FAIL contract {adu_id}: Failed to write to {req_file}: {e}", file=sys.stderr)
+                return 1
+
+        if result_str == "approved":
+            # 2. Update adu.json
+            for item in adu_registry.get("adus", []):
+                if item.get("id") == adu_id:
+                    # Add to allowed_write_paths
+                    current_write = item.get("allowed_write_paths", [])
+                    for p in policy_result.get("approved_paths", []):
+                        if p not in current_write:
+                            current_write.append(p)
+                    item["allowed_write_paths"] = current_write
+
+                    # Add to allowed_read_paths
+                    current_read = item.get("allowed_read_paths", [])
+                    for p in policy_result.get("approved_paths", []):
+                        if p not in current_read:
+                            current_read.append(p)
+                    item["allowed_read_paths"] = current_read
+
+                    # Record expansion history in the adu entry
+                    if "write_path_expansions" not in item:
+                        item["write_path_expansions"] = []
+                    item["write_path_expansions"].append({
+                        "request_id": request_id,
+                        "source_agent": "contract_validator",
+                        "requested_paths": disallowed_paths,
+                        "approved_paths": policy_result.get("approved_paths", []),
+                        "decision": "auto_approved",
+                        "reason": reason,
+                        "created_at": now_str,
+                        "updated_at": now_str
+                    })
+                    break
+            try:
+                adu_json_path.write_text(json.dumps(adu_registry, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:
+                print(f"FAIL contract {adu_id}: Failed to write to {adu_json_path}: {e}", file=sys.stderr)
+                return 1
+        else:
+            # Result is pending human approval
+            print(f"FAIL contract {adu_id}: disallowed write paths {policy_result.get('pending_paths')} require human approval. Request registered: {request_id}", file=sys.stderr)
+            return 20
 
     print(f"PASS contract {adu_id} assertions={len(assertions)} negative_assertions={len(neg_assertions)} evidence_requirements={len(ev_reqs)}")
     return 0

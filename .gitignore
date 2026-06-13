@@ -12,6 +12,13 @@ kamailio/
 .ai-agent/registry/token-budget.json
 .ai-agent/registry/artifact-edits.json
 .ai-agent/registry/intake-drafts.json
+.ai-agent/registry/epics.json
+.ai-agent/registry/events.json
+.ai-agent/registry/operations.json
+.ai-agent/registry/evidence-waivers.json
+.ai-agent/epics/
+.ai-agent/intake/
+.ai-agent/policies/
 
 # ── Agent 生成的文档 / 证据（输出物，非源代码）───────────────────────────────
 .ai-agent/analysis/

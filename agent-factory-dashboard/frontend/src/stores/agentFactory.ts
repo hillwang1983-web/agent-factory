@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentFactoryDashboard, QualityReports, AgentFactoryProject, AgentFactoryEpic, CreateEpicInput } from '../types/agent-factory';
+import type { AgentFactoryDashboard, QualityReports, AgentFactoryProject, AgentFactoryEpic, CreateEpicInput, AgentFactoryEpicView } from '../types/agent-factory';
 import { agentFactoryApi } from '../api/agentFactory';
 
 interface AgentFactoryState {
@@ -24,9 +24,9 @@ interface AgentFactoryState {
   activeArtifactSha256: string | null;
   activeArtifactLoading: boolean;
   // Phase 3: Epic
-  epics: AgentFactoryEpic[];
+  epics: AgentFactoryEpicView[];
   selectedEpicId: string | null;
-  epicDag: { epic: AgentFactoryEpic | null; children: any[]; dependencies: any[] } | null;
+  epicDag: { epic: AgentFactoryEpicView | null; children: any[]; dependencies: any[] } | null;
 
   refresh: () => Promise<void>;
   fetchEpics: () => Promise<void>;
@@ -57,13 +57,25 @@ interface AgentFactoryState {
   saveArtifactContent: (params: { aduId: string; gate: 'analysis' | 'design'; path: string; content: string; baseSha256: string; changeReason?: string }) => Promise<void>;
   approveReview: (aduId: string, gate: 'analysis' | 'design', comment?: string) => Promise<void>;
   requestReviewRework: (aduId: string, gate: 'analysis' | 'design', comment: string) => Promise<void>;
+  disposeHumanGate: (
+    aduId: string,
+    disposition: 'environment_waiver' | 'accept_risk' | 'request_rework' | 'provide_missing_evidence' | 'external_dependency_block' | 'cancel_adu',
+    comment: string,
+    affectedAssertions?: string[]
+  ) => Promise<void>;
   runNextStep: (aduId: string) => Promise<void>;
   createIntakeDraft: (projectId: string, formData: FormData) => Promise<any>;
   generateIntakeDraft: (draftId: string) => Promise<any>;
   getIntakeDraft: (draftId: string) => Promise<any>;
   updateIntakeDraft: (draftId: string, updates: any) => Promise<any>;
   registerIntakeDraft: (draftId: string) => Promise<any>;
+  activeOperations: Record<string, any>;
+  fetchOperation: (operationId: string) => Promise<any>;
+  pollOperation: (operationId: string, targetType: 'adu' | 'epic', targetId: string) => void;
+  answerClarification: (aduId: string, questionId: string, answer: string, status?: 'pending' | 'answered' | 'deferred') => Promise<void>;
 }
+
+
 
 export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   dashboard: null,
@@ -78,6 +90,7 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   loading: false,
   error: null,
   controlEnabled: false,
+  activeOperations: {},
   healthLoaded: false,
   reviews: [],
   editableArtifacts: [],
@@ -107,7 +120,7 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
         agentFactoryApi.fetchAgentFactoryDashboard(),
         agentFactoryApi.fetchProjects()
       ]);
-      
+
       // Keep track of selected ADU. If none selected, or if selected disappears, select first active or first available
       let selectedAduId = get().selectedAduId;
       if (dashboard.adus.length > 0) {
@@ -172,7 +185,7 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
 
   selectProject: (selectedProjectId: string | null) => {
     set({ selectedProjectId });
-    
+
     // Automatically select the first ADU belonging to this project if currently selected ADU doesn't match
     const dashboard = get().dashboard;
     if (dashboard && selectedProjectId) {
@@ -290,7 +303,7 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
     try {
       const { artifacts } = await agentFactoryApi.fetchEditableArtifacts(aduId);
       set({ editableArtifacts: artifacts });
-      
+
       const activePath = get().activeArtifactPath;
       if (activePath) {
         const stillExists = artifacts.some(a => a.path === activePath && a.exists);
@@ -349,13 +362,31 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
     void get().refresh();
   },
 
-  runNextStep: async (aduId) => {
-    await agentFactoryApi.runNextStep(aduId);
-    // Await the refresh so callers see health.status='running' before returning,
-    // preventing the single-step button from briefly re-enabling during the window
-    // between the API response and the next scheduled store refresh.
-    await get().refresh();
+  disposeHumanGate: async (aduId, disposition, comment, affectedAssertions) => {
+    await agentFactoryApi.disposeHumanGate(aduId, { disposition, comment, affectedAssertions });
+    void get().refresh();
   },
+
+  runNextStep: async (aduId) => {
+    try {
+      const op = await agentFactoryApi.runNextStep(aduId);
+      if (op && op.id) {
+        set((state) => ({
+          activeOperations: {
+            ...state.activeOperations,
+            [aduId]: op,
+          },
+        }));
+        get().pollOperation(op.id, 'adu', aduId);
+      }
+      await get().refresh();
+    } catch (e) {
+      console.error('Failed to run next step', e);
+      await get().refresh();
+      throw e;
+    }
+  },
+
 
   createIntakeDraft: async (projectId, formData) => {
     return await agentFactoryApi.createIntakeDraft(projectId, formData);
@@ -373,7 +404,56 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
     return await agentFactoryApi.registerIntakeDraft(draftId);
   },
 
+  fetchOperation: async (operationId) => {
+    try {
+      return await agentFactoryApi.getOperation(operationId);
+    } catch (e) {
+      console.error('Failed to fetch operation', e);
+      return null;
+    }
+  },
+
+  pollOperation: (operationId, targetType, targetId) => {
+    const intervalId = setInterval(async () => {
+      try {
+        const op = await agentFactoryApi.getOperation(operationId);
+
+        set((state) => ({
+          activeOperations: {
+            ...state.activeOperations,
+            [targetId]: op,
+          },
+        }));
+
+        if (targetType === 'epic') {
+          void get().loadEpicDag(targetId);
+        } else {
+          void get().refresh();
+        }
+
+        if (op.status === 'completed' || op.status === 'failed' || op.status === 'canceled') {
+          clearInterval(intervalId);
+          if (targetType === 'epic') {
+            await get().fetchEpics();
+            void get().loadEpicDag(targetId);
+          } else {
+            await get().refresh();
+          }
+        }
+      } catch (e) {
+        console.error('Error during operation polling', e);
+        clearInterval(intervalId);
+      }
+    }, 1000);
+  },
+
+  answerClarification: async (aduId, questionId, answer, status) => {
+    await agentFactoryApi.answerClarification(aduId, questionId, { answer, status });
+    await get().refresh();
+  },
+
   epics: [],
+
   selectedEpicId: null,
   epicDag: null,
 
@@ -420,21 +500,69 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   },
 
   startEpic: async (epicId) => {
-    await agentFactoryApi.startEpic(epicId);
-    await get().fetchEpics();
-    void get().loadEpicDag(epicId);
+    try {
+      const op = await agentFactoryApi.startEpic(epicId);
+      if (op && op.id) {
+        set((state) => ({
+          activeOperations: {
+            ...state.activeOperations,
+            [epicId]: op,
+          },
+        }));
+        get().pollOperation(op.id, 'epic', epicId);
+      }
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+    } catch (e) {
+      console.error('Failed to start Epic', e);
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+      throw e;
+    }
   },
 
   continueEpic: async (epicId) => {
-    await agentFactoryApi.continueEpic(epicId);
-    await get().fetchEpics();
-    void get().loadEpicDag(epicId);
+    try {
+      const op = await agentFactoryApi.continueEpic(epicId);
+      if (op && op.id) {
+        set((state) => ({
+          activeOperations: {
+            ...state.activeOperations,
+            [epicId]: op,
+          },
+        }));
+        get().pollOperation(op.id, 'epic', epicId);
+      }
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+    } catch (e) {
+      console.error('Failed to continue Epic', e);
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+      throw e;
+    }
   },
 
   stepEpic: async (epicId) => {
-    await agentFactoryApi.stepEpic(epicId);
-    await get().fetchEpics();
-    void get().loadEpicDag(epicId);
+    try {
+      const op = await agentFactoryApi.stepEpic(epicId);
+      if (op && op.id) {
+        set((state) => ({
+          activeOperations: {
+            ...state.activeOperations,
+            [epicId]: op,
+          },
+        }));
+        get().pollOperation(op.id, 'epic', epicId);
+      }
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+    } catch (e) {
+      console.error('Failed to step Epic', e);
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+      throw e;
+    }
   },
 
   cancelEpic: async (epicId) => {
@@ -448,8 +576,25 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   },
 
   materializeChildAdus: async (epicId) => {
-    await agentFactoryApi.materializeChildAdus(epicId);
-    await get().fetchEpics();
-    void get().loadEpicDag(epicId);
+    try {
+      const op = await agentFactoryApi.materializeChildAdus(epicId);
+      if (op && op.id) {
+        set((state) => ({
+          activeOperations: {
+            ...state.activeOperations,
+            [epicId]: op,
+          },
+        }));
+        get().pollOperation(op.id, 'epic', epicId);
+      }
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+    } catch (e) {
+      console.error('Failed to materialize child ADUs', e);
+      await get().fetchEpics();
+      void get().loadEpicDag(epicId);
+      throw e;
+    }
   },
+
 }));

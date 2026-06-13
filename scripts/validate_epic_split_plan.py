@@ -119,6 +119,96 @@ def main():
             if has_cycle_dfs(node, adj, visited, set()):
                 fail("Dependency graph contains a cycle")
 
+    # Pre-apply path derivation rules
+    import fnmatch
+    import os
+    rules_env = os.environ.get("AGENT_FACTORY_RULES_PATH")
+    if rules_env:
+        rules_path = Path(rules_env)
+    else:
+        rules_path = Path(__file__).resolve().parents[1] / ".ai-agent" / "policies" / "path-derivation-rules.json"
+    if rules_path.exists():
+        try:
+            rules_data = json.loads(rules_path.read_text(encoding="utf-8"))
+            rules = rules_data.get("rules", [])
+
+            def matches_glob_list(path, glob_list):
+                for glob in glob_list:
+                    if glob.endswith('/') and (path.startswith(glob) or path + '/' == glob):
+                        return True
+                    if fnmatch.fnmatch(path, glob):
+                        return True
+                    if glob.startswith("**/"):
+                        base_glob = glob[3:]
+                        if fnmatch.fnmatch(path, base_glob) or fnmatch.fnmatch(path, "*/" + base_glob):
+                            return True
+                    if fnmatch.fnmatch(path, '*/' + glob):
+                        return True
+                return False
+
+            if rules:
+                for adu in child_adus:
+                    write_paths = adu.get("allowed_write_paths", [])
+                    if not isinstance(write_paths, list):
+                        continue
+
+                    read_paths = adu.get("allowed_read_paths", [])
+
+                    changed = True
+                    while changed:
+                        changed = False
+                        for rule in rules:
+                            when_patterns = rule.get("when_requested_path_matches", [])
+                            derived_patterns = rule.get("allow_derived_paths", [])
+
+                            has_match = False
+                            for wp in write_paths:
+                                if matches_glob_list(wp, when_patterns):
+                                    has_match = True
+                                    break
+
+                            if has_match:
+                                for dp in derived_patterns:
+                                    dp_added = False
+                                    if dp not in write_paths:
+                                        write_paths.append(dp)
+                                        changed = True
+                                        dp_added = True
+                                    if read_paths and dp not in read_paths:
+                                        read_paths.append(dp)
+                                        changed = True
+                                        dp_added = True
+
+                                    if dp_added:
+                                        if "write_path_expansions" not in adu:
+                                            adu["write_path_expansions"] = []
+                                        import hashlib
+                                        path_hash = hashlib.md5(dp.encode('utf-8')).hexdigest()[:8]
+                                        req_id = f"auto-{rule.get('id')}-{path_hash}"
+                                        exists = any(exp.get("request_id") == req_id for exp in adu["write_path_expansions"])
+                                        if not exists:
+                                            import datetime
+                                            now_str = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+                                            adu["write_path_expansions"].append({
+                                                "request_id": req_id,
+                                                "source_agent": "epic_splitter",
+                                                "requested_paths": [dp],
+                                                "approved_paths": [dp],
+                                                "decision": "auto_approved",
+                                                "reason": f"Epic split pre-derivation rule {rule.get('id')}: {rule.get('reason', '')}",
+                                                "created_at": now_str,
+                                                "updated_at": now_str
+                                            })
+
+                    adu["allowed_write_paths"] = write_paths
+                    if read_paths:
+                        adu["allowed_read_paths"] = read_paths
+
+            # Write back the expanded split-plan
+            fp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            print(f"VALIDATE_EPIC_SPLIT_PLAN WARNING: Failed to pre-apply derivation rules: {e}", file=sys.stderr)
+
     print(f"VALIDATE_EPIC_SPLIT_PLAN PASS: {plan_path} (decision={decision}, {len(child_adus)} child ADUs, {len(deps)} deps)")
     sys.exit(0)
 

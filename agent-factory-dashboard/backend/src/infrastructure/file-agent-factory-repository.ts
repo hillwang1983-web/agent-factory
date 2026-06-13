@@ -44,6 +44,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
         '.ai-agent/designs/',
         '.ai-agent/contracts/',
         '.ai-agent/runs/',
+        '.ai-agent/rework/',
         '.ai-agent/reviews/',
         '.ai-agent/acceptance/',
         '.ai-agent/evidence/',
@@ -51,7 +52,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
         '.ai-agent/epics/',
         'tests/ai-agent-mvp/'
       ].some(prefix => relativePath.replace(/\\/g, '/').startsWith(prefix));
-      
+
       if (!isAllowed) {
          throw new Error(`Project artifact path is not within an allowed project directory: ${relativePath}`);
       }
@@ -66,7 +67,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       const data = await fs.readFile(aduJsonPath, 'utf-8');
       const parsed = JSON.parse(data) as { adus?: AgentFactoryAdu[] };
       const adus = parsed.adus || [];
-      
+
       for (const adu of adus) {
         if (!adu.project_id) {
           adu.project_id = 'default-open5gs';
@@ -238,8 +239,12 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
             exists: false,
           });
         } else {
-          this.logger.error({ err, path: relativePath }, 'Failed to stat artifact');
-          throw err;
+          this.logger.warn({ err, path: relativePath }, 'Skipping inaccessible artifact');
+          results.push({
+            path: relativePath,
+            kind: this.classifyArtifactKind(relativePath),
+            exists: false,
+          });
         }
       }
     }

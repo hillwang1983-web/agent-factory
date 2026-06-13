@@ -65,9 +65,9 @@ export function AduQueuePanel(): JSX.Element {
                   <span className="font-mono text-xs font-bold text-nms-text">{adu.id}</span>
                   <HealthBadge status={adu.health.status} />
                 </div>
-                
+
                 <h3 className="text-xs font-semibold text-nms-text line-clamp-1">{adu.title}</h3>
-                
+
                 <div className="flex items-center gap-3 text-[10px] text-nms-text-dim">
                   <span>Level: <strong className="text-nms-text">{adu.target_level}</strong></span>
                   <span>Risk: <strong className="text-nms-text uppercase">{adu.risk}</strong></span>
@@ -76,8 +76,8 @@ export function AduQueuePanel(): JSX.Element {
                       <RotateCcw className="w-2.5 h-2.5" /> {adu.retry_count}/{adu.max_retries}
                     </span>
                   )}
-                  {adu.human_gate_required && (
-                    <span className="flex items-center gap-0.5 text-red-400">
+                  {adu.display_status?.kind === 'blocked' && (
+                    <span className="flex items-center gap-0.5 text-red-400" title={adu.display_status.reason}>
                       <AlertCircle className="w-2.5 h-2.5" /> Blocked
                     </span>
                   )}

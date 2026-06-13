@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { AgentFactoryPage } from './components/agent-factory/AgentFactoryPage';
 import { ProjectsPage } from './components/projects/ProjectsPage';
 import { EpicsPage } from './components/epics/EpicsPage';
+import { HumanGateCenterPage } from './components/human-gates/HumanGateCenterPage';
+import { SettingsPage } from './components/settings/SettingsPage';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgentFactoryStore } from './stores/agentFactory';
-import { LayoutDashboard, FolderGit2, Folder, Layers } from 'lucide-react';
+import { LayoutDashboard, FolderGit2, Folder, Layers, UserCheck, Settings } from 'lucide-react';
 
 function App() {
   // Enabled status web socket
   useWebSocket(true);
 
-  const [view, setView] = useState<'dashboard' | 'projects' | 'epics'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'projects' | 'epics' | 'human-gates' | 'settings'>('dashboard');
   const { projects, selectedProjectId, selectProject } = useAgentFactoryStore();
 
   return (
@@ -54,6 +56,17 @@ function App() {
               Epic 编排
             </button>
             <button
+              onClick={() => setView('human-gates')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                view === 'human-gates'
+                  ? 'bg-amber-600 text-white shadow-md animate-in fade-in duration-150'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              人工质量门
+            </button>
+            <button
               onClick={() => setView('projects')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                 view === 'projects'
@@ -63,6 +76,17 @@ function App() {
             >
               <FolderGit2 className="h-3.5 w-3.5" />
               项目管理
+            </button>
+            <button
+              onClick={() => setView('settings')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                view === 'settings'
+                  ? 'bg-indigo-600 text-white shadow-md animate-in fade-in duration-150'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              系统设置
             </button>
           </nav>
         </div>
@@ -86,7 +110,7 @@ function App() {
               </select>
             </div>
           )}
-          
+
           <div className="text-xs text-nms-text-dim flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-nms-green animate-pulse" />
             服务监测正常
@@ -95,10 +119,21 @@ function App() {
       </header>
 
       <main className="flex-1 p-6 overflow-auto">
-        {view === 'dashboard' ? <AgentFactoryPage /> : view === 'epics' ? <EpicsPage /> : <ProjectsPage />}
+        {view === 'dashboard' ? (
+          <AgentFactoryPage />
+        ) : view === 'epics' ? (
+          <EpicsPage />
+        ) : view === 'human-gates' ? (
+          <HumanGateCenterPage />
+        ) : view === 'settings' ? (
+          <SettingsPage />
+        ) : (
+          <ProjectsPage />
+        )}
       </main>
     </div>
   );
 }
+
 
 export default App;

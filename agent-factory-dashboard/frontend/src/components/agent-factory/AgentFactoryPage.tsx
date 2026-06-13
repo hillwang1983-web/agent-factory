@@ -7,14 +7,18 @@ import { WorkflowTimeline } from './WorkflowTimeline';
 import { AgentLanePanel } from './AgentLanePanel';
 import { RunHistoryTable } from './RunHistoryTable';
 import { ArtifactDrawer } from './ArtifactDrawer';
-import { ModelSelectionCard } from './ModelSelectionCard';
 import { OrchestratorControlPanel } from './OrchestratorControlPanel';
 import { TokenBudgetChart } from './TokenBudgetChart';
 import { ReviewGatePanel } from './ReviewGatePanel';
+import { WritePathExpansionPanel } from './WritePathExpansionPanel';
 import { QualityReportBadge } from './QualityReportBadge';
 import { QualityReportPanel } from './QualityReportPanel';
 import { FileText, Shield, Terminal, RefreshCw, FolderOpen, Plus } from 'lucide-react';
 import { ProjectContextPanel } from './ProjectContextPanel';
+import { OperationStatusBanner } from '../operations/OperationStatusBanner';
+import { OperationEventTimeline } from '../operations/OperationEventTimeline';
+import { EvidenceMatrixPanel } from '../evidence/EvidenceMatrixPanel';
+
 
 export function AgentFactoryPage(): JSX.Element {
   const {
@@ -25,7 +29,9 @@ export function AgentFactoryPage(): JSX.Element {
     refresh,
     openArtifact,
     qualityReports,
+    activeOperations,
   } = useAgentFactoryStore();
+
 
   const [newWritePath, setNewWritePath] = useState('');
   const [addPathLoading, setAddPathLoading] = useState(false);
@@ -84,9 +90,9 @@ export function AgentFactoryPage(): JSX.Element {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold font-display text-nms-text">5GC Agent Factory</h1>
+          <h1 className="text-2xl font-semibold font-display text-nms-text">Agent Factory 任务看板</h1>
           <p className="text-sm text-nms-text-dim mt-1">
-            Automated compliance-driven development and validation pipeline
+            监控 ADU 执行状态、质量门、产物与运行日志
           </p>
         </div>
         <button
@@ -106,7 +112,6 @@ export function AgentFactoryPage(): JSX.Element {
       <div className="grid grid-cols-12 gap-6">
         {/* Left Side: ADUs Queue */}
         <div className="col-span-12 xl:col-span-4">
-          <ModelSelectionCard />
           <AduQueuePanel />
         </div>
 
@@ -114,7 +119,9 @@ export function AgentFactoryPage(): JSX.Element {
         <div className="col-span-12 xl:col-span-8 space-y-6">
           {selectedAdu ? (
             <div className="space-y-6">
+              <OperationStatusBanner targetType="adu" targetId={selectedAdu.id} />
               {/* Selected ADU details & workflow timeline */}
+
               <div className="nms-card bg-nms-surface-1 border-nms-surface-2 p-5 space-y-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -215,6 +222,8 @@ export function AgentFactoryPage(): JSX.Element {
               {/* Workflow Stepper */}
               <WorkflowTimeline adu={selectedAdu} />
 
+              <EvidenceMatrixPanel aduId={selectedAdu.id} />
+
               {/* Project context (only for project-bound ADUs) */}
               {selectedAdu.project_id && (
                 <ProjectContextPanel aduId={selectedAdu.id} />
@@ -226,11 +235,18 @@ export function AgentFactoryPage(): JSX.Element {
               {/* Review Gate panel (Editable docs & Approve actions) */}
               <ReviewGatePanel aduId={selectedAdu.id} />
 
+              {/* Write Path Expansion approval panel */}
+              <WritePathExpansionPanel aduId={selectedAdu.id} />
+
               {/* Run History Table */}
               <RunHistoryTable runs={selectedAdu.runs} />
+
+              <OperationEventTimeline operationId={activeOperations[selectedAdu.id]?.operation_id || activeOperations[selectedAdu.id]?.id || null} />
+
               <OrchestratorControlPanel aduId={selectedAdu.id} />
               <TokenBudgetChart aduId={selectedAdu.id} />
             </div>
+
           ) : (
             <div className="nms-card p-12 text-center text-sm text-nms-text-dim">
               No ADUs selected.

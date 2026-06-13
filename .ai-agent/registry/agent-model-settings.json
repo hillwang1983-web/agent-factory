@@ -17,11 +17,11 @@
   },
   "testwriter": {
     "provider": "deepseek",
-    "model": "deepseek-v4-pro"
+    "model": "deepseek-v4-flash"
   },
   "developer": {
     "provider": "deepseek",
-    "model": "deepseek-v4-pro"
+    "model": "deepseek-v4-flash"
   },
   "buildfix-debugger": {
     "provider": "vertexai",
@@ -44,8 +44,8 @@
     "model": "deepseek-v4-pro"
   },
   "adu-intake-agent": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-pro"
+    "provider": "vertexai",
+    "model": "google/gemini-3.5-flash"
   },
   "system-flow-designer": {
     "provider": "deepseek",

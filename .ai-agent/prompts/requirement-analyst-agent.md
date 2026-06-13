@@ -55,7 +55,7 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
 
 ## Final Output (JSON block)
 
-After completing your analysis, output a JSON result block:
+After completing your analysis, output a JSON result block. If you have raised any clarification questions that would block subsequent steps (or if they are non-blocking optional questions), you MUST list them inside `clarification_questions`:
 
 ```json
 {
@@ -65,7 +65,14 @@ After completing your analysis, output a JSON result block:
   "commands_run": [],
   "artifacts": [".ai-agent/analysis/{{ADU_ID}}.md"],
   "risks": [],
-  "next_agent": "context-pack"
+  "next_agent": "context-pack",
+  "clarification_questions": [
+    {
+      "id": "q1",
+      "question": "具体的中文描述问题，必须是关键的澄清点",
+      "blocking": true
+    }
+  ]
 }
 ```
 

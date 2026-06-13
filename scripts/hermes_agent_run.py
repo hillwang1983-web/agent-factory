@@ -60,6 +60,65 @@ def save_json(path, data):
     tmp.replace(path)
 
 
+def load_quality_report_result(project_repo_path: Path, adu_id: str, agent_name: str) -> dict:
+    if agent_name == "code-reviewer":
+        report_path = project_repo_path / ".ai-agent" / "reviews" / f"{adu_id}-code-review.json"
+        status_key = "review_status"
+    elif agent_name == "acceptance-reviewer":
+        report_path = project_repo_path / ".ai-agent" / "acceptance" / f"{adu_id}-acceptance-review.json"
+        status_key = "acceptance_status"
+    else:
+        return {}
+
+    report = load_json(report_path)
+    synced = {
+        "result": "success",
+        status_key: report.get(status_key),
+        "next_state": report.get("next_state"),
+    }
+    for key in (
+        "summary",
+        "findings",
+        "mismatch_findings",
+        "missing_evidence",
+        "assertion_results",
+        "negative_assertion_results",
+    ):
+        if key in report:
+            synced[key] = report[key]
+    return synced
+
+
+def is_environment_verification_required(quality_result: dict) -> bool:
+    if quality_result.get("acceptance_status") != "fail":
+        return False
+
+    mismatch_findings = quality_result.get("mismatch_findings") or []
+    if isinstance(mismatch_findings, list) and len(mismatch_findings) > 0:
+        return False
+
+    missing_evidence = quality_result.get("missing_evidence") or []
+    if not isinstance(missing_evidence, list) or len(missing_evidence) == 0:
+        return False
+
+    env_markers = (
+        "runtime",
+        "run time",
+        "environment",
+        "mongodb",
+        "webui",
+        "http",
+        "curl",
+        "运行时",
+        "运行期",
+        "运行环境",
+        "环境",
+        "人工",
+    )
+    searchable = json.dumps(missing_evidence, ensure_ascii=False).lower()
+    return any(marker in searchable for marker in env_markers)
+
+
 def find_adu(adu_data, adu_id):
     for adu in adu_data["adus"]:
         if adu["id"] == adu_id:
@@ -258,6 +317,9 @@ def build_unstructured_result(stdout, stderr):
     if "dsml" in lower_combined or "tool_calls" in lower_combined:
         error_code = "tool_call_without_final_json"
         error = "Agent 最终输出仍是工具调用片段，而不是约定的 fenced JSON；通常表示工具调用循环耗尽或模型未按协议收尾。"
+    elif re.search(r"```json\s*\{.*\}\s*```", stdout_text, flags=re.DOTALL):
+        error_code = "invalid_final_json"
+        error = "Agent 最终输出包含 fenced JSON，但 JSON 语法无效；常见原因是字符串中包含未转义的双引号。"
     else:
         error_code = "missing_final_json"
         error = "Agent 最终输出中没有可解析的 fenced JSON 结果。"
@@ -351,6 +413,29 @@ def apply_agent_side_effects(adu, agent_name, result):
                     normalized,
                 )
         adu["pending_path_requests"] = []
+
+    # Clarification questions: extract from requirement-analyst
+    if agent_name == "requirement-analyst" and result.get("result") == "success":
+        questions = result.get("clarification_questions", [])
+        if isinstance(questions, list):
+            formatted_questions = []
+            for idx, q in enumerate(questions):
+                if isinstance(q, dict) and "question" in q:
+                    q_id = q.get("id") or f"q{idx + 1}"
+                    existing = next((eq for eq in adu.get("clarification_questions", []) if eq.get("question") == q["question"]), None)
+                    if existing:
+                        formatted_questions.append(existing)
+                    else:
+                        formatted_questions.append({
+                            "id": q_id,
+                            "question": q["question"],
+                            "blocking": q.get("blocking", True),
+                            "status": "pending",
+                            "answer": None,
+                            "answered_at": None
+                        })
+            adu["clarification_questions"] = formatted_questions
+
 
 
 def handle_intake_draft(args, root, registry):
@@ -584,7 +669,7 @@ def main():
                     adu.setdefault("pre_gate_state", adu.get("state", "created"))
                     adu["state"] = "human_gate"
                     adu["human_gate_required"] = True
-                
+
                 run_record = {
                     "timestamp": timestamp,
                     "adu_id": adu["id"],
@@ -655,6 +740,8 @@ def main():
             elif args.agent in ("code-reviewer", "acceptance-reviewer"):
                 kind = "code-review" if args.agent == "code-reviewer" else "acceptance"
                 val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_quality_report.py"), "--adu", adu["id"], "--kind", kind, "--repo-root", str(project_repo_path)]
+            elif args.agent == "evidence":
+                val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_evidence_package.py"), "--adu", adu["id"], "--repo-root", str(project_repo_path), "--registry-dir", str(REGISTRY)]
             elif args.agent == "system-flow-designer":
                 flow_path = project_repo_path / ".ai-agent" / "epics" / adu["id"] / "system-flow.json"
                 if flow_path.exists():
@@ -682,11 +769,50 @@ def main():
 
             if val_cmd:
                 val_proc = subprocess.run(val_cmd, cwd=str(ROOT), text=True, capture_output=True)
-                if val_proc.returncode != 0:
+                if val_proc.returncode == 20:
+                    run_result = "human_gate"
+                    result["result"] = "human_gate"
+                    result["gate_type"] = "environment_verification_required" if args.agent == "evidence" else "write_path_expansion"
+                    err_msg = val_proc.stderr or val_proc.stdout or "Human gate required"
+                    result["error"] = err_msg.strip()
+
+                    with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
+                        if proc.stderr:
+                            stderr_file.write("\n")
+                        stderr_file.write(err_msg.strip())
+                        stderr_file.write("\n")
+
+                    qg_path = run_dir / "quality-gate.md"
+                    qg_path.write_text(f"# Quality Gate Pending\n\n{err_msg.strip()}\n", encoding="utf-8")
+                elif val_proc.returncode != 0:
                     run_result = "failed"
                     err_msg = val_proc.stderr or val_proc.stdout or f"{args.agent} quality validation failed"
                     result["error"] = err_msg.strip()
                     result["result"] = "failed"
+                    with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
+                        if proc.stderr:
+                            stderr_file.write("\n")
+                        stderr_file.write(err_msg.strip())
+                        stderr_file.write("\n")
+                elif args.agent in ("code-reviewer", "acceptance-reviewer"):
+                    quality_result = load_quality_report_result(project_repo_path, adu["id"], args.agent)
+                    result.update(quality_result)
+                    next_state = quality_result.get("next_state") or next_state
+                    if args.agent == "acceptance-reviewer" and is_environment_verification_required(quality_result):
+                        run_result = "human_gate"
+                        result["result"] = "human_gate"
+                        result["gate_type"] = "environment_verification_required"
+                        result["next_state"] = "human_gate"
+                        result["next_agent"] = "human"
+                        result["error"] = "Acceptance requires human judgment for runtime/environment verification evidence."
+                        qg_path = run_dir / "quality-gate.md"
+                        qg_path.write_text(
+                            "# Environment Verification Required\n\n"
+                            "Acceptance failed only because runtime/environment evidence is missing. "
+                            "A human must decide whether to run the prepared verification, approve an environment waiver, "
+                            "or send the ADU back for rework.\n",
+                            encoding="utf-8",
+                        )
 
         if run_result == "success" and next_state:
             adu["state"] = next_state
@@ -696,6 +822,8 @@ def main():
             adu["pre_gate_state"] = adu.get("state", "created")
             adu["state"] = "human_gate"
             adu["human_gate_required"] = True
+            if result.get("gate_type"):
+                adu["gate_type"] = result["gate_type"]
         else:
             adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
 
@@ -767,6 +895,12 @@ def main():
             output_tokens = hermes_usage.get("outputTokens") or hermes_usage.get("output") or output_tokens
             usage_source = "hermes"
 
+    effective_rc = 0
+    if run_result == "human_gate":
+        effective_rc = 20
+    elif run_result != "success":
+        effective_rc = 1
+
     run_record = {
         "timestamp": timestamp,
         "adu_id": None if is_epic_run else adu["id"],
@@ -775,6 +909,7 @@ def main():
         "workspace_root": str(project_repo_path),
         "agent": args.agent,
         "returncode": proc.returncode,
+        "effective_returncode": effective_rc,
         "result": run_result,
         "run_dir": str(run_dir.relative_to(project_repo_path)),
         "parsed_result": result,
@@ -806,7 +941,9 @@ def main():
 
     print(json.dumps(run_record, ensure_ascii=False, indent=2))
 
-    if run_result != "success":
+    if run_result == "human_gate":
+        sys.exit(20)
+    elif run_result != "success":
         sys.exit(1)
 
 

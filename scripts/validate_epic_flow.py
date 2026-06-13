@@ -3,7 +3,9 @@
 
 Checks:
   - business_operations non-empty
-  - Each operation has entrypoints, state_changes, runtime_effects (non-empty)
+  - Each operation has entrypoints and runtime_effects (non-empty)
+  - Mutating operations have state_changes (non-empty); read-only query
+    operations may use an empty state_changes array
   - acceptance_points non-empty
   - No empty path_candidates in module_flows
 
@@ -17,6 +19,21 @@ from pathlib import Path
 def fail(msg: str):
     print(f"VALIDATE_EPIC_FLOW FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
+
+
+def is_read_only_operation(op: dict) -> bool:
+    """Return True for explicit query/read/list operations.
+
+    Read-only operations are allowed to have no state_changes. Keep this
+    intentionally narrow so mutating operations still need an auditable state
+    transition list.
+    """
+    if op.get("read_only") is True:
+        return True
+
+    identity = " ".join(str(op.get(k, "")) for k in ("id", "name")).lower()
+    read_terms = ("query", "get", "list", "read", "lookup", "查询", "读取", "查看", "列表")
+    return any(term in identity for term in read_terms)
 
 
 def main():
@@ -49,7 +66,9 @@ def main():
         if not entrypoints or not isinstance(entrypoints, list) or len(entrypoints) == 0:
             fail(f"business_operations[{i}] ({op['id']}) missing non-empty 'entrypoints'")
         state_changes = op.get("state_changes")
-        if not state_changes or not isinstance(state_changes, list) or len(state_changes) == 0:
+        if not isinstance(state_changes, list):
+            fail(f"business_operations[{i}] ({op['id']}) missing 'state_changes' array")
+        if len(state_changes) == 0 and not is_read_only_operation(op):
             fail(f"business_operations[{i}] ({op['id']}) missing non-empty 'state_changes'")
         runtime_effects = op.get("runtime_effects")
         if not runtime_effects or not isinstance(runtime_effects, list) or len(runtime_effects) == 0:

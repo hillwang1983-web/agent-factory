@@ -219,6 +219,7 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
             "artifacts": [],
             "human_gate_required": True,
             "language": epic.get("language", "zh"),
+            "clarifications": epic.get("clarifications", []) + child_def.get("clarifications", []),
             "parent_epic_id": epic["id"],
             "depends_on": [d["from"] for d in deps if d.get("to") == child_id],
             "scope": child_def.get("scope", ""),
@@ -557,6 +558,7 @@ def main():
                         help="Execution mode")
     parser.add_argument("--project", required=True, help="Project ID")
     parser.add_argument("--repo-root", required=True, help="Target repo root path")
+    parser.add_argument("--operation-id", required=False, help="Orchestration operation identifier")
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()

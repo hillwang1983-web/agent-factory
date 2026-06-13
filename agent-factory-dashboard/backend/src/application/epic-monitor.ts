@@ -1,5 +1,7 @@
 import { AgentFactoryRepository } from '../domain/agent-factory-repository';
 import { AgentFactoryEpic, AgentFactoryEpicState, AgentFactoryEpicView, AgentFactoryAduView } from '../domain/agent-factory';
+import fs from 'fs';
+import path from 'path';
 
 const EPIC_STATE_LABELS: Record<string, string> = {
   created: 'Created',
@@ -60,6 +62,13 @@ export class EpicMonitor {
               workflow: [],
               artifact_status: [],
               health: { status: 'active', reasons: [] },
+              display_status: {
+                kind: (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'completed' :
+                      (adu.state === 'human_gate') ? 'blocked' : 'active',
+                label: (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'Completed' :
+                       (adu.state === 'human_gate') ? 'Blocked' : 'Active',
+                reason: `ADU is in state ${adu.state}`
+              }
             });
           }
         } catch (_) { /* skip missing */ }
@@ -90,6 +99,48 @@ export class EpicMonitor {
         reasons.push(`Epic is in state: ${EPIC_STATE_LABELS[state] || state}`);
       }
 
+      // Calculate progress
+      let currentPhase: 'flow' | 'split' | 'child_adus' | 'epic_acceptance' | 'completed' | 'failed' = 'flow';
+      const completedPhases: string[] = [];
+      let nextAction: string | null = null;
+
+      const epicState = epic.state;
+      if (epicState === 'created') {
+        currentPhase = 'flow';
+        nextAction = 'Run system-flow-designer';
+      } else if (epicState === 'flow_designed' || epicState === 'split_decision' || epicState === 'single_adu_selected' || epicState === 'split_required') {
+        currentPhase = 'split';
+        completedPhases.push('flow');
+        nextAction = epicState === 'split_required' ? 'Materialize child ADUs' : 'Run adu-splitter';
+      } else if (epicState === 'child_adus_running' || epicState === 'child_adus_created' || epicState === 'child_adus_blocked') {
+        currentPhase = 'child_adus';
+        completedPhases.push('flow', 'split');
+        nextAction = 'Continue child ADU DAG';
+      } else if (epicState === 'child_adus_evidenced' || epicState === 'epic_acceptance') {
+        currentPhase = 'epic_acceptance';
+        completedPhases.push('flow', 'split', 'child_adus');
+        nextAction = 'Run epic-acceptance-reviewer';
+      } else if (epicState === 'epic_evidenced') {
+        currentPhase = 'completed';
+        completedPhases.push('flow', 'split', 'child_adus', 'epic_acceptance');
+        nextAction = 'None';
+      } else {
+        currentPhase = 'failed';
+        if (epicState === 'epic_failed') {
+          completedPhases.push('flow', 'split', 'child_adus', 'epic_acceptance');
+          nextAction = 'Review epic acceptance findings';
+        } else {
+          nextAction = 'None';
+        }
+      }
+
+      const childSummary = {
+        total: childAduViews.length,
+        evidenced: childAduViews.filter(c => c.state === 'evidenced' || c.state === 'mvp_ready').length,
+        blocked: childAduViews.filter(c => c.display_status?.kind === 'blocked').length,
+        running: childAduViews.filter(c => c.display_status?.kind === 'running').length,
+      };
+
       // Counters
       if (state === 'epic_evidenced') evidencedCount++;
       else if (state === 'child_adus_blocked' || state === 'human_gate') blockedCount++;
@@ -100,6 +151,13 @@ export class EpicMonitor {
         child_adu_views: childAduViews,
         next_agent: this.nextEpicAgent(state),
         health: { status: healthStatus, reasons },
+        progress: {
+          current_phase: currentPhase,
+          completed_phases: completedPhases,
+          current_agent: this.nextEpicAgent(state),
+          next_action: nextAction,
+          child_summary: childSummary,
+        },
       });
     }
 
@@ -142,7 +200,19 @@ export class EpicMonitor {
       try {
         const adu = await this.repo.getAduById(childId);
         if (!adu) continue;
-        if (adu.state === 'evidenced') evidencedCount++;
+
+        const isEvidenced = adu.state === 'evidenced' || adu.state === 'mvp_ready';
+        let isWaived = false;
+        try {
+          const waiversFile = path.join(this.repo.getWorkspaceRoot(), '.ai-agent', 'registry', 'evidence-waivers.json');
+          if (fs.existsSync(waiversFile)) {
+            const content = fs.readFileSync(waiversFile, 'utf-8');
+            const waivers = JSON.parse(content).waivers || [];
+            isWaived = waivers.some((w: any) => w.adu_id === childId);
+          }
+        } catch (_) {}
+
+        if (isEvidenced || isWaived) evidencedCount++;
         else if (adu.state === 'human_gate') blockedCount++;
         else if (!terminalStates.has(adu.state)) runningCount++;
       } catch (_) { /* skip missing */ }

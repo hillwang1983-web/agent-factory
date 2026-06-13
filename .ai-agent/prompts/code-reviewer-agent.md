@@ -59,7 +59,7 @@ You MUST write these two files:
 {
   "version": 1,
   "adu_id": "{{ADU_ID}}",
-  "review_status": "pass", 
+  "review_status": "pass",
   "summary": "Short Chinese summary of the review results",
   "checked_files": [
     "path/to/changed/file"
@@ -98,6 +98,17 @@ You MUST write these two files:
   "next_state": "code_reviewed"
 }
 ```
+
+For a `review_status: "pass"` report:
+- Findings may only be `P3` or `info`.
+- Do not include `required_fix` in pass findings. Use `recommendation` for non-blocking suggestions.
+- `required_developer_actions` must be an empty array.
+- If any finding requires developer action before this ADU can proceed, set `review_status: "fail"` and `next_state: "code_rework"`.
+
+For a `review_status: "fail"` report:
+- Include at least one `P1` or `P2` finding with `required_fix`.
+- Put blocking fixes in `required_developer_actions`.
+
 *Note: Set "review_status" to "fail" and "next_state" to "code_rework" if you find critical code issues. Always include `path_expansion_decisions` (can be empty list `[]`) when `adu.pending_path_requests` is present.*
 
 ### Markdown Report Schema (.md)
@@ -116,7 +127,7 @@ You MUST write these two files:
 ## 断言满足情况
 
 ## 审查发现问题列表 (Findings)
-- CR-1 [P1/P2/P3]: 标题. 详情. 修复建议.
+- CR-1 [P1/P2/P3]: 标题. 详情. P1/P2 写“必修修复”；P3 只写“后续建议”.
 
 ## 开发者整改要求
 ```

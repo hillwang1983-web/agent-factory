@@ -1,8 +1,10 @@
 interface Props {
   children: any[];
+  onSelectAdu?: (aduId: string) => void;
+  selectedAduId?: string | null;
 }
 
-export function EpicChildAduTable({ children }: Props) {
+export function EpicChildAduTable({ children, onSelectAdu, selectedAduId }: Props) {
   if (children.length === 0) return null;
 
   return (
@@ -17,11 +19,17 @@ export function EpicChildAduTable({ children }: Props) {
               <th className="text-left p-2 font-medium">Scope</th>
               <th className="text-left p-2 font-medium">状态</th>
               <th className="text-left p-2 font-medium">依赖</th>
+              <th className="text-left p-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
             {children.map((adu: any) => (
-              <tr key={adu.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+              <tr
+                key={adu.id}
+                className={`border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors ${
+                  selectedAduId === adu.id ? 'bg-cyan-950/20 border-l-2 border-l-cyan-400' : ''
+                }`}
+              >
                 <td className="p-2 font-mono text-slate-400">{adu.id}</td>
                 <td className="p-2 text-slate-200">{adu.title}</td>
                 <td className="p-2 text-slate-400 max-w-48 truncate">{adu.scope || adu.integration_role || '—'}</td>
@@ -37,6 +45,21 @@ export function EpicChildAduTable({ children }: Props) {
                 </td>
                 <td className="p-2 text-slate-500">
                   {(adu.depends_on || []).join(', ') || '—'}
+                </td>
+                <td className="p-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectAdu?.(adu.id);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] font-semibold transition-colors ${
+                      selectedAduId === adu.id
+                        ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    查看详情
+                  </button>
                 </td>
               </tr>
             ))}

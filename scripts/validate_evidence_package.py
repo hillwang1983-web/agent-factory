@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+import sys
+import os
+import json
+import argparse
+from pathlib import Path
+
+def main():
+    parser = argparse.ArgumentParser(description="Validate ADU evidence package against contract assertions.")
+    parser.add_argument("--adu", required=True, help="ADU ID")
+    parser.add_argument("--repo-root", required=True, help="Path to repo root")
+    parser.add_argument("--registry-dir", required=True, help="Path to registry directory")
+    args = parser.parse_args()
+
+    adu_id = args.adu
+    repo_root = Path(args.repo_root)
+    registry_dir = Path(args.registry_dir)
+
+    contract_file = repo_root / ".ai-agent" / "contracts" / f"{adu_id}.json"
+    evidence_file = repo_root / ".ai-agent" / "evidence" / f"{adu_id}.json"
+    waivers_file = registry_dir / "evidence-waivers.json"
+    adu_file = registry_dir / "adu.json"
+
+    # 1. Load Contract
+    if not contract_file.exists():
+        print(f"FAIL: Contract file for {adu_id} does not exist at {contract_file}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(contract_file, 'r', encoding='utf-8') as f:
+            contract = json.load(f)
+    except Exception as e:
+        print(f"FAIL: Failed to parse contract JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Convert acceptance/acceptance_criteria to standard format
+    assertions = []
+    if "acceptance_assertions" in contract:
+        assertions = contract["acceptance_assertions"]
+    elif "acceptance_criteria" in contract:
+        for ac in contract["acceptance_criteria"]:
+            method = ac.get("method", "")
+            title = ac.get("title", "")
+            is_runtime = "run" in title.lower() or "post" in method.lower() or "get" in method.lower() or "inspect" in method.lower()
+            assertions.append({
+                "id": ac["id"],
+                "title": title,
+                "verification_type": "runtime" if is_runtime else "static",
+                "must_pass": True,
+                "expected_evidence": [ac.get("expected", "")]
+            })
+    elif "acceptance" in contract:
+        for idx, acc in enumerate(contract["acceptance"]):
+            assertions.append({
+                "id": f"A-{idx+1}",
+                "title": f"Acceptance {idx+1}",
+                "verification_type": "static",
+                "must_pass": True,
+                "expected_evidence": [acc]
+            })
+
+    # 2. Load Waivers
+    waivers = []
+    if waivers_file.exists():
+        try:
+            with open(waivers_file, 'r', encoding='utf-8') as f:
+                waivers = json.load(f).get("waivers", [])
+        except Exception as e:
+            print(f"WARNING: Failed to parse waivers JSON: {e}", file=sys.stderr)
+
+    # Filter waivers for this ADU
+    adu_waivers = [w for w in waivers if w.get("adu_id") == adu_id]
+
+    # 3. Load Evidence
+    evidence_data = {}
+    if evidence_file.exists():
+        try:
+            with open(evidence_file, 'r', encoding='utf-8') as f:
+                evidence_data = json.load(f)
+        except Exception as e:
+            print(f"WARNING: Failed to parse evidence JSON: {e}", file=sys.stderr)
+
+    # 4. Load adu.json to check manual execution records
+    runtime_records = []
+    if adu_file.exists():
+        try:
+            with open(adu_file, 'r', encoding='utf-8') as f:
+                adus = json.load(f).get("adus", [])
+                adu = next((a for a in adus if a.get("id") == adu_id), None)
+                if adu and "runtime_evidence_records" in adu:
+                    runtime_records = adu["runtime_evidence_records"]
+        except Exception as e:
+            print(f"WARNING: Failed to parse adu.json: {e}", file=sys.stderr)
+
+    missing_runtime = []
+    missing_static = []
+
+    for ass in assertions:
+        ass_id = ass.get("id")
+        is_runtime = ass.get("verification_type") == "runtime"
+        must_pass = ass.get("must_pass", True)
+
+        if not must_pass:
+            continue
+
+        # Check if waived
+        is_waived = any(ass_id in w.get("assertion_ids", []) for w in adu_waivers)
+        if is_waived:
+            continue
+
+        # Check if evidence exists
+        has_evidence = False
+
+        if not is_runtime:
+            evidence_dict = evidence_data.get("evidence", {})
+            for key, val in evidence_dict.items():
+                if ass_id.lower() in key.lower():
+                    has_evidence = True
+                    break
+                if isinstance(val, dict) and val.get("path") and ass_id in val.get("path"):
+                    has_evidence = True
+                    break
+                if isinstance(val, dict) and val.get("status") == "verified" and ass_id in str(val):
+                    has_evidence = True
+                    break
+
+            # Also static validation can pass if evidence_data status is success
+            if not has_evidence and evidence_data.get("status") == "success":
+                has_evidence = True
+        else:
+            # Runtime assertions: MUST have concrete runtime evidence
+
+            # 1. Check evidence.json matching entries for command, exitCode, output
+            evidence_dict = evidence_data.get("evidence", {})
+            for key, val in evidence_dict.items():
+                if ass_id.lower() in key.lower() or (isinstance(val, dict) and (val.get("path") and ass_id in val.get("path") or val.get("assertion_id") == ass_id)):
+                    if isinstance(val, dict):
+                        sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
+                        has_cmd = "command" in sub or "script" in sub
+                        has_code = sub.get("exitCode") == 0 or sub.get("exit_code") == 0 or sub.get("status") == "success"
+                        has_out = "output" in sub or "stdout" in sub
+                        if has_cmd and has_code and has_out:
+                            has_evidence = True
+                            break
+
+            # 2. Check runtime records (runtime_evidence_records in adu.json)
+            if not has_evidence:
+                matching_records = []
+                for r in runtime_records:
+                    if r.get("exitCode") == 0:
+                        cmd = r.get("command") or ""
+                        out = r.get("output") or ""
+                        r_ass_id = r.get("assertion_id") or r.get("assertionId") or ""
+                        if ass_id in cmd or ass_id in out or r_ass_id == ass_id:
+                            matching_records.append(r)
+                if len(matching_records) > 0:
+                    has_evidence = True
+
+        if not has_evidence:
+            if is_runtime:
+                missing_runtime.append(ass)
+            else:
+                missing_static.append(ass)
+
+    if missing_static:
+        print(f"FAIL: Missing static evidence for assertions: {', '.join(a['id'] for a in missing_static)}", file=sys.stderr)
+        sys.exit(1)
+
+    if missing_runtime:
+        print(f"HUMAN_GATE: Missing runtime environment/evidence for assertions: {', '.join(a['id'] for a in missing_runtime)}", file=sys.stderr)
+        # Standard return for human gate requirement is exit code 20
+        sys.exit(20)
+
+    print("PASS: All contract assertions have valid evidence/waivers.")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()

@@ -16,6 +16,7 @@ export interface AgentFactoryRun {
   adu_id: string;
   agent: string;
   returncode: number;
+  effective_returncode?: number;
   result: string;
   run_dir: string;
   parsed_result: {
@@ -68,6 +69,7 @@ export interface AgentFactoryAduView {
   required_evidence: string[];
   artifacts: string[];
   human_gate_required: boolean;
+  pre_gate_state?: string;
   paused?: boolean;
   language?: string;
   clarifications?: AgentFactoryDraftQuestionAnswer[];
@@ -122,7 +124,38 @@ export interface AgentFactoryAduView {
   integration_role?: string;
   epic_sequence?: number;
   rework_plan_path?: string;
+  gate_type?: string;
+  write_path_policy?: {
+    mode: string;
+    auto_approve_derived: boolean;
+    human_approval_required_for_medium_risk: boolean;
+    max_expansion_paths_per_request: number;
+  };
+  write_path_expansions?: Array<{
+    request_id: string;
+    source_agent: string;
+    requested_paths: string[];
+    approved_paths: string[];
+    decision: 'auto_approved' | 'pending_human_approval' | 'approved' | 'rejected' | 'blocked';
+    reason: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  display_status: {
+    kind: 'completed' | 'running' | 'blocked' | 'failed' | 'active' | 'stale' | 'canceled';
+    label: string;
+    reason: string;
+  };
+  clarification_questions?: Array<{
+    id: string;
+    question: string;
+    blocking: boolean;
+    status: 'pending' | 'answered' | 'deferred';
+    answer?: string | null;
+    answered_at?: string | null;
+  }>;
 }
+
 
 export interface AgentFactoryProject {
   project_id: string;
@@ -385,4 +418,59 @@ export interface AgentFactoryEpicView extends AgentFactoryEpic {
     status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
     reasons: string[];
   };
+  progress: {
+    current_phase: 'flow' | 'split' | 'child_adus' | 'epic_acceptance' | 'completed' | 'failed';
+    completed_phases: string[];
+    current_agent: string | null;
+    next_action: string | null;
+    child_summary: {
+      total: number;
+      evidenced: number;
+      blocked: number;
+      running: number;
+    };
+  };
+}
+
+export interface HumanGate {
+  gate_id: string;
+  scope: 'adu' | 'epic' | 'project' | 'intake';
+  target_id: string;
+  epic_id?: string;
+  project_id: string;
+  gate_type: string;
+  status: 'pending' | 'approved' | 'rejected' | 'rework_requested' | 'waived' | 'resolved' | 'canceled';
+  title: string;
+  reason: string;
+  source_agent: string;
+  source_run_id: string;
+  pre_gate_state: string;
+  affected_assertions?: string[];
+  available_actions: string[];
+  created_at: string;
+  resolved_at: string | null;
+  resolution: any | null;
+}
+
+export interface OrchestrationOperation {
+  operation_id: string;
+  scope: 'adu' | 'epic' | 'project' | 'intake';
+  target_id: string;
+  epic_id?: string;
+  project_id: string;
+  action: string;
+  mode: string;
+  status: 'queued' | 'spawning' | 'running' | 'waiting_human' | 'completed' | 'failed' | 'canceled';
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  spawn?: {
+    pid: number;
+    command: string;
+    cwd: string;
+  };
+  current_agent?: string;
+  current_state?: string;
+  result?: 'success' | 'failed' | 'human_gate' | 'no_op' | null;
+  error?: string | null;
 }

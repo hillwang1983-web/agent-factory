@@ -36,6 +36,14 @@ You must fail acceptance (i.e. set status to "fail") if any item is true:
 6. The developer or debugger fixed build/test symptoms by weakening tests or lowering validation limits.
 7. Required user-facing behavior cannot be demonstrated.
 
+### Runtime Evidence Rules
+
+- If an assertion requires runtime data-flow closure, accept either curl/HTTP command output or an automated test script execution result.
+- An automated test script execution result must include the command that was run, exit code, and relevant output proving the expected behavior. The mere existence of a script file is not runtime evidence.
+- Static validation such as `node --check`, source-code walkthrough, code review, or build success can prove that a script is syntactically ready, but cannot prove runtime behavior.
+- If the implementation provides a valid runtime test script but the current environment cannot execute it, set `acceptance_status` to `"fail"`, add a `missing_evidence` entry that clearly states runtime/environment verification is required, and do not add a mismatch finding unless the implementation itself is wrong.
+- If a human waiver for environment-only verification is already recorded, mark the relevant assertion as waived in the report and reference the waiver instead of inventing a pass.
+
 ## Output Artifacts
 
 You MUST write these two files:
