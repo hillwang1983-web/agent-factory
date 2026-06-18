@@ -1,7 +1,7 @@
 {
   "version": 1,
   "hermes_bin": "hermes",
-  "default_cwd": "/Users/hill/open5gs",
+  "default_cwd": "${PROJECT_REPO_ROOT}",
   "default_toolsets": "hermes-cli",
   "default_model": "",
   "agents": {
@@ -75,7 +75,7 @@
       "description": "Convert raw requirement text and uploaded files into a structured ADU draft.",
       "prompt": ".ai-agent/prompts/adu-intake-agent.md",
       "worktree": false,
-      "hermes_args": ["--provider", "deepseek", "--model", "deepseek-v4-flash", "-t", "hermes-cli"]
+      "hermes_args": ["--profile", "coding", "-t", "hermes-cli"]
     },
     "system-flow-designer": {
       "description": "Design end-to-end system flows, call graphs, data flows, and hard integration acceptance points for an Epic.",

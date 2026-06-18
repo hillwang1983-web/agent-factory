@@ -244,7 +244,7 @@ async function runTests() {
     // 3. 试图注册指向 ~/.ssh 物理路径的符号链接 (软链接绕过测试)
     const symlinkPath = `/tmp/my-ssh-link-${Date.now()}`;
     try {
-      fs.symlinkSync('/Users/hill/.ssh', symlinkPath);
+      fs.symlinkSync(path.join(require('os').homedir(), '.ssh'), symlinkPath);
     } catch (symErr) {
       // 在一些特殊权限容器下可能创建失败，若失败则手动跳过该子测试，但物理 realpath 校验依然生效
       console.log('⚠️ 无法创建软链接进行测试，已退化跳过');

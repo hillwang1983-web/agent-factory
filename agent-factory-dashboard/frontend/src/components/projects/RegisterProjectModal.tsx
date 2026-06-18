@@ -110,7 +110,7 @@ export const RegisterProjectModal: React.FC<RegisterProjectModalProps> = ({ isOp
             </label>
             <input
               type="text"
-              placeholder="例如: /Users/hill/open5gs"
+              placeholder="例如: /path/to/local/git-repo"
               value={repoPath}
               onChange={(e) => setRepoPath(e.target.value)}
               required

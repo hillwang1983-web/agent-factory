@@ -39,13 +39,19 @@ def run_cmd(args):
         return False, res.stdout, res.stderr
     return True, res.stdout, res.stderr
 
+def resolve_workspace_root():
+    env_value = os.environ.get("AGENT_FACTORY_WORKSPACE")
+    if env_value and env_value.strip():
+        return os.path.abspath(env_value.strip())
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 def main():
     parser = argparse.ArgumentParser(description="Profile a registered Git repository")
     parser.add_argument("--project", required=True, help="Project ID to profile")
     args = parser.parse_args()
 
     # Workspace resolution
-    workspace_root = os.environ.get("AGENT_FACTORY_WORKSPACE", "/Users/hill/open5gs")
+    workspace_root = resolve_workspace_root()
     projects_json_path = os.environ.get(
         "AGENT_FACTORY_PROJECTS_REGISTRY",
         os.path.join(workspace_root, ".ai-agent", "registry", "projects.json")

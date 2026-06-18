@@ -392,7 +392,8 @@ async function run() {
 
   // T14: Tests use isolated registry (never pollute real registry)
   await assert('T14: isolated registry — no production files touched', async () => {
-    const realRegistry = path.join(process.env.HOME || '/Users/hill', 'open5gs', '.ai-agent', 'registry', 'intake-drafts.json');
+    const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../..');
+    const realRegistry = path.join(workspaceRoot, '.ai-agent', 'registry', 'intake-drafts.json');
     let realExists = false;
     try { await fs.access(realRegistry); realExists = true; } catch (_) {}
     // If real registry exists, make sure our temp drafts aren't in it

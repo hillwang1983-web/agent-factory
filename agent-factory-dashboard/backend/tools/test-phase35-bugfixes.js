@@ -46,7 +46,7 @@ function request(url, options = {}) {
 async function runTests() {
   console.log('--- STARTING PHASE 3.5 BUGFIX INTEGRATION TESTS ---');
   const baseUrl = process.env.TEST_BASE_URL || 'http://localhost:3011';
-  const workspaceRoot = process.env.WORKSPACE_ROOT || '/Users/hill/open5gs';
+  const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../..');
 
   console.log(`Target Base URL: ${baseUrl}`);
   console.log(`Workspace Root: ${workspaceRoot}`);

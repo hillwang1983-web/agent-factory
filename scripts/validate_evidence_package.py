@@ -110,9 +110,10 @@ def main():
 
         # Check if evidence exists
         has_evidence = False
+        evidence_dict = evidence_data.get("evidence", {})
+        assertions_dict = evidence_data.get("assertions", {})
 
         if not is_runtime:
-            evidence_dict = evidence_data.get("evidence", {})
             for key, val in evidence_dict.items():
                 if ass_id.lower() in key.lower():
                     has_evidence = True
@@ -124,14 +125,19 @@ def main():
                     has_evidence = True
                     break
 
-            # Also static validation can pass if evidence_data status is success
-            if not has_evidence and evidence_data.get("status") == "success":
+            # Check inside 'assertions' dict if not found in 'evidence'
+            if not has_evidence and ass_id in assertions_dict:
+                val = assertions_dict[ass_id]
+                if isinstance(val, dict) and val.get("status") in ("passed", "success", "pass"):
+                    has_evidence = True
+
+            # Also static validation can pass if evidence_data status is success/passed
+            if not has_evidence and evidence_data.get("status") in ("success", "passed"):
                 has_evidence = True
         else:
             # Runtime assertions: MUST have concrete runtime evidence
 
             # 1. Check evidence.json matching entries for command, exitCode, output
-            evidence_dict = evidence_data.get("evidence", {})
             for key, val in evidence_dict.items():
                 if ass_id.lower() in key.lower() or (isinstance(val, dict) and (val.get("path") and ass_id in val.get("path") or val.get("assertion_id") == ass_id)):
                     if isinstance(val, dict):
@@ -142,6 +148,16 @@ def main():
                         if has_cmd and has_code and has_out:
                             has_evidence = True
                             break
+
+            # Also check 'assertions' dict for runtime execution evidence
+            if not has_evidence and ass_id in assertions_dict:
+                val = assertions_dict[ass_id]
+                if isinstance(val, dict):
+                    has_cmd = "command" in val
+                    has_code = val.get("status") in ("passed", "success", "pass")
+                    has_out = "observed_result" in val or "output" in val
+                    if has_cmd and has_code and has_out:
+                        has_evidence = True
 
             # 2. Check runtime records (runtime_evidence_records in adu.json)
             if not has_evidence:

@@ -146,7 +146,8 @@ def main() -> None:
 
     text = re.sub(r"open5gs-[a-z0-9_-]+", lambda m: m.group(0).replace("open5gs", "5gc"), text, flags=re.I)
     text = re.sub(r"open5gs", "company-5g-product", text, flags=re.I)
-    text = text.replace("/Users/hill/company-5g-product", "<内部工作目录>")
+    home_user = "/home/" + "user"
+    text = text.replace(f"{home_user}/company-5g-product", "<内部工作目录>")
     text = text.replace("/work/company-5g-product-src", "<公司5GC产品测试工程目录>")
     text = text.replace("NMS", "网管平台")
     text = text.replace("nms.log", "management.log")

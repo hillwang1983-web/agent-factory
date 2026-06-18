@@ -52,6 +52,25 @@ def load_json(path):
         return json.load(f)
 
 
+def expand_runtime_path(value, workspace_root, project_repo_root=None):
+    if not isinstance(value, str):
+        return value
+    project_root = project_repo_root if project_repo_root is not None else workspace_root
+    return (
+        value
+        .replace("${AGENT_FACTORY_WORKSPACE}", str(workspace_root))
+        .replace("$AGENT_FACTORY_WORKSPACE", str(workspace_root))
+        .replace("${PROJECT_REPO_ROOT}", str(project_root))
+        .replace("$PROJECT_REPO_ROOT", str(project_root))
+    )
+
+
+def resolve_agent_cwd(default_cwd_raw, workspace_root, project_repo_path):
+    raw = default_cwd_raw or "${PROJECT_REPO_ROOT}"
+    expanded = expand_runtime_path(raw, workspace_root, project_repo_path)
+    return Path(expanded).resolve()
+
+
 def save_json(path, data):
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:
@@ -478,13 +497,37 @@ def handle_intake_draft(args, root, registry):
 
     # Call hermes
     agents = load_json(registry / "agents.json")
+    agent_cfg = agents.get("agents", {}).get("adu-intake-agent", {})
+    if not agent_cfg:
+        print("Agent 'adu-intake-agent' not found in registry.", file=sys.stderr)
+        sys.exit(1)
+
+    # Load per‑agent model override configuration
+    model_settings_path = registry / "agent-model-settings.json"
+    model_overrides = {}
+    if model_settings_path.exists():
+        try:
+            model_overrides = json.load(model_settings_path.open("r", encoding="utf-8"))
+        except Exception:
+            model_overrides = {}
+    agent_model_cfg = model_overrides.get("adu-intake-agent", {})
+
+    hermes_args = list(agent_cfg.get("hermes_args", []))
+    if agent_model_cfg.get("provider"):
+        hermes_args.extend(["--provider", agent_model_cfg["provider"]])
+    if agent_model_cfg.get("model"):
+        hermes_args.extend(["--model", agent_model_cfg["model"]])
+
     cmd = [agents.get("hermes_bin", "hermes")]
-    cmd.extend(agents.get("agents", {}).get("adu-intake-agent", {}).get("hermes_args", []))
+    cmd.extend(hermes_args)
     cmd.extend(["-z", prompt])
+
+    default_cwd_raw = agents.get("default_cwd", "${PROJECT_REPO_ROOT}")
+    cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
 
     proc = subprocess.run(
         cmd,
-        cwd=str(project_repo_path),
+        cwd=str(cwd_path),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -708,9 +751,12 @@ def main():
     session_id = f"oneshot_{timestamp}_{adu['id']}_{args.agent}"
     env["HERMES_SESSION_ID"] = session_id
 
+    default_cwd_raw = agents.get("default_cwd", "${PROJECT_REPO_ROOT}")
+    cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
+
     proc = subprocess.run(
         cmd,
-        cwd=str(project_repo_path),
+        cwd=str(cwd_path),
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

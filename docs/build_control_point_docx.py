@@ -13,8 +13,8 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 
-SRC = Path("/Users/hill/open5gs/docs/control-point-integrated-test-manual-3gpp.md")
-OUT = Path("/Users/hill/open5gs/docs/control-point-integrated-test-manual-3gpp.docx")
+SRC = Path(__file__).resolve().parent / "control-point-integrated-test-manual-3gpp.md"
+OUT = Path(__file__).resolve().parent / "control-point-integrated-test-manual-3gpp.docx"
 DOC_TITLE = "5GC 控标点综合测试手册"
 DOC_SUBTITLE = "Word 版：测试用例均以表格形式呈现"
 PROJECT_NAME = "Open5GS / 5GC 控标点测试"

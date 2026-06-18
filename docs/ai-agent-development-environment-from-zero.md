@@ -2,7 +2,7 @@
 
 适用目标：核心网产品 2.11 全量需求在 2026-06-30 前交付。
 
-适用仓库：`/Users/hill/open5gs`
+适用仓库：`<workspace-root>`
 
 核心原则：这不是“给程序员配一个 AI 助手”，而是搭建一套可并发、可回放、可审计、可自愈的 AI Agent 开发工厂。人类负责架构裁决、契约评审、安全审计、环境协调和最终验收；Agent 负责上下文理解、测试生成、代码实现、构建修复、调试、回归和证据产出。
 
@@ -80,7 +80,7 @@ flowchart LR
 | 内存 | 32 GB 以上 |
 | 磁盘 | 200 GB 可用空间 |
 | 网络 | 可访问代码仓库、模型服务、Linux worker、制品仓库 |
-| 本地目录 | `/Users/hill/open5gs` 作为主工作区 |
+| 本地目录 | `<workspace-root>` 作为主工作区 |
 
 控制节点不建议承担所有 Open5GS 运行测试，因为 UPF、TUN/TAP、Linux 网络命名空间、iptables、Valgrind、部分内核能力更适合 Linux worker。
 
@@ -126,7 +126,7 @@ flowchart LR
 当前工作区建议统一为：
 
 ```text
-/Users/hill/open5gs/
+`<workspace-root>/`
   open5gs/             # 核心网 C/C++ 主仓库或子模块
   open5gs-nms/         # NMS/OAM 前后端
   UERANSIM/            # RAN/UE 仿真

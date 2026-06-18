@@ -13,7 +13,11 @@
     "test:quality-gates": "node tools/test-quality-gates.js",
     "test:onboarding": "node tools/test-project-onboarding.js",
     "test:epic-factory": "node tools/test-epic-factory.js",
-    "test:epic-dag": "node tools/test-epic-dag.js"
+    "test:epic-dag": "node tools/test-epic-dag.js",
+    "bootstrap": "python3 ../../scripts/agent_factory_bootstrap.py",
+    "test:portability": "python3 ../../scripts/test_portability.py && node tools/test-portability-config.js",
+    "check:portable": "python3 ../../scripts/check_tracked_path_leaks.py && python3 ../../scripts/test_portability.py && node tools/test-portability-config.js",
+    "doctor": "python3 ../../scripts/agent_factory_doctor.py"
   },
   "dependencies": {
     "compression": "^1.7.4",

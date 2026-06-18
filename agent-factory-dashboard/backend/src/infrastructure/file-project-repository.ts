@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import pino from 'pino';
+import os from 'os';
 import { ProjectRepository } from '../domain/project-repository';
 import { AgentFactoryProject, RegisterProjectInput, ProjectStatus } from '../domain/project';
 
@@ -15,9 +16,9 @@ export class FileProjectRepository implements ProjectRepository {
     '/System',
     '/Library',
     '/Applications',
-    '/Users/hill/.ssh',
-    '/Users/hill/.hermes',
-    '/Users/hill/.codex',
+    path.join(os.homedir(), '.ssh'),
+    path.join(os.homedir(), '.hermes'),
+    path.join(os.homedir(), '.codex'),
   ];
 
   constructor(

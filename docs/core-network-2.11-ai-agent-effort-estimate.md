@@ -2,9 +2,9 @@
 
 来源：
 
-- `/Users/hill/5GC_2.11/核心网产品 2.11 版本功能清单.md`
+- `$HOME/5GC_2.11/核心网产品 2.11 版本功能清单.md`
 - `docs/core-network-2.11-requirement-analysis.md`
-- 当前 `/Users/hill/open5gs` 工作区的 Open5GS/Open5GS-NMS/UERANSIM 能力基线
+- 当前 `<workspace-root>` 工作区的 Open5GS/Open5GS-NMS/UERANSIM 能力基线
 
 本文不使用传统“人月/人日”模式。所有工作量均按 AI Agent 开发模式评估，重点衡量上下文复杂度、可拆分性、验证闭环、外部依赖和并发执行能力。
 

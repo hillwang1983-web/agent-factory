@@ -16,6 +16,8 @@ kamailio/
 .ai-agent/registry/events.json
 .ai-agent/registry/operations.json
 .ai-agent/registry/evidence-waivers.json
+.ai-agent/registry/write-path-expansion-requests.json
+.ai-agent/registry/human-gates.json
 .ai-agent/epics/
 .ai-agent/intake/
 .ai-agent/policies/

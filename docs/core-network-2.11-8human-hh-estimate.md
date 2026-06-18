@@ -5,7 +5,7 @@
 - `docs/core-network-2.11-0630-full-scope-agent-plan.md`
 - `docs/core-network-2.11-code-volume-estimate.md`
 - `docs/core-network-2.11-token-usage-estimate.md`
-- `/Users/hill/.gemini/antigravity/brain/e598a519-c339-45f3-b355-069de5537fd5/ai_agent_workload_estimation.md`
+- `$HOME/.gemini/antigravity/brain/CONVERSATION_ID/ai_agent_workload_estimation.md`
 
 目标口径：
 

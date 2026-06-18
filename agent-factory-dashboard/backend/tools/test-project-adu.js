@@ -54,7 +54,7 @@ function makeProject(overrides = {}) {
   return {
     project_id: 'open5gs-main',
     name: 'Open5GS',
-    repo_path: '/Users/hill/open5gs',
+    repo_path: path.resolve(__dirname, '../../..'),
     status: 'profiled',
     profile_path: '.agent-factory/project-profile.json',
     knowledge_dir: '.agent-factory/knowledge',

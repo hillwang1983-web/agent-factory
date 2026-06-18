@@ -14,7 +14,7 @@ function runCommand(cmd, cwd, env = {}) {
 
 async function runTests() {
   console.log('--- STARTING QUALITY GATES integration tests ---');
-  const workspaceRoot = process.env.WORKSPACE_ROOT || '/Users/hill/open5gs';
+  const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../..');
   const aduId = 'REQ-MVP-004';
 
   console.log(`Workspace Root: ${workspaceRoot}`);

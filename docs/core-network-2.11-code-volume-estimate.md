@@ -4,7 +4,7 @@
 
 - `docs/core-network-2.11-0630-full-scope-agent-plan.md`
 - `docs/core-network-2.11-ai-agent-effort-estimate.md`
-- 当前 `/Users/hill/open5gs` 工作区 Open5GS/Open5GS-NMS/UERANSIM 结构
+- 当前 `<workspace-root>` 工作区 Open5GS/Open5GS-NMS/UERANSIM 结构
 
 评估口径：
 

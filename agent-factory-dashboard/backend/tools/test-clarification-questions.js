@@ -39,7 +39,7 @@ async function runTests() {
   console.log('--- STARTING CLARIFICATION QUESTIONS LIFECYCLE INTEGRATION TESTS ---');
   const baseUrl = 'http://localhost:3011';
   const aduId = 'REQ-MVP-004';
-  const workspaceRoot = '/Users/hill/open5gs';
+  const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../..');
 
   // 1. Load and backup registry
   const registryAduPath = path.join(workspaceRoot, '.ai-agent', 'registry', 'adu.json');
