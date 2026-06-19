@@ -28,6 +28,7 @@ RUNTIME_REGISTRY_NAMES = {
     ".ai-agent/registry/operations.json",
     ".ai-agent/registry/epics.json",
     ".ai-agent/registry/intake-drafts.json",
+    ".ai-agent/registry/intake-operations.json",
     ".ai-agent/registry/token-budget.json",
     ".ai-agent/registry/artifact-edits.json",
     ".ai-agent/registry/events.json",

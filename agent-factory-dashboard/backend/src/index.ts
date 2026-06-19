@@ -1,4 +1,5 @@
 import express from 'express';
+import * as path from 'path';
 import cors from 'cors';
 import compression from 'compression';
 import pino from 'pino';
@@ -12,6 +13,7 @@ import { ProjectOnboardingUseCase } from './application/project-onboarding';
 import { ProjectAduFactory } from './application/project-adu-factory';
 import { AduIntake } from './application/adu-intake';
 import { EpicFactory } from './application/epic-factory';
+import { IntakeGenerationService } from './application/intake/intake-generation-service';
 
 async function main() {
   const config = loadAppConfig();
@@ -30,7 +32,14 @@ async function main() {
 
   const aduFactory = new ProjectAduFactory(projectRepo, repo);
   const epicFactory = new EpicFactory(projectRepo, repo);
-  const aduIntake = new AduIntake(projectRepo, aduFactory, config.workspaceRoot, epicFactory);
+  const generationService = new IntakeGenerationService(
+    config.workspaceRoot,
+    async () => path.join(config.workspaceRoot, '.ai-agent', 'registry', 'intake-drafts.json'),
+    () => path.join(config.workspaceRoot, '.ai-agent', 'registry', 'intake-operations.json')
+  );
+  await generationService.recover();
+
+  const aduIntake = new AduIntake(projectRepo, aduFactory, config.workspaceRoot, epicFactory, generationService);
 
   // Initialize WS Broadcaster
   initializeWebSocketServer(config.wsPort, monitor, config.pollIntervalMs, logger);

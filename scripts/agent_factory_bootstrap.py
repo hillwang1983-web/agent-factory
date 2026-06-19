@@ -12,6 +12,7 @@ RUNTIME_FILES = {
     "operations.json": {"version": 1, "operations": []},
     "epics.json": {"version": 1, "epics": []},
     "intake-drafts.json": {"version": 1, "drafts": []},
+    "intake-operations.json": {"version": 1, "operations": []},
     "events.json": {"version": 1, "events": []},
     "evidence-waivers.json": {"version": 1, "waivers": []},
     "write-path-expansion-requests.json": {"version": 1, "requests": []},

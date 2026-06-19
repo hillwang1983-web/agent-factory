@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
+import { IntakeGenerationService } from './intake/intake-generation-service';
 import { FileProjectRepository } from '../infrastructure/file-project-repository';
 import { ProjectAduFactory } from './project-adu-factory';
 import { EpicFactory } from './epic-factory';
@@ -101,7 +102,8 @@ export class AduIntake {
     private projectRepo: FileProjectRepository,
     private aduFactory: ProjectAduFactory,
     private workspaceRoot: string,
-    private epicFactory?: EpicFactory
+    private epicFactory?: EpicFactory,
+    private generationService?: IntakeGenerationService
   ) {}
 
   private normalizeQuestionAnswers(draft: any): AgentFactoryDraftQuestionAnswer[] {
@@ -218,60 +220,8 @@ export class AduIntake {
   }
 
   async generateDraft(draftId: string): Promise<void> {
-    const regPath = await this.getIntakeRegistryPath();
-    const registry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
-    const draftIndex = registry.drafts.findIndex((d: any) => d.draft_id === draftId);
-    if (draftIndex === -1) throw new Error('Draft not found');
-
-    const meta = registry.drafts[draftIndex];
-    meta.status = 'generating';
-    await fs.writeFile(regPath, JSON.stringify(registry, null, 2), 'utf-8');
-
-    const scriptPath = path.join(this.workspaceRoot, 'scripts', 'hermes_agent_run.py');
-    const child = spawn('python3', [scriptPath, '--intake-draft', draftId, '--project', meta.project_id, '--repo', meta.repo_path, '--agent', 'adu-intake-agent'], {
-        cwd: this.workspaceRoot
-    });
-
-    const updateRegistryStatus = async (status: string, title?: string, errorMsg?: string) => {
-      try {
-        const freshRegistry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
-        const fIndex = freshRegistry.drafts.findIndex((d: any) => d.draft_id === draftId);
-        if (fIndex === -1) return;
-        freshRegistry.drafts[fIndex].status = status;
-        if (title) freshRegistry.drafts[fIndex].title = title;
-        if (errorMsg) freshRegistry.drafts[fIndex].error = errorMsg;
-        await fs.writeFile(regPath, JSON.stringify(freshRegistry, null, 2), 'utf-8');
-      } catch (e) {
-        console.error(`[AduIntake] Failed to update registry status for ${draftId}:`, e);
-      }
-    };
-
-    let stderrBuf = '';
-    child.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
-
-    child.on('close', (code) => {
-      // Wrap async work to prevent unhandled promise rejection in the EventEmitter
-      (async () => {
-        if (code === 0) {
-          let title: string | undefined;
-          try {
-            const draftContent = JSON.parse(await fs.readFile(path.join(meta.repo_path, meta.draft_path), 'utf-8'));
-            title = draftContent.title || 'Untitled';
-          } catch (_e) {}
-          await updateRegistryStatus('draft_ready', title);
-        } else {
-          const errSummary = stderrBuf.trim().split('\n').pop()?.slice(0, 200) || 'Unknown error';
-          console.error(`[AduIntake] generation failed for ${draftId}: ${errSummary}`);
-          await updateRegistryStatus('generation_failed', undefined, errSummary);
-        }
-      })().catch((e) => console.error(`[AduIntake] close handler failed for ${draftId}:`, e));
-    });
-
-    child.on('error', (err) => {
-      console.error(`[AduIntake] spawn error for ${draftId}:`, err);
-      (async () => updateRegistryStatus('generation_failed'))()
-        .catch((e) => console.error(`[AduIntake] error handler failed for ${draftId}:`, e));
-    });
+    if (!this.generationService) throw new Error('IntakeGenerationService not configured');
+    await this.generationService.start(draftId);
   }
 
   async getDraft(draftId: string): Promise<{ meta: any, draft: AgentFactoryAduDraft | null }> {
@@ -422,106 +372,10 @@ export class AduIntake {
   }
 
   async generateDraftSync(draftId: string): Promise<void> {
-    const regPath = await this.getIntakeRegistryPath();
-    const registry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
-    const draftIndex = registry.drafts.findIndex((d: any) => d.draft_id === draftId);
-    if (draftIndex === -1) throw new Error('Draft not found');
-
-    const meta = registry.drafts[draftIndex];
-    meta.status = 'generating';
-    await fs.writeFile(regPath, JSON.stringify(registry, null, 2), 'utf-8');
-
-    const scriptPath = path.join(this.workspaceRoot, 'scripts', 'hermes_agent_run.py');
-    const child = spawn('python3', [scriptPath, '--intake-draft', draftId, '--project', meta.project_id, '--repo', meta.repo_path, '--agent', 'adu-intake-agent'], {
-        cwd: this.workspaceRoot
-    });
-
-    const updateRegistryStatus = async (status: string, title?: string, errorMsg?: string) => {
-      try {
-        const freshRegistry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
-        const fIndex = freshRegistry.drafts.findIndex((d: any) => d.draft_id === draftId);
-        if (fIndex === -1) return;
-        freshRegistry.drafts[fIndex].status = status;
-        if (title) freshRegistry.drafts[fIndex].title = title;
-        if (errorMsg) freshRegistry.drafts[fIndex].error = errorMsg;
-        await fs.writeFile(regPath, JSON.stringify(freshRegistry, null, 2), 'utf-8');
-      } catch (e) {
-        console.error(`[AduIntake] Failed to update registry status for ${draftId}:`, e);
-      }
-    };
-
-    const timeoutDuration = process.env.INTAKE_TIMEOUT_MS ? parseInt(process.env.INTAKE_TIMEOUT_MS, 10) : 180000;
-    let isTerminated = false;
-    const timeoutTimer = setTimeout(() => {
-      isTerminated = true;
-      console.error(`[AduIntake] generation timed out for ${draftId} after ${timeoutDuration}ms`);
-      child.kill('SIGTERM');
-    }, timeoutDuration);
-
-    let stderrBuf = '';
-    child.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
-
-    return new Promise<void>((resolve, reject) => {
-      child.on('close', (code) => {
-        clearTimeout(timeoutTimer);
-        if (isTerminated) {
-          (async () => {
-            await updateRegistryStatus('generation_failed', undefined, 'Draft generation timed out after 3 minutes');
-            reject(new Error('Draft generation timed out after 3 minutes'));
-          })().catch(reject);
-          return;
-        }
-
-        (async () => {
-          if (code === 0) {
-            try {
-              const draftFilePath = path.join(meta.repo_path, meta.draft_path);
-              try {
-                await fs.access(draftFilePath);
-              } catch (accessErr) {
-                throw new Error(`Draft file does not exist at ${draftFilePath}`);
-              }
-
-              let draftContent: any;
-              try {
-                draftContent = JSON.parse(await fs.readFile(draftFilePath, 'utf-8'));
-              } catch (parseErr) {
-                throw new Error(`Failed to parse draft JSON: ${(parseErr as Error).message}`);
-              }
-
-              if (!draftContent.title || typeof draftContent.title !== 'string' || !draftContent.title.trim()) {
-                throw new Error('Draft schema invalid: title is missing or empty');
-              }
-              if (!draftContent.goal || typeof draftContent.goal !== 'string' || !draftContent.goal.trim()) {
-                throw new Error('Draft schema invalid: goal is missing or empty');
-              }
-
-              await updateRegistryStatus('draft_ready', draftContent.title);
-              resolve();
-            } catch (err: any) {
-              console.error(`[AduIntake] draft validation failed for ${draftId}: ${err.message}`);
-              await updateRegistryStatus('generation_failed', undefined, err.message);
-              reject(err);
-            }
-          } else {
-            const errSummary = stderrBuf.trim().split('\n').pop()?.slice(0, 200) || 'Unknown error';
-            console.error(`[AduIntake] generation failed for ${draftId}: ${errSummary}`);
-            await updateRegistryStatus('generation_failed', undefined, errSummary);
-            reject(new Error(`Draft generation failed: ${errSummary}`));
-          }
-        })().catch(reject);
-      });
-
-      child.on('error', (err) => {
-        clearTimeout(timeoutTimer);
-        if (isTerminated) return;
-        console.error(`[AduIntake] spawn error for ${draftId}:`, err);
-        (async () => {
-          await updateRegistryStatus('generation_failed');
-          reject(err);
-        })().catch(reject);
-      });
-    });
+    if (!this.generationService) throw new Error('IntakeGenerationService not configured');
+    await this.generationService.start(draftId);
+    const softTimeoutMs = process.env.INTAKE_TIMEOUT_MS ? parseInt(process.env.INTAKE_TIMEOUT_MS, 10) : 30000;
+    await this.generationService.wait(draftId, softTimeoutMs);
   }
 
   async registerEpicDraft(draftId: string, options?: { confirmed?: boolean }): Promise<{ epic_id: string }> {
