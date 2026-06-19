@@ -52,7 +52,14 @@ export function EpicControlPanel({ epic }: Props) {
   }, [epic.id, pollOperation]);
 
   const isTerminal = ['epic_evidenced', 'epic_failed', 'canceled'].includes(epic.state);
-  const canMaterialize = epic.state === 'split_required' && epic.child_adus.length === 0;
+  const canMaterialize = ['split_decision', 'split_required'].includes(epic.state) && (!epic.child_adus || epic.child_adus.length === 0);
+
+  const hasRunningChild = epic.child_adus?.some(childId => {
+    const childOp = activeOperations[childId];
+    return childOp && ['queued', 'spawning', 'running'].includes(childOp.status);
+  }) || false;
+
+  const isDisabled = busy || !!activeOp || hasRunningChild;
   const nextActionHint: Record<string, string> = {
     created: '下一步：启动 system-flow-designer，生成系统链路设计。',
     flow_designed: '下一步：单步执行 adu-splitter，生成拆分方案。',
@@ -96,19 +103,25 @@ export function EpicControlPanel({ epic }: Props) {
         )}
         <div className="flex flex-wrap gap-2">
           {!isTerminal && epic.state === 'created' && (
-            <button onClick={() => doAction('启动', startEpic)} disabled={busy}
+            <button onClick={() => doAction('启动', startEpic)} disabled={isDisabled}
               className="flex items-center gap-1 px-3 py-1.5 text-xs rounded bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-50">
               <Play className="h-3 w-3" /> {busy ? '执行中...' : '启动'}
             </button>
           )}
           {!isTerminal && epic.state !== 'created' && (
-            <button onClick={() => doAction('继续自动', continueEpic)} disabled={busy}
+            <button onClick={() => doAction('继续自动', continueEpic)} disabled={isDisabled}
               className="flex items-center gap-1 px-3 py-1.5 text-xs rounded bg-green-600 text-white hover:bg-green-500 disabled:opacity-50">
-              <FastForward className="h-3 w-3" /> 继续自动
+              <FastForward className="h-3 w-3" /> {
+                epic.state === 'child_adus_created'
+                  ? '启动可运行子 ADU'
+                  : (epic.state === 'child_adus_running'
+                      ? `继续自动 (运行中: ${epic.summary?.running_child_adus || 0})`
+                      : '继续自动')
+              }
             </button>
           )}
           {!isTerminal && (
-            <button onClick={() => doAction('单步执行', stepEpic)} disabled={busy}
+            <button onClick={() => doAction('单步执行', stepEpic)} disabled={isDisabled}
               className="flex items-center gap-1 px-3 py-1.5 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50">
               <StepForward className="h-3 w-3" /> 单步执行
             </button>
@@ -120,7 +133,7 @@ export function EpicControlPanel({ epic }: Props) {
             </button>
           )}
           {canMaterialize && (
-            <button onClick={() => doAction('生成子ADU', materializeChildAdus)} disabled={busy}
+            <button onClick={() => doAction('生成子ADU', materializeChildAdus)} disabled={isDisabled}
               className="flex items-center gap-1 px-3 py-1.5 text-xs rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50">
               <PackagePlus className="h-3 w-3" /> 生成子ADU
             </button>
@@ -133,14 +146,21 @@ export function EpicControlPanel({ epic }: Props) {
           )}
         </div>
         {message && (
-          <div className={`mt-3 rounded border px-3 py-2 text-xs ${
+          <div className={`mt-3 rounded border px-3 py-2 text-xs space-y-1 ${
             message.type === 'error'
               ? 'border-red-800 bg-red-950/40 text-red-200'
               : message.type === 'success'
                 ? 'border-green-800 bg-green-950/40 text-green-200'
                 : 'border-cyan-800 bg-cyan-950/40 text-cyan-200'
           }`}>
-            {message.text}
+            <div>{message.text}</div>
+            {message.type === 'error' && (
+              <div className="text-[10px] text-red-400">
+                {message.text.includes('timeout') && '💡 [排查提示] 进程由于超时被终止。请检查执行计划是否过于复杂，或目标文件有无死循环依赖。如持续超时请考虑拆分需求，不要通过增大超时掩盖问题。'}
+                {message.text.includes('already running') && '💡 [排查提示] 竞争锁冲突。另一个实例或进程正在独占此 Epic 编排任务。请等待其结束或在后台清理 PID 锁后重试。'}
+                {message.text.includes('budget') && '💡 [排查提示] 溢出 Token 预算熔断。当前 prompt 大小或预计 token 超过限制，已安全熔断。请检查 Focused Payload Pruning 剪枝配置。'}
+              </div>
+            )}
           </div>
         )}
         {isTerminal && (

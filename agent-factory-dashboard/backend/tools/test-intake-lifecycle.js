@@ -150,7 +150,7 @@ sys.exit(0)
 
     const record = await service.start(draftId);
     eq(record.status, 'generation_failed');
-    eq(record.error_code, 'INTAKE_OUTPUT_INVALID');
+    eq(record.error_code, 'INTAKE_HARD_TIMEOUT');
 
     delete process.env.INTAKE_TIMEOUT_MS;
     delete process.env.INTAKE_HARD_TIMEOUT_MS;

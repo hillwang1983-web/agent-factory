@@ -7,7 +7,7 @@ import { EpicMonitor } from '../epic-monitor';
 
 export interface OperatorRunnerDelegate {
   spawnAduOrchestrator(aduId: string, mode: 'start' | 'continue' | 'step'): Promise<any>;
-  spawnEpicOrchestrator(epicId: string, mode: 'start' | 'continue' | 'step'): Promise<any>;
+  spawnEpicOrchestrator(epicId: string, mode: 'start' | 'continue' | 'step' | 'materialize'): Promise<any>;
   executeNonDirectAction(action: OperatorAction): Promise<any>;
 }
 
@@ -77,14 +77,19 @@ export class OperatorControl {
         case 'continue_auto':
         case 'step':
         case 'materialize_child_adus': {
-          if (action.action === 'materialize_child_adus' && targetType !== 'epic') {
-            throw Object.assign(new Error('materialize_child_adus action is only supported for Epic targets'), { status: 400 });
+          let runMode: 'start' | 'continue' | 'step' | 'materialize';
+          if (action.action === 'materialize_child_adus') {
+            if (targetType !== 'epic') {
+              throw Object.assign(new Error('materialize_child_adus action is only supported for Epic targets'), { status: 400 });
+            }
+            runMode = 'materialize';
+          } else {
+            runMode = action.action === 'continue_auto' ? 'continue' : (action.action === 'start' ? 'start' : 'step');
           }
-          const runMode = action.action === 'continue_auto' ? 'continue' : (action.action === 'start' ? 'start' : 'step');
           if (targetType === 'epic') {
             result = await this.runnerDelegate.spawnEpicOrchestrator(targetId, runMode);
           } else {
-            result = await this.runnerDelegate.spawnAduOrchestrator(targetId, runMode);
+            result = await this.runnerDelegate.spawnAduOrchestrator(targetId, runMode as any);
           }
           break;
         }

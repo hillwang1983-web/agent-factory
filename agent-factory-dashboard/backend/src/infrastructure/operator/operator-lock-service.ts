@@ -1,10 +1,40 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true; // No error = alive
+  } catch (err: any) {
+    // EPERM = process exists but owned by different user = still alive
+    // ESRCH = no such process = dead
+    // All other errors (e.g. EINVAL) = treat as dead
+    if (err && typeof err === 'object' && 'code' in err) {
+      if (err.code === 'EPERM') return true;
+    }
+    return false;
+  }
+}
+
+export interface LockOwner {
+  pid: number;
+  owner_token: string;
+  heartbeat_at: string;
+  acquired_at: string;
+}
 
 export class OperatorLockService {
   private static activeLocks = new Set<string>();
+  private readonly ownerToken: string;
 
-  constructor(private readonly workspaceRoot: string) {}
+  constructor(private readonly workspaceRoot: string) {
+    this.ownerToken = randomUUID();
+  }
+
+  getOwnerToken(): string {
+    return this.ownerToken;
+  }
 
   acquireLock(targetId: string, projectId: string = 'default-open5gs', writeFsLock: boolean = true): boolean {
     // Check in-memory locks first
@@ -19,14 +49,17 @@ export class OperatorLockService {
       try {
         const lockContent = fs.readFileSync(lockPath, 'utf-8');
         const lockData = JSON.parse(lockContent);
+        const pid = lockData.pid;
         const heartbeat = lockData.heartbeat_at;
-        if (heartbeat) {
-          const hbTime = new Date(heartbeat).getTime();
-          const now = Date.now();
-          // Lock is valid if younger than 30 minutes
-          if (now - hbTime < 1800 * 1000) {
+        if (pid) {
+          const pidDead = !isPidAlive(pid);
+          // PID alive → ALWAYS refuse to acquire, regardless of heartbeat freshness.
+          // A live process that hasn't updated its heartbeat is still running.
+          // Only reclaim locks from dead PIDs.
+          if (!pidDead) {
             return false;
           }
+          // PID dead → lock can be reclaimed safely
         }
       } catch {
         // Corrupted lock, proceed
@@ -40,6 +73,7 @@ export class OperatorLockService {
         fs.mkdirSync(lockDir, { recursive: true });
         fs.writeFileSync(lockPath, JSON.stringify({
           pid: process.pid,
+          owner_token: this.ownerToken,
           acquired_at: new Date().toISOString(),
           heartbeat_at: new Date().toISOString()
         }, null, 2), 'utf-8');
@@ -57,8 +91,15 @@ export class OperatorLockService {
       const lockPath = path.join(this.workspaceRoot, '.ai-agent', 'locks', `${projectId}__${targetId}.lock`);
       if (fs.existsSync(lockPath)) {
         try {
-          fs.unlinkSync(lockPath);
-        } catch {}
+          const lockContent = fs.readFileSync(lockPath, 'utf-8');
+          const lockData = JSON.parse(lockContent);
+          // Only delete if we own the lock (or lock has no owner_token — legacy)
+          if (!lockData.owner_token || lockData.owner_token === this.ownerToken) {
+            fs.unlinkSync(lockPath);
+          }
+        } catch {
+          // Can't read/deleted already
+        }
       }
     }
   }
@@ -72,11 +113,9 @@ export class OperatorLockService {
       try {
         const lockContent = fs.readFileSync(lockPath, 'utf-8');
         const lockData = JSON.parse(lockContent);
-        const heartbeat = lockData.heartbeat_at;
-        if (heartbeat) {
-          const hbTime = new Date(heartbeat).getTime();
-          const now = Date.now();
-          return now - hbTime < 1800 * 1000;
+        const pid = lockData.pid;
+        if (pid && isPidAlive(pid)) {
+          return true;
         }
       } catch {}
     }

@@ -99,25 +99,9 @@ def check_clarification_consistency(data: dict, clarifications: list):
         if is_oos:
             out_of_scope_clarifications.append(cq)
 
-    flow_str = json.dumps(data, ensure_ascii=False).lower()
-
-    # Check 4: Natural language conflict rules for License Epic
-    conflicts = {
-        "token bucket": "澄清 5 已明确表示直接丢包，不使用令牌桶",
-        "令牌桶": "澄清 5 已明确表示直接丢包，不使用令牌桶",
-        "平滑限速": "澄清 5 已明确表示直接丢包，不使用令牌桶",
-        "fail-open": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
-        "fail_open": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
-        "fail-safe": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
-        "fail_safe": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
-        "降级演示": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
-        "prometheus": "澄清 8 已明确规定通过 WebUI API，不使用 Prometheus 监控",
-        "普罗米修斯": "澄清 8 已明确规定通过 WebUI API，不使用 Prometheus 监控",
-    }
-    
-    for word, err_msg in conflicts.items():
-        if word in flow_str:
-            fail(f"Clarification Conflict: {err_msg} (found '{word}' in flow)")
+    # Check 4: Clarification traceability — answered clarifications must not reappear in open_questions
+    # (Hardcoded conflict keyword rules removed in Phase 3.7 to maintain portability;
+    #  clarification conflicts should be checked dynamically via the payload, not a static word list.)
 
 
 def main():
@@ -183,7 +167,6 @@ def main():
     registry_candidates = [
         script_dir.parent / ".ai-agent" / "registry" / "epics.json",
         Path.cwd() / ".ai-agent" / "registry" / "epics.json",
-        Path("/Users/hill/open5gs/.ai-agent/registry/epics.json")
     ]
     
     epics_data = None

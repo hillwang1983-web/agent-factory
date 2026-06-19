@@ -194,6 +194,8 @@ export class EpicMonitor {
     let evidencedCount = 0;
     let blockedCount = 0;
     let runningCount = 0;
+    let createdCount = 0;
+    let anyProgress = false;
     const terminalStates = new Set(['evidenced', 'canceled']);
 
     for (const childId of childIds) {
@@ -212,13 +214,23 @@ export class EpicMonitor {
           }
         } catch (_) {}
 
-        if (isEvidenced || isWaived) evidencedCount++;
-        else if (adu.state === 'human_gate') blockedCount++;
-        else if (!terminalStates.has(adu.state)) runningCount++;
+        if (isEvidenced || isWaived) {
+          evidencedCount++;
+        } else if (adu.state === 'human_gate') {
+          blockedCount++;
+        } else if (adu.state === 'created') {
+          createdCount++;
+          if ((adu.retry_count && adu.retry_count > 0) || (adu.artifacts && adu.artifacts.length > 0)) {
+            anyProgress = true;
+          }
+        } else if (!terminalStates.has(adu.state)) {
+          runningCount++;
+          anyProgress = true;
+        }
       } catch (_) { /* skip missing */ }
     }
 
-    // Update summary
+    // Update summary: created (unstarted) children are NOT running
     epic.summary = {
       total_child_adus: childIds.length,
       evidenced_child_adus: evidencedCount,
@@ -228,7 +240,13 @@ export class EpicMonitor {
 
     if (evidencedCount === childIds.length) return 'child_adus_evidenced';
     if (blockedCount > 0) return 'child_adus_blocked';
-    if (runningCount > 0) return 'child_adus_running';
+
+    const allCreated = (createdCount === (childIds.length - evidencedCount - blockedCount));
+    if (allCreated && !anyProgress) {
+      return 'child_adus_created';
+    }
+
+    if (runningCount > 0 || evidencedCount < childIds.length) return 'child_adus_running';
 
     return epic.state;
   }

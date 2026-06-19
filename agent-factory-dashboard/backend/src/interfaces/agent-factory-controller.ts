@@ -8,10 +8,11 @@ import { execFileSync } from 'child_process';
 import type { Logger } from 'pino';
 import { HermesConfigRepository } from '../infrastructure/hermes-config-repository';
 import { AgentModelSettingsRepository } from '../infrastructure/agent-model-settings-repository';
+import { AgentRunPolicyLoader } from '../application/runtime/agent-run-policy';
 import { loadAppConfig } from '../config';
 import { broadcastOrchestratorEvent, activeOrchestrators } from '../websocket/broadcaster';
 import type { AgentFactoryArtifactEdit, AgentFactoryReview } from '../domain/agent-factory';
-import { OrchestrationOperationStore } from '../application/orchestration-operation-store';
+import { OrchestrationOperationStore, mapOrchestratorEvent } from '../application/orchestration-operation-store';
 import { EpicMonitor } from '../application/epic-monitor';
 import { RegistryLock } from '../infrastructure/registry-lock';
 
@@ -288,7 +289,7 @@ export function createAgentFactoryRouter(
     async spawnAduOrchestrator(aduId: string, mode: 'start' | 'continue' | 'step'): Promise<any> {
       return spawnOrchestrator(aduId, mode);
     },
-    async spawnEpicOrchestrator(epicId: string, mode: 'start' | 'continue' | 'step'): Promise<any> {
+    async spawnEpicOrchestrator(epicId: string, mode: 'start' | 'continue' | 'step' | 'materialize'): Promise<any> {
       return spawnEpicOrchestrator(epicId, mode);
     },
     async executeNonDirectAction(action: any): Promise<any> {
@@ -973,6 +974,21 @@ export function createAgentFactoryRouter(
     }
   }));
 
+  // GET /api/agent-factory/agent-policy/:agentId
+  // Returns the run policy for a specific agent (merged defaults + agent overrides).
+  // Provides a caller for AgentRunPolicyLoader and validates the policy file.
+  router.get('/agent-policy/:agentId', asyncHandler(async (req: Request, res: Response) => {
+    const { agentId } = req.params;
+    try {
+      const loader = new AgentRunPolicyLoader(config.workspaceRoot);
+      const policy = loader.getForAgent(agentId);
+      res.json({ agentId, policy });
+    } catch (err: unknown) {
+      const error = err as Error;
+      res.status(400).json({ success: false, error: error.message });
+    }
+  }));
+
   // Helper: spawn orchestrator with a given mode
   const spawnOrchestrator = async (aduId: string, mode: string): Promise<any> => {
     const workspaceRootOverride = await resolveWorkspaceRootOverride(aduId) || config.workspaceRoot;
@@ -1008,11 +1024,16 @@ export function createAgentFactoryRouter(
         try {
           const lockContent = fs.readFileSync(lockPath, 'utf-8');
           const lockData = JSON.parse(lockContent);
-          const heartbeat = lockData.heartbeat_at;
-          if (heartbeat) {
-            const hbTime = new Date(heartbeat).getTime();
-            const now = Date.now();
-            if (now - hbTime < 1800 * 1000) {
+          const pid = lockData.pid;
+          if (pid) {
+            // Only check PID aliveness — a live PID owns the lock regardless of heartbeat freshness.
+            // process.kill(pid, 0) returns true if alive, throws otherwise.
+            let pidAlive = true;
+            try { process.kill(pid, 0); } catch (e: any) {
+              // EPERM = process exists but different user = still alive
+              pidAlive = (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM');
+            }
+            if (pidAlive) {
               const err: any = new Error(`ADU ${aduId} is already being processed (PID ${lockData.pid})`);
               err.conflict = true;
               throw err;
@@ -1022,6 +1043,24 @@ export function createAgentFactoryRouter(
           if (e.conflict) throw e;
           // lock is corrupted or invalid, ignore and proceed
         }
+      }
+    }
+
+    // Policy integrity check: use AgentRunPolicyLoader.load() which validates
+    // version, field types, sign, and schema. Catches invalid JSON AND semantic
+    // errors like version=2, negative durations, string typed token limits.
+    // File missing → defaults are fine (Python side does real budget enforcement).
+    const policyFilePath = path.join(config.workspaceRoot, '.ai-agent', 'policies', 'agent-run-policy.json');
+    if (fs.existsSync(policyFilePath)) {
+      try {
+        new AgentRunPolicyLoader(config.workspaceRoot).load();
+      } catch (e: any) {
+        const err: any = new Error(
+          `agent-run-policy.json is invalid: ${e.message}. ` +
+          `Fix or remove the file to proceed.`
+        );
+        err.forbidden = true;
+        throw err;
       }
     }
 
@@ -1122,12 +1161,7 @@ export function createAgentFactoryRouter(
             });
 
             // Update current status / current agent of operation
-            const updates: any = {};
-            if (parsed.agent) updates.current_agent = parsed.agent;
-            if (parsed.state) updates.current_state = parsed.state;
-            if (parsed.event === 'human_gate_opened') {
-              updates.status = 'waiting_human';
-            }
+            const updates = mapOrchestratorEvent(parsed);
             if (Object.keys(updates).length > 0) {
               operationStore.updateOperation(op.operation_id, updates);
             }
@@ -2547,12 +2581,16 @@ export function createAgentFactoryRouter(
     }
 
     // Create Operation
+    const opAction = mode === 'materialize' ? 'materialize_child_adus' : mode;
     const op = operationStore.createOperation({
       scope: 'epic',
       target_id: epicId,
-      action: mode as any,
+      action: opAction as any,
       project_id: epic.project_id
     });
+    if (mode === 'materialize') {
+      op.mode = 'materialize' as any;
+    }
 
     activeOrchestrators.add(epicId);
 
@@ -2593,12 +2631,7 @@ export function createAgentFactoryRouter(
             });
 
             // Update current status / state of operation
-            const updates: any = {};
-            if (parsed.agent) updates.current_agent = parsed.agent;
-            if (parsed.state) updates.current_state = parsed.state;
-            if (parsed.event === 'human_gate_opened') {
-              updates.status = 'waiting_human';
-            }
+            const updates = mapOrchestratorEvent(parsed);
             if (Object.keys(updates).length > 0) {
               operationStore.updateOperation(op.operation_id, updates);
             }
@@ -2790,7 +2823,7 @@ export function createAgentFactoryRouter(
   router.post('/epics/:epicId/materialize-child-adus', requireControl, asyncHandler(async (req: Request, res: Response) => {
     const { epicId } = req.params;
     try {
-      const result = await spawnEpicOrchestrator(epicId, 'step');
+      const result = await spawnEpicOrchestrator(epicId, 'materialize');
       res.json(result);
     } catch (err: unknown) {
       if ((err as any).notFound) { res.status(404).json({ error: (err as Error).message }); return; }

@@ -43,6 +43,10 @@ export interface OrchestrationOperation {
   current_state?: string | null;
   result?: 'success' | 'failed' | 'human_gate' | 'no_op' | null;
   error?: string | null;
+  last_progress_at?: string | null;
+  termination_reason?: string | null;
+  prompt_bytes?: number | null;
+  estimated_input_tokens?: number | null;
 
   // Compatibility fields
   id?: string;

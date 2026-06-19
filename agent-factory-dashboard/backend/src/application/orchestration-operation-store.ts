@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { loadAppConfig } from '../config';
 import { OrchestrationOperation, OrchestrationOperationEvent } from '../domain/orchestration-operation';
+import { mapOrchestratorEvent } from './runtime/orchestrator-event-mapper';
+export { mapOrchestratorEvent };
 
 function toCompatibility(op: OrchestrationOperation): OrchestrationOperation {
   op.id = op.operation_id;

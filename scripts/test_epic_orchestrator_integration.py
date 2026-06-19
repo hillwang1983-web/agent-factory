@@ -223,6 +223,83 @@ def test_a_child_failure_detection():
         os.environ.pop("AGENT_FACTORY_PROJECTS_REGISTRY", None)
 
 
+def setup_temp_registry_with_running_child():
+    """Create registry with a child ADU in a running (implemented) state."""
+    tmp = tempfile.mkdtemp(prefix="epic-running-test-")
+    registry = Path(tmp) / "registry"
+    registry.mkdir(parents=True)
+
+    epics_data = {
+        "version": 1,
+        "epics": [{
+            "id": "EPIC-TEST-0001",
+            "project_id": "test-project",
+            "repo_path": str(tmp),
+            "title": "Test Epic",
+            "source_requirement": "Test requirement",
+            "state": "child_adus_running",
+            "risk": "low",
+            "target_level": "mvp",
+            "language": "zh",
+            "child_adus": ["ADU-TEST-001"],
+            "dependencies": [],
+            "created_at": "2026-06-11T00:00:00.000Z",
+            "updated_at": "2026-06-11T00:00:00.000Z",
+        }]
+    }
+    (registry / "epics.json").write_text(json.dumps(epics_data, indent=2))
+
+    # Child ADU in a real running state (implemented), not created
+    adu_data = {
+        "version": 1,
+        "adus": [{
+            "id": "ADU-TEST-001",
+            "project_id": "test-project",
+            "repo_path": str(tmp),
+            "title": "Test Child ADU",
+            "goal": "Test",
+            "state": "implemented",
+            "retry_count": 0,
+            "max_retries": 3,
+            "risk": "low",
+            "target_level": "mvp",
+            "allowed_read_paths": [".ai-agent/"],
+            "allowed_write_paths": [".ai-agent/analysis/", ".ai-agent/evidence/"],
+            "required_commands": ["echo ok"],
+            "required_evidence": [".ai-agent/evidence/ADU-TEST-001.md"],
+            "artifacts": [],
+            "human_gate_required": True,
+            "language": "zh",
+            "parent_epic_id": "EPIC-TEST-0001",
+            "depends_on": [],
+            "review_counters": {"code_review_failures": 0, "acceptance_review_failures": 0},
+            "review_limits": {"max_code_review_failures": 5, "max_acceptance_review_failures": 5},
+        }]
+    }
+    (registry / "adu.json").write_text(json.dumps(adu_data, indent=2))
+    (registry / "runs.json").write_text(json.dumps({"version": 1, "runs": []}))
+
+    agents_data = {
+        "version": 1,
+        "hermes_bin": str(Path(tmp) / "mock-hermes.sh"),
+        "agents": {"system-flow-designer": {"description": "Test", "prompt": "test-prompt.md", "worktree": False, "hermes_args": []}}
+    }
+    (registry / "agents.json").write_text(json.dumps(agents_data, indent=2))
+
+    profile_dir = Path(tmp) / ".agent-factory"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "project-profile.json").write_text(json.dumps({"project_type": "test"}))
+    knowledge_dir = profile_dir / "knowledge"
+    knowledge_dir.mkdir()
+    (knowledge_dir / "project-summary.md").write_text("# Test")
+
+    projects_path = registry / "projects.json"
+    projects_data = {"version": 1, "projects": [{"project_id": "test-project", "name": "Test", "repo_path": str(tmp), "status": "profiled"}]}
+    projects_path.write_text(json.dumps(projects_data, indent=2))
+
+    return tmp, registry
+
+
 def test_b_step_epic_blocked_on_failure():
     """step_epic returns blocked when run_child_adu fails."""
     import importlib.util as iu
@@ -248,7 +325,7 @@ def test_b_step_epic_blocked_on_failure():
 
     subprocess.run = fake_run
     try:
-        tmp_dir, registry = setup_temp_registry()
+        tmp_dir, registry = setup_temp_registry_with_running_child()
         os.environ["AGENT_FACTORY_REGISTRY_DIR"] = str(registry)
         os.environ["AGENT_FACTORY_PROJECTS_REGISTRY"] = str(registry / "projects.json")
 

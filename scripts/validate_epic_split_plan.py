@@ -248,7 +248,6 @@ def main():
     profile_candidates = [
         script_dir.parent / ".agent-factory" / "project-profile.json",
         Path.cwd() / ".agent-factory" / "project-profile.json",
-        Path("/Users/hill/open5gs/.agent-factory/project-profile.json")
     ]
     for path in profile_candidates:
         if path.exists():

@@ -45,13 +45,17 @@ export function OperatorConsolePage(): JSX.Element {
     await loadHandoff();
   };
 
-  const handleIntakeDone = (newId: string) => {
-    void refresh();
+  const handleIntakeDone = async (newId: string) => {
     const isEpic = newId.startsWith('EPIC-');
-    setSelectedTarget({ type: isEpic ? 'epic' : 'adu', id: newId });
-    if (!isEpic) {
+    if (isEpic) {
+      const store = useAgentFactoryStore.getState();
+      await store.fetchEpics();
+      store.selectEpic(newId);
+    } else {
+      await refresh();
       selectAdu(newId);
     }
+    setSelectedTarget({ type: isEpic ? 'epic' : 'adu', id: newId });
     setActiveTab('console');
   };
 

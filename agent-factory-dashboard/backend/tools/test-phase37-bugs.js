@@ -2,6 +2,7 @@
 const { FileAgentFactoryRepository } = require('../dist/infrastructure/file-agent-factory-repository');
 const { AduIntake } = require('../dist/application/adu-intake');
 const { FileProjectRepository } = require('../dist/infrastructure/file-project-repository');
+const { IntakeGenerationService } = require('../dist/application/intake/intake-generation-service');
 const fs = require('fs/promises');
 const path = require('path');
 const os = require('os');
@@ -91,6 +92,7 @@ async function runTests() {
           project_id: 'p1',
           repo_path: tmpDir,
           draft_path: 'draft.json',
+          report_path: 'report.md',
           status: 'created'
         }
       ]
@@ -108,7 +110,11 @@ sys.exit(0)
     );
 
     const mockAduFactory = {};
-    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir);
+    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir, undefined, new IntakeGenerationService(
+      tmpDir,
+      async () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-drafts.json'),
+      () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-operations.json')
+    ));
 
     let threw = false;
     try {
@@ -153,6 +159,7 @@ sys.exit(0)
           project_id: 'p1',
           repo_path: tmpDir,
           draft_path: 'draft.json',
+          report_path: 'report.md',
           status: 'created'
         }
       ]
@@ -167,12 +174,18 @@ sys.exit(0)
       `import sys
 with open('draft.json', 'w') as f:
     f.write("{invalid-json")
+with open('report.md', 'w') as f:
+    f.write("OK")
 sys.exit(0)
 `
     );
 
     const mockAduFactory = {};
-    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir);
+    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir, undefined, new IntakeGenerationService(
+      tmpDir,
+      async () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-drafts.json'),
+      () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-operations.json')
+    ));
 
     let threw = false;
     try {
@@ -217,6 +230,7 @@ sys.exit(0)
           project_id: 'p1',
           repo_path: tmpDir,
           draft_path: 'draft.json',
+          report_path: 'report.md',
           status: 'created'
         }
       ]
@@ -232,12 +246,18 @@ sys.exit(0)
 import json
 with open('draft.json', 'w') as f:
     json.dump({"title": "some title"}, f)
+with open('report.md', 'w') as f:
+    f.write("OK")
 sys.exit(0)
 `
     );
 
     const mockAduFactory = {};
-    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir);
+    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir, undefined, new IntakeGenerationService(
+      tmpDir,
+      async () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-drafts.json'),
+      () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-operations.json')
+    ));
 
     let threw = false;
     try {
@@ -282,6 +302,7 @@ sys.exit(0)
           project_id: 'p1',
           repo_path: tmpDir,
           draft_path: 'draft.json',
+          report_path: 'report.md',
           status: 'created'
         }
       ]
@@ -301,10 +322,15 @@ sys.exit(0)
     );
 
     const mockAduFactory = {};
-    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir);
+    const intake = new AduIntake(projectRepo, mockAduFactory, tmpDir, undefined, new IntakeGenerationService(
+      tmpDir,
+      async () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-drafts.json'),
+      () => path.join(tmpDir, '.ai-agent', 'registry', 'intake-operations.json')
+    ));
 
     // Set timeout to 100ms
     process.env.INTAKE_TIMEOUT_MS = '100';
+    process.env.INTAKE_HARD_TIMEOUT_MS = '100';
 
     let threw = false;
     try {
@@ -317,6 +343,10 @@ sys.exit(0)
 
     // Clean up env
     delete process.env.INTAKE_TIMEOUT_MS;
+    delete process.env.INTAKE_HARD_TIMEOUT_MS;
+
+    // Wait for async child close event to persist generation_failed status
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Verify draft status in registry is generation_failed
     const regContent = JSON.parse(await fs.readFile(path.join(registryDir, 'intake-drafts.json'), 'utf-8'));
@@ -753,8 +783,79 @@ if __name__ == "__main__":
   });
 
   // T15
-  await assertAsync('T15 dead PID lock is reclaimed safely', async () => {
-    throw new Error('T15 not implemented');
+  await assertAsync('T15 dead PID lock is reclaimed safely and cross-language lock serialization behaves correctly', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-phase37-lock-t15-'));
+    const registryDir = path.join(tmpDir, '.ai-agent', 'registry');
+    await fs.mkdir(registryDir, { recursive: true });
+
+    const { RegistryLock } = require('../dist/infrastructure/registry-lock');
+    RegistryLock.setWorkspaceRoot(tmpDir);
+
+    const lockFile = path.join(registryDir, 'registry.lock');
+
+    // 1. Dead PID lock reclamation
+    // Write a lock file with a dead PID (e.g. 999999)
+    await fs.writeFile(lockFile, JSON.stringify({
+      pid: 999999,
+      owner: 'dead-owner-123',
+      heartbeat: Date.now()
+    }), 'utf-8');
+
+    let acquired = false;
+    await RegistryLock.runLocked(() => {
+      acquired = true;
+    });
+
+    eq(acquired, true, 'Should acquire lock even if a dead PID holds it');
+
+    // 2. Cross-language serialization test
+    // We run a Python script that acquires the lock, holds it for 300ms, then releases it.
+    // In Node, we try to acquire it simultaneously and check if it waits.
+    const pyScript = `
+import sys
+import time
+from pathlib import Path
+sys.path.append('${path.resolve(__dirname, '../../../scripts')}')
+from registry_lock import registry_lock
+
+with registry_lock('${registryDir}'):
+    # Signal that Python acquired the lock
+    print("ACQUIRED")
+    sys.stdout.flush()
+    time.sleep(0.3)
+`;
+    // Write Python script to a temp file
+    const pyFile = path.join(tmpDir, 'test_lock.py');
+    await fs.writeFile(pyFile, pyScript, 'utf-8');
+
+    const { spawn } = require('child_process');
+    const child = spawn('python3', [pyFile], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // Wait until python prints "ACQUIRED"
+    await new Promise((resolve, reject) => {
+      child.stdout.on('data', (data) => {
+        if (data.toString().includes('ACQUIRED')) {
+          resolve();
+        }
+      });
+      child.on('error', reject);
+    });
+
+    // At this moment, Python holds the lock.
+    // If we call runLocked, it must block until Python releases it.
+    const startTime = Date.now();
+    let nodeAcquired = false;
+    await RegistryLock.runLocked(() => {
+      nodeAcquired = true;
+    });
+
+    const elapsed = Date.now() - startTime;
+    eq(nodeAcquired, true, 'Node should eventually acquire the lock');
+    // It should have taken at least 150ms for Python to finish sleep(0.3)
+    eq(elapsed >= 150, true, `Node should have been blocked by Python lock. Elapsed: ${elapsed}ms`);
+
+    // Clean up
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
   console.log(`\nPhase 3.7 Bug tests completed: ${passed} passed, ${failed} failed.`);

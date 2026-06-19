@@ -226,7 +226,7 @@ export class IntakeGenerationService {
     // Soft timeout timer (does not terminate process, just triggers resolve/reject list timeouts)
     const softTimer = setTimeout(() => {
       const err = new AgentFactoryError(
-        'Intake soft timeout reached',
+        'Intake soft timeout reached — draft generation timed out',
         'INTAKE_SOFT_TIMEOUT',
         202,
         { retryable: true, target_id: draftId }
@@ -245,10 +245,12 @@ export class IntakeGenerationService {
     const handleFinish = async (code: number | null) => {
       clearTimeout(softTimer);
       clearTimeout(hardTimer);
-      this.activeOperations.delete(draftId);
 
       const op = this.activeOperations.get(draftId)?.operation || operation;
-      if (this.isTerminal(op.status)) return;
+      if (this.isTerminal(op.status)) {
+        this.activeOperations.delete(draftId);
+        return;
+      }
 
       // Read output paths
       const draftFilePath = path.join(draft.repo_path, draft.draft_path);
@@ -261,18 +263,48 @@ export class IntakeGenerationService {
           title,
           artifact_completed_at: new Date().toISOString(),
         });
+        // Notify anyone waiting
+        while (resolveList.length > 0) {
+          resolveList.shift()?.();
+        }
       } catch (err: any) {
         // Output invalid or missing
+
+        // If it was terminated by hard timeout AND output is missing/invalid, report INTAKE_HARD_TIMEOUT
+        if (op.termination_reason === 'hard_timeout_exceeded') {
+          const errSummary = 'Intake hard timeout exceeded — draft generation timed out';
+          await this.updateStatus(draftId, 'generation_failed', {
+            error_code: 'INTAKE_HARD_TIMEOUT',
+            error_message: errSummary
+          });
+          const errObj = new AgentFactoryError(
+            errSummary,
+            'INTAKE_HARD_TIMEOUT',
+            400,
+            { retryable: false, target_id: draftId }
+          );
+          while (rejectList.length > 0) {
+            rejectList.shift()?.(errObj);
+          }
+          return;
+        }
+
         const errSummary = err.message || stderrBuf.trim().split('\n').pop()?.slice(0, 200) || 'Intake generation failed';
         await this.updateStatus(draftId, 'generation_failed', {
-          error_code: 'INTAKE_OUTPUT_INVALID',
+          error_code: err.error_code || 'INTAKE_OUTPUT_INVALID',
           error_message: errSummary
         });
-      }
-
-      // Notify anyone waiting
-      while (resolveList.length > 0) {
-        resolveList.shift()?.();
+        const errObj = new AgentFactoryError(
+          errSummary,
+          err.error_code || 'INTAKE_OUTPUT_INVALID',
+          400,
+          { retryable: false, target_id: draftId }
+        );
+        while (rejectList.length > 0) {
+          rejectList.shift()?.(errObj);
+        }
+      } finally {
+        this.activeOperations.delete(draftId);
       }
     };
 
@@ -311,6 +343,14 @@ export class IntakeGenerationService {
   private terminateProcessGroup(pid: number, reason: string) {
     if (!pid) return;
     console.warn(`[IntakeGenerationService] Terminating process group -${pid} due to: ${reason}`);
+
+    for (const [draftId, active] of this.activeOperations.entries()) {
+      if (active.child.pid === pid) {
+        active.operation.termination_reason = reason as any;
+        break;
+      }
+    }
+
     try {
       process.kill(-pid, 'SIGTERM');
     } catch (e) {}

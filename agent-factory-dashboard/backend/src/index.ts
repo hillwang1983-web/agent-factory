@@ -13,6 +13,7 @@ import { ProjectOnboardingUseCase } from './application/project-onboarding';
 import { ProjectAduFactory } from './application/project-adu-factory';
 import { AduIntake } from './application/adu-intake';
 import { EpicFactory } from './application/epic-factory';
+import { createVersionRouter } from './interfaces/version-controller';
 import { IntakeGenerationService } from './application/intake/intake-generation-service';
 
 async function main() {
@@ -66,6 +67,7 @@ async function main() {
 
   // Mount routes
   app.use('/api/agent-factory', createAgentFactoryRouter(monitor, projectOnboarding, projectRepo, repo, logger, aduIntake, epicFactory));
+  app.use('/api/agent-factory', createVersionRouter());
 
   // Error handling middleware
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

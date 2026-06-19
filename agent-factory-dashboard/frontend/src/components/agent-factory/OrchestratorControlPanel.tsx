@@ -14,8 +14,9 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
   const [error, setError] = useState<string | null>(null);
   const [language, setLanguage] = useState<string>('zh');
 
-  const { controlEnabled, dashboard } = useAgentFactoryStore();
+  const { controlEnabled, dashboard, activeOperations } = useAgentFactoryStore();
   const adu = dashboard?.adus.find((a) => a.id === aduId);
+  const activeOp = aduId ? activeOperations[aduId] : null;
 
   useEffect(() => {
     if (adu?.language) {
@@ -63,7 +64,7 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
   }
 
   const isActionPending = loading || pendingAction !== null;
-  const isRunning = adu?.health.status === 'running' || isActionPending;
+  const isRunning = adu?.health.status === 'running' || isActionPending || !!(activeOp && ['queued', 'spawning', 'running'].includes(activeOp.status));
   const isTerminal = adu?.state === 'evidenced' || adu?.state === 'mvp_ready';
   const isCanceled = adu?.state === 'canceled';
   const isReviewGate = adu?.state === 'analysis_review' || adu?.state === 'design_review';
@@ -110,7 +111,16 @@ export function OrchestratorControlPanel({ aduId }: OrchestratorControlPanelProp
         <HumanGateDispositionPanel adu={adu} />
       )}
 
-      {error && <div className="text-sm text-red-400">{error}</div>}
+      {error && (
+        <div className="rounded border border-red-800 bg-red-950/40 p-3 text-xs text-red-200 space-y-1">
+          <span className="font-bold">操作失败:</span> {error}
+          <div className="text-[10px] text-red-400">
+            {error.includes('timeout') && '💡 [排查提示] 进程由于超时被终止。请检查执行计划是否过于复杂，或目标文件有无死循环依赖。确认后重试。如持续超时请拆分需求。'}
+            {error.includes('already being processed') && '💡 [排查提示] 该 ADU 当前已被锁定。另一个实例或进程正在独占此 ADU 运行锁。请等待其结束或在后台清理 PID 锁后重试。'}
+            {error.includes('budget') && '💡 [排查提示] 溢出 Token 预算熔断。当前 prompt 大小或预计 token 超过限制，已安全熔断。请检查 Focused Payload Pruning 剪枝配置。'}
+          </div>
+        </div>
+      )}
       {actionLabel && <div className="text-xs text-nms-text-dim">{actionLabel}</div>}
 
       <div className="flex flex-wrap items-center gap-3">

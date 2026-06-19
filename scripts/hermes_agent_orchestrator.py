@@ -28,6 +28,9 @@ from registry_lock import registry_lock, save_json_direct
 # Project root (assumes this script lives under <repo>/scripts)
 ROOT = Path(__file__).resolve().parents[1]
 
+# Module-level lock owner token, set during acquire_lock
+_LOCK_OWNER_TOKEN = None
+
 # Dynamic registry path resolution supporting physical isolation in test environments
 registry_dir_env = os.environ.get("AGENT_FACTORY_REGISTRY_DIR")
 if registry_dir_env:
@@ -165,6 +168,7 @@ def acquire_lock(adu_id: str, mode: str, project_id: str = "default-open5gs", re
         try:
             lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
             heartbeat = lock_data.get("heartbeat_at")
+            pid = lock_data.get("pid")
             hb_time = None
             if isinstance(heartbeat, (int, float)):
                 hb_time = heartbeat
@@ -175,7 +179,18 @@ def acquire_lock(adu_id: str, mode: str, project_id: str = "default-open5gs", re
                 except Exception:
                     hb_time = now - 2000
 
-            if hb_time and (now - hb_time) < 1800:
+            # PID alive check via os.kill(pid, 0)
+            pid_alive = True
+            if pid:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    pid_alive = False
+
+            # PID alive → ALWAYS refuse to acquire, regardless of heartbeat freshness.
+            # A live process with stale heartbeat is still running, not dead.
+            # Only reclaim locks from dead PIDs.
+            if pid_alive:
                 print(json.dumps({
                     "type": "agent_factory_orchestrator_event",
                     "payload": {
@@ -188,15 +203,22 @@ def acquire_lock(adu_id: str, mode: str, project_id: str = "default-open5gs", re
         except Exception:
             pass
 
+    # Use a unique owner token for safe release
+    import uuid
+    owner_token = os.environ.get("AGENT_FACTORY_OWNER_TOKEN") or str(uuid.uuid4())
+
     lock_data = {
         "adu_id": adu_id,
         "project_id": project_id,
         "mode": mode,
         "pid": os.getpid(),
+        "owner_token": owner_token,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "heartbeat_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
+    global _LOCK_OWNER_TOKEN
+    _LOCK_OWNER_TOKEN = owner_token
 
 
 def update_lock_heartbeat(adu_id: str, mode: str, project_id: str = "default-open5gs", repo_root: str = None):
@@ -210,10 +232,16 @@ def update_lock_heartbeat(adu_id: str, mode: str, project_id: str = "default-ope
             pass
 
 
-def release_lock(adu_id: str, project_id: str = "default-open5gs", repo_root: str = None):
+def release_lock(adu_id: str, project_id: str = "default-open5gs", repo_root: str = None, owner_token: str = None):
     lock_file = _lock_dir(project_id, repo_root) / f"{project_id}__{adu_id}.lock"
     if lock_file.exists():
         try:
+            if owner_token:
+                lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+                # Only delete if we own the lock (or lock has no owner_token — legacy)
+                existing_token = lock_data.get("owner_token")
+                if existing_token and existing_token != owner_token:
+                    return  # Not our lock, don't delete
             lock_file.unlink()
         except Exception:
             pass
@@ -770,7 +798,7 @@ def main():
             time.sleep(0.5)
     finally:
         if args.mode in ("start", "continue", "step"):
-            release_lock(args.adu, project_id, repo_root=repo_path)
+            release_lock(args.adu, project_id, repo_root=repo_path, owner_token=_LOCK_OWNER_TOKEN)
         if had_failure:
             sys.exit(1)
 

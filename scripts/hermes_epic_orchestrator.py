@@ -396,7 +396,7 @@ def aggregate_epic_state(epic: dict) -> str:
         return epic.get("state", "created")
 
     terminal_states = {"evidenced", "canceled"}
-    running_states = {"created", "analysis_review", "analyzed", "contexted", "design_review",
+    running_states = {"analysis_review", "analyzed", "contexted", "design_review",
                        "designed", "contracted", "test_red", "implemented", "code_reviewed",
                        "code_rework", "build_rework", "debugged", "acceptance_reviewed",
                        "acceptance_rework"}
@@ -407,7 +407,7 @@ def aggregate_epic_state(epic: dict) -> str:
     running_count = sum(1 for c in children if c.get("state") in running_states)
     total = len(children)
 
-    # Update summary
+    # Update summary: created (unstarted) children are NOT running
     epic["summary"] = {
         "total_child_adus": total,
         "evidenced_child_adus": evidenced_count,
@@ -419,6 +419,13 @@ def aggregate_epic_state(epic: dict) -> str:
         return "child_adus_evidenced"
     if blocked_count > 0:
         return "child_adus_blocked"
+
+    all_created = all(c.get("state") == "created" for c in children)
+    if all_created:
+        any_run = any(c.get("retry_count", 0) > 0 or len(c.get("artifacts", [])) > 0 for c in children)
+        if not any_run:
+            return "child_adus_created"
+
     if running_count > 0 or evidenced_count < total:
         return "child_adus_running"
 
@@ -564,7 +571,7 @@ def step_epic(epic: dict, project_id: str, repo_root: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Hermes Epic Orchestrator")
     parser.add_argument("--epic", required=True, help="Epic ID")
-    parser.add_argument("--mode", required=True, choices=["step", "start", "continue", "pause", "cancel"],
+    parser.add_argument("--mode", required=True, choices=["step", "start", "continue", "pause", "cancel", "materialize"],
                         help="Execution mode")
     parser.add_argument("--project", required=True, help="Project ID")
     parser.add_argument("--repo-root", required=True, help="Target repo root path")
@@ -643,6 +650,43 @@ def main():
             broadcast_event("epic_orchestrator_completed", {
                 "epicId": args.epic, "mode": "cancel", "state": "canceled"
             })
+
+        elif args.mode == "materialize":
+            current_state = epic.get("state")
+            if current_state not in ("split_decision", "split_required"):
+                if current_state == "child_adus_created":
+                    broadcast_event("epic_orchestrator_completed", {
+                        "epicId": args.epic, "mode": args.mode, "result": {"result": "success", "info": "already materialized"}
+                    })
+                else:
+                    raise SystemExit(f"Epic {args.epic} is not in split_decision or split_required state, current state: {current_state}")
+            else:
+                # Validate split-plan before materializing (same gate as step_epic)
+                split_path = Path(repo_root) / ".ai-agent" / "epics" / args.epic / "split-plan.json"
+                val_proc = subprocess.run(
+                    [sys.executable, str(ROOT / "scripts" / "validate_epic_split_plan.py"), str(split_path)],
+                    cwd=str(ROOT), text=True, capture_output=True
+                )
+                if val_proc.returncode != 0:
+                    broadcast_event("epic_validation_failed", {
+                        "epicId": args.epic, "validator": "validate_epic_split_plan",
+                        "stderr": (val_proc.stderr or val_proc.stdout)[:500]
+                    })
+                    raise SystemExit(f"Materialization aborted: split-plan validation failed: {(val_proc.stderr or val_proc.stdout)[:300]}")
+
+                result = materialize_child_adus(epic, str(repo_root))
+                if result.get("result") == "failed":
+                    broadcast_event("epic_orchestrator_completed", {
+                        "epicId": args.epic, "mode": args.mode, "result": result
+                    })
+                    raise SystemExit(f"Materialization failed: {result.get('error')}")
+
+                epic["state"] = "child_adus_created"
+                broadcast_event("epic_state_changed", {"epicId": args.epic, "state": "child_adus_created"})
+                broadcast_event("child_adus_materialized", {"epicId": args.epic})
+                broadcast_event("epic_orchestrator_completed", {
+                    "epicId": args.epic, "mode": args.mode, "result": result
+                })
 
     finally:
         # Persist Epic state using RMW registry_lock transaction

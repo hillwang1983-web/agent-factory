@@ -481,6 +481,7 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   createEpic: async (projectId, input) => {
     const { epic } = await agentFactoryApi.createEpic(projectId, input);
     await get().fetchEpics();
+    await get().selectEpic(epic.id);
     return epic;
   },
 
