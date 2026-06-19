@@ -59,11 +59,24 @@ async function main() {
   app.use('/api/agent-factory', createAgentFactoryRouter(monitor, projectOnboarding, projectRepo, repo, logger, aduIntake, epicFactory));
 
   // Error handling middleware
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, 'Unhandled request error encountered');
-    res.status(500).json({
+    if (err.error_code) {
+      return res.status(err.status || 400).json({
+        success: false,
+        error_code: err.error_code,
+        message: err.message,
+        retryable: err.retryable !== false,
+        target_id: err.target_id,
+        operation_id: err.operation_id,
+        details: err.details,
+      });
+    }
+    res.status(err.status || 500).json({
       success: false,
-      error: 'Internal server error',
+      error_code: 'INTERNAL_ERROR',
+      message: err.message || 'Internal server error',
+      retryable: false,
     });
   });
 

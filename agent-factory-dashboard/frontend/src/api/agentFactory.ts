@@ -19,6 +19,14 @@ export const agentFactoryApi = {
     return res.json();
   },
 
+  async fetchRuntimeInfo(): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/runtime-info`);
+    if (!res.ok) {
+      throw new Error('Failed to fetch runtime info');
+    }
+    return res.json();
+  },
+
   async fetchAgentFactoryDashboard(): Promise<AgentFactoryDashboard> {
     const res = await fetch(`${API_URL}/api/agent-factory/dashboard`);
     if (!res.ok) {
@@ -714,3 +722,5 @@ export const fetchHandoff = (targetType: 'adu' | 'epic', targetId: string) =>
   agentFactoryApi.fetchHandoff(targetType, targetId);
 export const submitOperatorIntake = (intakeData: any) =>
   agentFactoryApi.submitOperatorIntake(intakeData);
+export const fetchRuntimeInfo = () =>
+  agentFactoryApi.fetchRuntimeInfo();

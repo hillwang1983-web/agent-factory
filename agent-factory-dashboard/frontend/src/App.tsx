@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AgentFactoryPage } from './components/agent-factory/AgentFactoryPage';
 import { ProjectsPage } from './components/projects/ProjectsPage';
 import { EpicsPage } from './components/epics/EpicsPage';
@@ -7,13 +7,88 @@ import { SettingsPage } from './components/settings/SettingsPage';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useAgentFactoryStore } from './stores/agentFactory';
 import { LayoutDashboard, FolderGit2, Folder, Layers, UserCheck, Settings } from 'lucide-react';
+import { RuntimeCompatibilityBanner } from './components/system/RuntimeCompatibilityBanner';
 
 function App() {
   // Enabled status web socket
   useWebSocket(true);
 
+  const [compatibility, setCompatibility] = useState<{
+    loading: boolean;
+    incompatible: boolean;
+    reason: 'api_error' | 'phase_too_low' | 'control_disabled' | 'missing_capability' | null;
+    errorDetail: string;
+  }>({
+    loading: true,
+    incompatible: false,
+    reason: null,
+    errorDetail: '',
+  });
+
+  const checkCompatibility = async () => {
+    setCompatibility((prev) => ({ ...prev, loading: true }));
+    try {
+      const { fetchRuntimeInfo } = await import('./api/agentFactory');
+      const info = await fetchRuntimeInfo();
+      if (!info || info.phase !== '3.7') {
+        setCompatibility({
+          loading: false,
+          incompatible: true,
+          reason: 'phase_too_low',
+          errorDetail: `Backend phase is: ${info?.phase || 'unknown'}, expected 3.7`,
+        });
+        return;
+      }
+      if (!info.control_enabled) {
+        setCompatibility({
+          loading: false,
+          incompatible: true,
+          reason: 'control_disabled',
+          errorDetail: 'AGENTS_FACTORY_ENABLE_CONTROL environment flag is not enabled on backend.',
+        });
+        return;
+      }
+      if (!info.capabilities?.includes('operator-control')) {
+        setCompatibility({
+          loading: false,
+          incompatible: true,
+          reason: 'missing_capability',
+          errorDetail: 'Backend missing operator-control capability.',
+        });
+        return;
+      }
+      setCompatibility({
+        loading: false,
+        incompatible: false,
+        reason: null,
+        errorDetail: '',
+      });
+    } catch (err: any) {
+      setCompatibility({
+        loading: false,
+        incompatible: true,
+        reason: 'api_error',
+        errorDetail: err.message || String(err),
+      });
+    }
+  };
+
+  useEffect(() => {
+    checkCompatibility();
+  }, []);
+
   const [view, setView] = useState<'dashboard' | 'projects' | 'epics' | 'human-gates' | 'settings'>('dashboard');
   const { projects, selectedProjectId, selectProject } = useAgentFactoryStore();
+
+  if (compatibility.incompatible && compatibility.reason) {
+    return (
+      <RuntimeCompatibilityBanner
+        reason={compatibility.reason}
+        errorDetail={compatibility.errorDetail}
+        onRetry={checkCompatibility}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-nms-bg text-nms-text flex flex-col font-sans">

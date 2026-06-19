@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express';
+import { createVersionRouter } from './version-controller';
 import type { AgentFactoryMonitorUseCase } from '../application/agent-factory-monitor';
 import type { ProjectOnboardingUseCase } from '../application/project-onboarding';
 import path from 'path';
@@ -3312,6 +3313,8 @@ export function createAgentFactoryRouter(
       res.status(400).json({ success: false, error: `Invalid targetType: ${targetType}` });
     }
   }));
+
+  router.use('/', createVersionRouter());
 
   return router;
 }

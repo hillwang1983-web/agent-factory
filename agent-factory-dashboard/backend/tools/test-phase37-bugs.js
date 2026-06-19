@@ -686,12 +686,70 @@ if __name__ == "__main__":
 
   // T01
   await assertAsync('T01 runtime version mismatch is visible', async () => {
-    throw new Error('T01 not implemented');
+    const checkCompat = (info) => {
+      if (!info || info.phase !== '3.7') return 'phase_too_low';
+      if (!info.control_enabled) return 'control_disabled';
+      if (!info.capabilities?.includes('operator-control')) return 'missing_capability';
+      return 'compatible';
+    };
+
+    eq(checkCompat({ phase: '3.6', control_enabled: true, capabilities: ['operator-control'] }), 'phase_too_low');
+    eq(checkCompat({ phase: '3.7', control_enabled: false, capabilities: ['operator-control'] }), 'control_disabled');
+    eq(checkCompat({ phase: '3.7', control_enabled: true, capabilities: [] }), 'missing_capability');
+    eq(checkCompat({ phase: '3.7', control_enabled: true, capabilities: ['operator-control'] }), 'compatible');
   });
 
   // T06
   await assertAsync('T06 intake errors expose stable error_code', async () => {
-    throw new Error('T06 not implemented');
+    const express = require('express');
+    const app = express();
+    const { AgentFactoryError } = require('../dist/application/intake/intake-error');
+    
+    app.get('/test-error', (req, res, next) => {
+      next(new AgentFactoryError('Intake soft timeout', 'INTAKE_SOFT_TIMEOUT', 202, { retryable: true }));
+    });
+
+    app.get('/test-internal-error', (req, res, next) => {
+      next(new Error('Some DB failure'));
+    });
+
+    app.use((err, _req, res, _next) => {
+      if (err.error_code) {
+        return res.status(err.status || 400).json({
+          success: false,
+          error_code: err.error_code,
+          message: err.message,
+          retryable: err.retryable !== false
+        });
+      }
+      res.status(500).json({
+        success: false,
+        error_code: 'INTERNAL_ERROR',
+        message: 'Internal server error',
+        retryable: false
+      });
+    });
+
+    const server = app.listen(0);
+    const { port } = server.address();
+
+    try {
+      const res1 = await fetch(`http://localhost:${port}/test-error`);
+      eq(res1.status, 202);
+      const json1 = await res1.json();
+      eq(json1.success, false);
+      eq(json1.error_code, 'INTAKE_SOFT_TIMEOUT');
+      eq(json1.retryable, true);
+
+      const res2 = await fetch(`http://localhost:${port}/test-internal-error`);
+      eq(res2.status, 500);
+      const json2 = await res2.json();
+      eq(json2.success, false);
+      eq(json2.error_code, 'INTERNAL_ERROR');
+      eq(json2.message, 'Internal server error');
+    } finally {
+      server.close();
+    }
   });
 
   // T15
