@@ -72,6 +72,33 @@ def check_path_leaks(workspace, errors):
             if pattern in text:
                 errors.append(f"Tracked file leaks local path pattern {pattern}: {rel}")
 
+def check_agent_run_policies(workspace, errors):
+    policy_path = workspace / ".ai-agent" / "policies" / "agent-run-policy.json"
+    if not policy_path.exists():
+        errors.append(f"Missing agent-run-policy.json at {policy_path}")
+        return
+    try:
+        with open(policy_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "version" not in data or "defaults" not in data:
+            errors.append("agent-run-policy.json missing version or defaults")
+            return
+        defaults = data.get("defaults", {})
+        known_keys = {"max_duration_seconds", "no_progress_timeout_seconds", "termination_grace_seconds", "max_prompt_bytes", "max_estimated_input_tokens"}
+        for k, v in defaults.items():
+            if k not in known_keys:
+                errors.append(f"Unknown policy configuration key: defaults.{k}")
+            elif not isinstance(v, (int, float)) or v <= 0:
+                errors.append(f"Policy defaults.{k} must be a positive number, got: {v}")
+        for agent_name, overrides in data.get("agents", {}).items():
+            for k, v in overrides.items():
+                if k not in known_keys:
+                    errors.append(f"Unknown policy configuration key: agents.{agent_name}.{k}")
+                elif not isinstance(v, (int, float)) or v <= 0:
+                    errors.append(f"Policy agents.{agent_name}.{k} must be a positive number, got: {v}")
+    except Exception as exc:
+        errors.append(f"Failed to check agent run policies: {exc}")
+
 def check_staged_runtime_files(workspace, errors):
     staged = run_git(workspace, ["diff", "--cached", "--name-only"])
     for rel in staged:
@@ -116,6 +143,7 @@ def main():
         errors.append(f"Hermes config not found: {hermes_config}")
 
     check_path_leaks(workspace, errors)
+    check_agent_run_policies(workspace, errors)
     check_staged_runtime_files(workspace, errors)
 
     payload = {

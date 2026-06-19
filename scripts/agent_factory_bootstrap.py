@@ -25,6 +25,7 @@ RUNTIME_FILES = {
 
 RUNTIME_DIRS = [
     ".ai-agent/registry",
+    ".ai-agent/policies",
     ".ai-agent/runs",
     ".ai-agent/locks",
     ".ai-agent/evidence",
@@ -51,6 +52,38 @@ def main():
 
     for rel_dir in RUNTIME_DIRS:
         (workspace / rel_dir).mkdir(parents=True, exist_ok=True)
+
+    policy_file = workspace / ".ai-agent" / "policies" / "agent-run-policy.json"
+    if not policy_file.exists():
+        default_policy = {
+            "version": 1,
+            "defaults": {
+                "max_duration_seconds": 600,
+                "no_progress_timeout_seconds": 180,
+                "termination_grace_seconds": 5,
+                "max_prompt_bytes": 120000,
+                "max_estimated_input_tokens": 30000
+            },
+            "agents": {
+                "adu-intake-agent": {
+                    "max_duration_seconds": 300,
+                    "no_progress_timeout_seconds": 120
+                },
+                "requirement-analyst": {
+                    "max_duration_seconds": 240,
+                    "no_progress_timeout_seconds": 90,
+                    "max_prompt_bytes": 60000,
+                    "max_estimated_input_tokens": 16000
+                },
+                "system-flow-designer": {
+                    "max_duration_seconds": 360
+                },
+                "developer": {
+                    "max_duration_seconds": 1200
+                }
+            }
+        }
+        policy_file.write_text(json.dumps(default_policy, indent=2) + "\n", encoding="utf-8")
 
     registry = workspace / ".ai-agent" / "registry"
     created = []

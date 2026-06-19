@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import agent_run_policy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -521,12 +522,18 @@ def handle_intake_draft(args, root, registry):
     default_cwd_raw = agents.get("default_cwd", "${PROJECT_REPO_ROOT}")
     cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
 
-    proc = subprocess.run(
+    policy = agent_run_policy.load_policy("adu-intake-agent", ROOT)
+    target_files = [
+        str(project_repo_path / ".ai-agent" / "intake" / draft_id / "draft.json"),
+        str(project_repo_path / ".ai-agent" / "intake" / draft_id / "intake-report.md")
+    ]
+
+    proc = agent_run_policy.execute_controlled_process(
         cmd,
-        cwd=str(cwd_path),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        cwd_path,
+        None,
+        policy,
+        target_files=target_files
     )
 
     if proc.returncode != 0:
@@ -761,13 +768,25 @@ def main():
     default_cwd_raw = agents.get("default_cwd", "${PROJECT_REPO_ROOT}")
     cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
 
-    proc = subprocess.run(
+    policy = agent_run_policy.load_policy(args.agent, ROOT)
+    target_files = []
+    if args.agent == "requirement-analyst":
+        target_files = [str(project_repo_path / ".ai-agent" / "analysis" / f"{adu['id']}.md")]
+    elif args.agent == "system-flow-designer":
+        target_files = [str(project_repo_path / ".ai-agent" / "epics" / adu['id'] / "system-flow.json")]
+    elif args.agent == "adu-splitter":
+        target_files = [str(project_repo_path / ".ai-agent" / "epics" / adu['id'] / "split-plan.json")]
+    elif args.agent == "detail-designer":
+        target_files = [str(project_repo_path / ".ai-agent" / "designs" / f"{adu['id']}-detailed-design.md")]
+    elif args.agent == "contract":
+        target_files = [str(project_repo_path / ".ai-agent" / "contracts" / f"{adu['id']}-contract.json")]
+
+    proc = agent_run_policy.execute_controlled_process(
         cmd,
-        cwd=str(cwd_path),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
+        cwd_path,
+        env,
+        policy,
+        target_files=target_files
     )
 
     (run_dir / "stdout.md").write_text(proc.stdout, encoding="utf-8")
