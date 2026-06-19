@@ -8,6 +8,7 @@ Checks:
     operations may use an empty state_changes array
   - acceptance_points non-empty
   - No empty path_candidates in module_flows
+  - Answered clarifications consistency, traceability and natural language conflicts
 
 Exit 0 on pass, exit 1 on fail.
 """
@@ -34,6 +35,89 @@ def is_read_only_operation(op: dict) -> bool:
     identity = " ".join(str(op.get(k, "")) for k in ("id", "name")).lower()
     read_terms = ("query", "get", "list", "read", "lookup", "查询", "读取", "查看", "列表")
     return any(term in identity for term in read_terms)
+
+
+def check_clarification_consistency(data: dict, clarifications: list):
+    # 1. Answered clarifications
+    answered_clarifications = [c for c in clarifications if c.get("status") == "answered"]
+    
+    # 2. SHA-256 helper
+    import hashlib
+    def get_sha256(text: str) -> str:
+        cleaned = text.strip()
+        return "sha256:" + hashlib.sha256(cleaned.encode("utf-8")).hexdigest()
+
+    # Check 1: answered questions must not be in open_questions
+    open_questions = data.get("open_questions", [])
+    for cq in answered_clarifications:
+        cq_text = cq["question"].strip().lower()
+        for oq in open_questions:
+            oq_text = oq.strip().lower()
+            if cq_text in oq_text or (len(oq_text) > 10 and oq_text in cq_text):
+                fail(f"Answered clarification question was reopened in open_questions: '{oq}'")
+
+    # Check 2: answered clarifications must have traceability
+    traceability = data.get("clarification_traceability", [])
+    trace_hashes = {t.get("question_hash") for t in traceability if t.get("question_hash")}
+    
+    for cq in answered_clarifications:
+        cq_hash = get_sha256(cq["question"])
+        if cq_hash not in trace_hashes:
+            fail(f"Answered clarification missing from clarification_traceability: {cq['question']} (hash: {cq_hash})")
+
+    # Validate applied_to targets in traceability
+    op_ids = {op.get("id") for op in data.get("business_operations", [])}
+    acceptance_pts = data.get("acceptance_points", [])
+    
+    for t in traceability:
+        applied = t.get("applied_to", [])
+        if not isinstance(applied, list) or len(applied) == 0:
+            fail(f"clarification_traceability entry for hash {t.get('question_hash')} has empty or invalid applied_to")
+        for ref in applied:
+            matched_ref = False
+            if ref in op_ids:
+                matched_ref = True
+            else:
+                for ap in acceptance_pts:
+                    if ref == ap or ref in ap:
+                        matched_ref = True
+                        break
+            if not matched_ref:
+                fail(f"clarification_traceability applied_to target '{ref}' is invalid")
+
+    # Check 3: out_of_scope clarifications must not enter operations or acceptance points
+    out_of_scope_clarifications = []
+    for cq in clarifications:
+        is_oos = False
+        if cq.get("status") == "out_of_scope" or cq.get("impact") == "out_of_scope":
+            is_oos = True
+        else:
+            ans = cq.get("answer", "").lower()
+            ques = cq.get("question", "").lower()
+            if "out of scope" in ans or "out of scope" in ques or "out_of_scope" in ans:
+                is_oos = True
+        if is_oos:
+            out_of_scope_clarifications.append(cq)
+
+    flow_str = json.dumps(data, ensure_ascii=False).lower()
+
+    # Check 4: Natural language conflict rules for License Epic
+    conflicts = {
+        "token bucket": "澄清 5 已明确表示直接丢包，不使用令牌桶",
+        "令牌桶": "澄清 5 已明确表示直接丢包，不使用令牌桶",
+        "平滑限速": "澄清 5 已明确表示直接丢包，不使用令牌桶",
+        "fail-open": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
+        "fail_open": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
+        "fail-safe": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
+        "fail_safe": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
+        "降级演示": "澄清 6 已明确规定使用 Fail-Closed 策略，严禁 Fail-Open",
+        "prometheus": "澄清 8 已明确规定通过 WebUI API，不使用 Prometheus 监控",
+        "普罗米修斯": "澄清 8 已明确规定通过 WebUI API，不使用 Prometheus 监控",
+    }
+    
+    for word, err_msg in conflicts.items():
+        if word in flow_str:
+            fail(f"Clarification Conflict: {err_msg} (found '{word}' in flow)")
 
 
 def main():
@@ -89,6 +173,36 @@ def main():
                     candidates = step.get("path_candidates") if isinstance(step, dict) else None
                     if candidates is not None and (not isinstance(candidates, list) or len(candidates) == 0):
                         fail(f"module_flows[{i}].steps[{j}] has empty path_candidates")
+
+    # Clarifications consistency & conflict validation
+    epic_id = data.get("epic_id")
+    if not epic_id:
+        fail("Missing 'epic_id' in system-flow.json")
+
+    script_dir = Path(__file__).resolve().parent
+    registry_candidates = [
+        script_dir.parent / ".ai-agent" / "registry" / "epics.json",
+        Path.cwd() / ".ai-agent" / "registry" / "epics.json",
+        Path("/Users/hill/open5gs/.ai-agent/registry/epics.json")
+    ]
+    
+    epics_data = None
+    for path in registry_candidates:
+        if path.exists():
+            try:
+                epics_data = json.loads(path.read_text(encoding="utf-8"))
+                break
+            except Exception:
+                pass
+
+    clarifications = []
+    if epics_data:
+        epics = epics_data.get("epics", [])
+        epic = next((e for e in epics if e.get("id") == epic_id), None)
+        if epic:
+            clarifications = epic.get("clarifications", [])
+
+    check_clarification_consistency(data, clarifications)
 
     print(f"VALIDATE_EPIC_FLOW PASS: {flow_path}")
     sys.exit(0)

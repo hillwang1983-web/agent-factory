@@ -69,8 +69,24 @@ A machine-readable JSON file with this exact structure:
     "Suspend changes MongoDB admin_status to SUSPENDED",
     "Suspended UE registration is rejected"
   ],
+  "clarification_traceability": [
+    {
+      "question_hash": "sha256:...",
+      "decision": "直接丢包",
+      "applied_to": ["OP-UNIQUE-ID", "A-ACCEPTANCE-POINT-TEXT"]
+    }
+  ],
   "open_questions": []
 }
+```
+
+## Clarification Constraints
+
+1. answered clarifications are immutable facts.
+2. Do not repeat an answered clarification in open_questions.
+3. Do not propose alternatives that contradict an answered clarification.
+4. out_of_scope clarifications must remain outside all operations and acceptance points.
+5. Every answered clarification must have a corresponding entry in `clarification_traceability` showing where it is applied.
 ```
 
 ## JSON Result Block

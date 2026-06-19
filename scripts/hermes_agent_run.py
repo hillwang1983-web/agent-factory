@@ -190,6 +190,9 @@ def render_prompt(prompt_text, adu, agent_name, project_info=None, run_dir=None)
         "adu": adu,
         "common_context": common,
     }
+    if adu.get("is_epic_run"):
+        payload["epic"] = adu.get("epic_data", {})
+        payload["clarifications"] = adu.get("epic_data", {}).get("clarifications", [])
 
     project_repo_path = None
     if project_info and project_info.get("repo_path"):
@@ -635,6 +638,8 @@ def main():
             "allowed_read_paths": [],
             "allowed_write_paths": [],
             "required_evidence": [],
+            "is_epic_run": True,
+            "epic_data": epic,
         }
     else:
         if not args.adu:
