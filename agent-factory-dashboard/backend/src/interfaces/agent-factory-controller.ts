@@ -9,9 +9,10 @@ import { HermesConfigRepository } from '../infrastructure/hermes-config-reposito
 import { AgentModelSettingsRepository } from '../infrastructure/agent-model-settings-repository';
 import { loadAppConfig } from '../config';
 import { broadcastOrchestratorEvent, activeOrchestrators } from '../websocket/broadcaster';
-import type { AgentFactoryArtifactEdit } from '../domain/agent-factory';
+import type { AgentFactoryArtifactEdit, AgentFactoryReview } from '../domain/agent-factory';
 import { OrchestrationOperationStore } from '../application/orchestration-operation-store';
 import { EpicMonitor } from '../application/epic-monitor';
+import { RegistryLock } from '../infrastructure/registry-lock';
 
 const config = loadAppConfig();
 const operationStore = OrchestrationOperationStore.getInstance();
@@ -31,6 +32,12 @@ import { AduIntake } from '../application/adu-intake';
 import { EpicFactory } from '../application/epic-factory';
 import multer from 'multer';
 
+import { FileOperatorRepository } from '../infrastructure/operator/file-operator-repository';
+import { OperatorLockService } from '../infrastructure/operator/operator-lock-service';
+import { NextActionAdvisor } from '../application/operator/next-action-advisor';
+import { OperatorControl } from '../application/operator/operator-control';
+import { OperatorActionType } from '../domain/operator';
+
 export function createAgentFactoryRouter(
   monitor: AgentFactoryMonitorUseCase,
   projectOnboarding: ProjectOnboardingUseCase,
@@ -44,6 +51,12 @@ export function createAgentFactoryRouter(
   const upload = multer({ dest: '/tmp/' });
   const epicMonitor = new EpicMonitor(agentFactoryRepository);
 
+  const operatorRepo = new FileOperatorRepository(config.workspaceRoot);
+  const operatorLock = new OperatorLockService(config.workspaceRoot);
+  const nextActionAdvisor = new NextActionAdvisor();
+
+
+
   const resolveWorkspaceRootOverride = async (aduId?: string): Promise<string | undefined> => {
     if (!aduId) return undefined;
     const adu = await monitor.getAdu(aduId);
@@ -52,6 +65,519 @@ export function createAgentFactoryRouter(
     if (!project) return undefined;
     return project.repo_path;
   };
+
+  const approveReviewHelper = async (
+    aduId: string,
+    gate: 'analysis' | 'design',
+    comment: string | undefined,
+    requestedBy: string
+  ): Promise<{ nextState: string }> => {
+    return RegistryLock.runLocked(async () => {
+      const adus = await monitor.repo.readAdus();
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) {
+        const err = new Error(`ADU ${aduId} not found`);
+        (err as any).status = 404;
+        throw err;
+      }
+
+      const expectedState = gate === 'analysis' ? 'analysis_review' : 'design_review';
+      if (adu.state !== expectedState) {
+        const err = new Error(`ADU state must be ${expectedState} to approve`);
+        (err as any).status = 400;
+        throw err;
+      }
+
+      if (gate === 'analysis') {
+        const hasPendingBlocking = adu.clarification_questions?.some(
+          (q: any) => q.blocking && q.status === 'pending'
+        );
+        if (hasPendingBlocking) {
+          const err = new Error('存在未解答的阻塞性澄清问题，请先解答或延期。');
+          (err as any).status = 400;
+          throw err;
+        }
+      }
+
+      const nextState = gate === 'analysis' ? 'analyzed' : 'designed';
+      const artifactPath = gate === 'analysis'
+        ? `.ai-agent/analysis/${aduId}.md`
+        : `.ai-agent/designs/${aduId}-detailed-design.md`;
+
+      const workspaceRootOverride = await resolveWorkspaceRootOverride(aduId);
+      let sha256 = '';
+      try {
+        const art = await monitor.repo.readTextArtifact(artifactPath, 200000, workspaceRootOverride);
+        if (!art || !art.content || art.content.trim() === '') {
+          const err = new Error(`审核文档 ${artifactPath} 内容为空，无法批准审核。`);
+          (err as any).status = 400;
+          throw err;
+        }
+        if (art.truncated) {
+          const err = new Error(`审核文档 ${artifactPath} 超过大小限制被截断，无法验证完整性，请先修整文档。`);
+          (err as any).status = 409;
+          throw err;
+        }
+        const crypto = await import('crypto');
+        sha256 = crypto.createHash('sha256').update(art.content, 'utf-8').digest('hex');
+      } catch (err: any) {
+        const wrappedErr = new Error(`无法读取审核文档 ${artifactPath}，请确保文档已被 Agent 正常生成：${err.message || '文件不存在'}`);
+        (wrappedErr as any).status = 400;
+        throw wrappedErr;
+      }
+
+      const reviews = await monitor.repo.readReviews();
+      let review = reviews.find((r) => r.adu_id === aduId && r.gate === gate && r.status === 'pending');
+
+      if (review) {
+        review.status = 'approved';
+        review.updated_at = new Date().toISOString();
+        review.approved_at = new Date().toISOString();
+        review.approved_by = requestedBy;
+        review.comment = comment || null;
+        review.approved_hashes = { [artifactPath]: sha256 };
+      } else {
+        review = {
+          review_id: `review-${aduId}-${gate}-${Date.now()}`,
+          adu_id: aduId,
+          gate,
+          state: expectedState,
+          status: 'approved',
+          artifact_paths: [artifactPath],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          approved_at: new Date().toISOString(),
+          approved_by: requestedBy,
+          comment: comment || null,
+          approved_hashes: { [artifactPath]: sha256 }
+        };
+        reviews.push(review);
+      }
+
+      await monitor.repo.writeReviews(reviews);
+
+      if (gate === 'design' && Array.isArray(adu.pending_design_write_paths) && adu.pending_design_write_paths.length > 0) {
+        const blockedPrefixes = ['.git/', '.agent-factory/', '.ai-agent/registry/', '~/', '/Users/', '/home/', '/etc/', '/tmp/', '/var/'];
+        const normalize = (raw: string): string | null => {
+          if (typeof raw !== 'string') return null;
+          const value = raw.trim().replace(/\\/g, '/');
+          if (!value || value.startsWith('/') || value.includes('\0')) return null;
+          if (value.split('/').includes('..')) return null;
+          if (blockedPrefixes.some((prefix) => value.startsWith(prefix) || value === prefix.replace(/\/$/, ''))) return null;
+          return value;
+        };
+        const safePaths = adu.pending_design_write_paths
+          .map((p) => normalize(p))
+          .filter((p): p is string => Boolean(p));
+        adu.allowed_write_paths = adu.allowed_write_paths ?? [];
+        adu.allowed_read_paths = adu.allowed_read_paths ?? [];
+        for (const pathToAdd of safePaths) {
+          if (!adu.allowed_write_paths.includes(pathToAdd)) adu.allowed_write_paths.push(pathToAdd);
+          if (!adu.allowed_read_paths.includes(pathToAdd)) adu.allowed_read_paths.push(pathToAdd);
+        }
+        adu.pending_design_write_paths = [];
+      }
+
+      adu.state = nextState;
+      await monitor.repo.writeAdus(adus);
+
+      const wsEvent = {
+        type: 'agentFactoryEvent',
+        event: 'review_approved',
+        aduId,
+        gate,
+        toState: nextState
+      };
+      broadcastOrchestratorEvent(wsEvent);
+
+      return { nextState };
+    });
+  };
+
+  const requestReworkHelper = async (
+    aduId: string,
+    gate: 'analysis' | 'design',
+    comment: string | undefined,
+    requestedBy: string
+  ): Promise<{ reworkState: string }> => {
+    return RegistryLock.runLocked(async () => {
+      if (!comment) {
+        const err = new Error('Rework reason/comment is required');
+        (err as any).status = 400;
+        throw err;
+      }
+
+      const adus = await monitor.repo.readAdus();
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) {
+        const err = new Error(`ADU ${aduId} not found`);
+        (err as any).status = 404;
+        throw err;
+      }
+
+      const expectedState = gate === 'analysis' ? 'analysis_review' : 'design_review';
+      if (adu.state !== expectedState) {
+        const err = new Error(`ADU state must be ${expectedState} to request rework`);
+        (err as any).status = 400;
+        throw err;
+      }
+
+      const reworkState = gate === 'analysis' ? 'created' : 'contexted';
+      const artifactPath = gate === 'analysis'
+        ? `.ai-agent/analysis/${aduId}.md`
+        : `.ai-agent/designs/${aduId}-detailed-design.md`;
+
+      const reviews = await monitor.repo.readReviews();
+      let review = reviews.find((r) => r.adu_id === aduId && r.gate === gate && r.status === 'pending');
+
+      if (review) {
+        review.status = 'rework_requested';
+        review.updated_at = new Date().toISOString();
+        review.comment = comment || null;
+      } else {
+        review = {
+          review_id: `review-${aduId}-${gate}-${Date.now()}`,
+          adu_id: aduId,
+          gate,
+          state: expectedState,
+          status: 'rework_requested',
+          artifact_paths: [artifactPath],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          approved_at: null,
+          approved_by: null,
+          comment,
+          approved_hashes: {}
+        };
+        reviews.push(review);
+      }
+
+      await monitor.repo.writeReviews(reviews);
+
+      if (gate === 'analysis') {
+        const existingClarifications = Array.isArray(adu.clarifications) ? adu.clarifications : [];
+        adu.clarifications = [
+          ...existingClarifications,
+          {
+            question: '需求分析审核澄清/返工意见',
+            status: 'answered',
+            answer: comment,
+            impact: 'design',
+            updated_at: new Date().toISOString()
+          }
+        ];
+      }
+      adu.state = reworkState;
+      await monitor.repo.writeAdus(adus);
+
+      const wsEvent = {
+        type: 'agentFactoryEvent',
+        event: 'review_rework_requested',
+        aduId,
+        gate,
+        toState: reworkState
+      };
+      broadcastOrchestratorEvent(wsEvent);
+
+      return { reworkState };
+    });
+  };
+
+  const runnerDelegate = {
+    async spawnAduOrchestrator(aduId: string, mode: 'start' | 'continue' | 'step'): Promise<any> {
+      return spawnOrchestrator(aduId, mode);
+    },
+    async spawnEpicOrchestrator(epicId: string, mode: 'start' | 'continue' | 'step'): Promise<any> {
+      return spawnEpicOrchestrator(epicId, mode);
+    },
+    async executeNonDirectAction(action: any): Promise<any> {
+      const targetId = action.target.id;
+      const targetType = action.target.type;
+      const payload = action.payload;
+
+      if (action.action === 'answer_clarifications') {
+        const { question_id, answer } = payload as { question_id: string; answer: string };
+        if (!question_id || !answer) {
+          throw Object.assign(new Error('question_id and answer are required payload fields'), { status: 400 });
+        }
+        const adus = await monitor.repo.readAdus();
+        const adu = adus.find((a) => a.id === targetId);
+        if (!adu) {
+          throw Object.assign(new Error(`ADU ${targetId} not found`), { status: 404 });
+        }
+        if (!adu.clarification_questions) {
+          throw Object.assign(new Error('No clarification questions found on this ADU'), { status: 404 });
+        }
+        const question = adu.clarification_questions.find((q: any) => q.id === question_id);
+        if (!question) {
+          throw Object.assign(new Error(`Question ${question_id} not found`), { status: 404 });
+        }
+
+        question.status = 'answered';
+        question.answer = answer;
+        question.answered_at = new Date().toISOString();
+
+        adu.clarifications = adu.clarifications ?? [];
+        adu.clarifications = adu.clarifications.filter((c: any) => c.question !== question.question);
+        adu.clarifications.push({
+          question: question.question,
+          answer: question.answer || '',
+          status: 'answered',
+          impact: (question as any).impact || 'unknown',
+          updated_at: question.answered_at || new Date().toISOString()
+        });
+
+        await monitor.repo.writeAdus(adus);
+        broadcastOrchestratorEvent({
+          type: 'agentFactoryEvent',
+          event: 'clarification_answered',
+          aduId: targetId,
+          questionId: question_id,
+          answer
+        });
+
+        return { success: true, message: 'Clarification answered successfully' };
+      }
+
+      if (action.action === 'approve_review' || action.action === 'request_rework') {
+        const comment = payload?.comment || '';
+
+        if (targetType === 'adu') {
+          const adu = await monitor.repo.getAduById(targetId);
+          if (!adu) throw Object.assign(new Error(`ADU ${targetId} not found`), { status: 404 });
+
+          let gate: 'analysis' | 'design' | 'token_budget' | null = null;
+          if (adu.state === 'analysis_review') gate = 'analysis';
+          else if (adu.state === 'design_review') gate = 'design';
+          else if (adu.state === 'human_gate' && adu.gate_type === 'token_budget_approval') gate = 'token_budget';
+
+          if (!gate) {
+            throw Object.assign(new Error(`State ${adu.state} does not support review approval/rework`), { status: 400 });
+          }
+
+          if (gate === 'token_budget') {
+            const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
+            const humanGateService = HumanGateService.getInstance();
+            const activeGates = await humanGateService.listGates();
+            const targetGate = activeGates.find((g: any) => g.target_id === targetId && g.gate_type === 'token_budget_approval' && g.status === 'pending');
+
+            if (action.action === 'approve_review') {
+              await humanGateService.approveGate(targetGate?.gate_id || '', comment);
+            } else {
+              await humanGateService.cancelGate(targetGate?.gate_id || '', comment || 'Rejected budget');
+            }
+            return { success: true };
+          } else {
+            if (action.action === 'approve_review') {
+              const helperRes = await approveReviewHelper(targetId, gate, comment, action.requested_by);
+              return { success: true, toState: helperRes.nextState };
+            } else {
+              const helperRes = await requestReworkHelper(targetId, gate, comment || 'Rework requested by Operator', action.requested_by);
+              return { success: true, toState: helperRes.reworkState };
+            }
+          }
+        } else if (targetType === 'epic') {
+          const epic = await epicMonitor.getEpic(targetId);
+          if (!epic) throw Object.assign(new Error(`Epic ${targetId} not found`), { status: 404 });
+          if (epic.state !== 'epic_acceptance') {
+            throw Object.assign(new Error('Epic state must be epic_acceptance'), { status: 400 });
+          }
+
+          const epics = await agentFactoryRepository.readEpics();
+          const targetEpic = epics.find(e => e.id === targetId);
+          if (targetEpic) {
+            targetEpic.state = action.action === 'approve_review' ? 'epic_evidenced' : 'epic_failed';
+            await agentFactoryRepository.saveEpic(targetEpic);
+          }
+
+          broadcastOrchestratorEvent({
+            type: 'agentFactoryEvent',
+            event: action.action === 'approve_review' ? 'epic_approved' : 'epic_rework_requested',
+            epicId: targetId
+          });
+
+          return { success: true, message: 'Epic review processed successfully' };
+        }
+      }
+
+      if (action.action === 'approve_write_path' || action.action === 'reject_write_path') {
+        const { request_id } = payload as { request_id: string };
+        if (!request_id) {
+          throw Object.assign(new Error('request_id is required'), { status: 400 });
+        }
+
+        const p = path.join(config.workspaceRoot, '.ai-agent', 'registry', 'write-path-expansion-requests.json');
+        let data = { version: 1, requests: [] as any[] };
+        try {
+          data = JSON.parse(await fs.promises.readFile(p, 'utf-8'));
+        } catch (e) {}
+
+        const reqIndex = data.requests.findIndex((r: any) => r.request_id === request_id && r.adu_id === targetId);
+        if (reqIndex === -1) {
+          throw Object.assign(new Error(`Request ${request_id} not found for ADU ${targetId}`), { status: 404 });
+        }
+
+        const expansionRequest = data.requests[reqIndex];
+        if (expansionRequest.decision !== 'pending_human_approval') {
+          throw Object.assign(new Error('Only pending requests can be approved/rejected'), { status: 400 });
+        }
+
+        const comment = payload?.reason as string || '';
+        const adu = await agentFactoryRepository.getAduById(targetId);
+        if (!adu) {
+          throw Object.assign(new Error(`ADU ${targetId} not found`), { status: 404 });
+        }
+
+        if (action.action === 'approve_write_path') {
+          const approvedPaths = expansionRequest.requested_paths;
+          if (approvedPaths.length > 0) {
+            try {
+              const scriptPath = path.join(config.workspaceRoot, 'scripts', 'write_path_policy.py');
+              const registryDir = path.join(config.workspaceRoot, '.ai-agent', 'registry');
+              const policyOut = execFileSync('python3', [
+                scriptPath,
+                '--adu', targetId,
+                '--requested-paths', JSON.stringify(approvedPaths),
+                '--registry-dir', registryDir
+              ], { encoding: 'utf-8' });
+              const policyRes = JSON.parse(policyOut);
+              if (policyRes.result === 'blocked') {
+                throw Object.assign(new Error(`Approval rejected: paths are blocked by policy: ${policyRes.blocked_paths.join(', ')}`), { status: 400 });
+              }
+            } catch (e: any) {
+              if (e.status) throw e;
+              throw Object.assign(new Error(`Policy re-validation failed: ${e.message}`), { status: 500 });
+            }
+          }
+
+          expansionRequest.decision = 'approved';
+          expansionRequest.comment = comment;
+          expansionRequest.updated_at = new Date().toISOString();
+
+          const currentWrite = adu.allowed_write_paths || [];
+          const currentRead = adu.allowed_read_paths || [];
+          for (const filePath of approvedPaths) {
+            if (!currentWrite.includes(filePath)) currentWrite.push(filePath);
+            if (!currentRead.includes(filePath)) currentRead.push(filePath);
+          }
+          adu.allowed_write_paths = currentWrite;
+          adu.allowed_read_paths = currentRead;
+
+          if (!adu.write_path_expansions) adu.write_path_expansions = [];
+          adu.write_path_expansions.push({
+            request_id: expansionRequest.request_id,
+            source_agent: expansionRequest.source_agent || 'unknown',
+            requested_paths: expansionRequest.requested_paths,
+            approved_paths: approvedPaths,
+            decision: 'approved',
+            reason: comment || expansionRequest.reason || '',
+            created_at: expansionRequest.created_at,
+            updated_at: expansionRequest.updated_at
+          });
+        } else {
+          expansionRequest.decision = 'rejected';
+          expansionRequest.comment = comment;
+          expansionRequest.updated_at = new Date().toISOString();
+
+          if (!adu.write_path_expansions) adu.write_path_expansions = [];
+          adu.write_path_expansions.push({
+            request_id: expansionRequest.request_id,
+            source_agent: expansionRequest.source_agent || 'unknown',
+            requested_paths: expansionRequest.requested_paths,
+            approved_paths: [],
+            decision: 'rejected',
+            reason: comment || '',
+            created_at: expansionRequest.created_at,
+            updated_at: expansionRequest.updated_at
+          });
+        }
+
+        const remainingPending = data.requests.some((r: any) => r.adu_id === targetId && r.decision === 'pending_human_approval' && r.request_id !== request_id);
+        if (!remainingPending && adu.state === 'human_gate' && adu.gate_type === 'write_path_expansion') {
+          adu.state = adu.pre_gate_state || 'created';
+          adu.human_gate_required = false;
+          delete adu.gate_type;
+        }
+
+        await fs.promises.writeFile(p, JSON.stringify(data, null, 2), 'utf-8');
+        await agentFactoryRepository.saveAdu(adu);
+
+        // Try to also resolve the human gate record in HumanGateService
+        try {
+          const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
+          const humanGateService = HumanGateService.getInstance();
+          const activeGates = await humanGateService.listGates();
+          const targetGate = activeGates.find((g: any) => g.target_id === targetId && g.gate_type === 'write_path_expansion' && g.status === 'pending');
+          if (targetGate) {
+            targetGate.status = action.action === 'approve_write_path' ? 'approved' : 'canceled';
+            targetGate.resolved_at = new Date().toISOString();
+            targetGate.resolution = { action: action.action === 'approve_write_path' ? 'approve' : 'cancel', comment };
+            await (humanGateService as any).writeGates(activeGates);
+          }
+        } catch (e) {
+          logger.warn({ e, targetId }, 'Failed to sync HumanGateService status during operator write path dispose');
+        }
+
+        return { success: true, message: 'Write path action processed' };
+      }
+
+      if (action.action === 'submit_runtime_evidence' || action.action === 'grant_environment_waiver') {
+        let comment = '';
+        let affectedAssertions: string[] = [];
+
+        if (action.action === 'grant_environment_waiver') {
+          if (!payload?.waiver_reason || typeof payload.waiver_reason !== 'string' || !payload.waiver_reason.trim()) {
+            throw Object.assign(new Error('waiver_reason is required and must be a non-empty string'), { status: 400 });
+          }
+          if (!payload?.affected_assertions || !Array.isArray(payload.affected_assertions) || payload.affected_assertions.length === 0 || payload.affected_assertions.some((id: any) => typeof id !== 'string' || !id.trim())) {
+            throw Object.assign(new Error('affected_assertions must be a non-empty array of strings'), { status: 400 });
+          }
+          comment = payload.waiver_reason.trim();
+          affectedAssertions = payload.affected_assertions;
+        } else {
+          comment = payload?.runtime_log as string || 'Runtime evidence submitted';
+        }
+
+        const disposition = action.action === 'grant_environment_waiver' ? 'environment_waiver' : 'provide_missing_evidence';
+        await monitor.disposeHumanGate(targetId, { disposition, comment, affectedAssertions });
+
+        // Try to also resolve the human gate record in HumanGateService so it doesn't stay pending
+        try {
+          const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
+          const humanGateService = HumanGateService.getInstance();
+          const activeGates = await humanGateService.listGates();
+          const targetGate = activeGates.find((g: any) => g.target_id === targetId && g.gate_type === 'environment_verification_required' && g.status === 'pending');
+          if (targetGate) {
+            if (action.action === 'grant_environment_waiver') {
+              targetGate.status = 'waived';
+              targetGate.resolved_at = new Date().toISOString();
+              targetGate.resolution = { action: 'approve_waiver', comment };
+            } else {
+              targetGate.status = 'resolved';
+              targetGate.resolved_at = new Date().toISOString();
+              targetGate.resolution = { action: 'submit_runtime_result', comment };
+            }
+            await (humanGateService as any).writeGates(activeGates);
+          }
+        } catch (e) {
+          logger.warn({ e, targetId }, 'Failed to sync HumanGateService status during operator dispose');
+        }
+
+        return { success: true, message: 'Evidence/Waiver action processed' };
+      }
+
+      throw Object.assign(new Error(`Action ${action.action} is not supported`), { status: 400 });
+    }
+  };
+
+  const operatorControl = new OperatorControl(
+    monitor,
+    epicMonitor,
+    operatorRepo,
+    operatorLock,
+    operationStore,
+    runnerDelegate
+  );
 
   // Helper middleware to check control permissions
   const requireControl: RequestHandler = (req, res, next) => {
@@ -1670,10 +2196,17 @@ export function createAgentFactoryRouter(
   router.post('/intake-drafts/:draftId/register-adu', requireControl, asyncHandler(async (req: Request, res: Response) => {
     try {
       const confirmed = req.body?.confirmed === true;
-      const result = await aduIntake.registerDraft(req.params.draftId, { confirmed });
-      res.json({ success: true, adu: { id: result.adu_id } });
+      const targetType = req.body?.target_type || 'adu';
+
+      if (targetType === 'epic') {
+        const result = await aduIntake.registerEpicDraft(req.params.draftId, { confirmed });
+        res.json({ success: true, epic: { id: result.epic_id } });
+      } else {
+        const result = await aduIntake.registerDraft(req.params.draftId, { confirmed });
+        res.json({ success: true, adu: { id: result.adu_id } });
+      }
     } catch (e: any) {
-      const status = e.status || (e.message?.includes('not found') ? 404 : e.message?.includes('disabled') ? 403 : 400);
+      const status = e.status || (e.status === 409 || e.message?.includes('unresolved') ? 409 : e.message?.includes('not found') ? 404 : e.message?.includes('disabled') ? 403 : 400);
       res.status(status).json({ error: e.message });
     }
   }));
@@ -2609,6 +3142,174 @@ export function createAgentFactoryRouter(
       res.json({ success: true, epic: updated });
     } catch (err) {
       res.status(500).json({ success: false, error: 'Failed to reconcile epic' });
+    }
+  }));
+
+  // ── Operator Control Layer Endpoints ──
+
+  // POST /api/agent-factory/operator/intake
+  router.post('/operator/intake', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { project_id, raw_requirement, source_files, preferred_granularity, language } = req.body as {
+      project_id: string;
+      raw_requirement: string;
+      source_files?: any[];
+      preferred_granularity?: 'auto' | 'adu' | 'epic';
+      language?: string;
+    };
+    if (!project_id || !raw_requirement) {
+      res.status(400).json({ success: false, error: 'project_id and raw_requirement are required' });
+      return;
+    }
+    const project = await projectOnboarding.getProject(project_id);
+    if (!project || project.status !== 'profiled') {
+      res.status(400).json({ success: false, error: `Project ${project_id} not found or not profiled` });
+      return;
+    }
+
+    let recTarget: 'adu' | 'epic' = 'adu';
+    if (preferred_granularity === 'epic' || preferred_granularity === 'adu') {
+      recTarget = preferred_granularity;
+    } else {
+      const lowerReq = raw_requirement.toLowerCase();
+      if (lowerReq.includes('epic') || lowerReq.includes('多个adu') || lowerReq.includes('multiple modules') || lowerReq.includes('系统架构') || raw_requirement.length > 500) {
+        recTarget = 'epic';
+      }
+    }
+
+    const draftResult = await aduIntake.createDraft(
+      project_id,
+      raw_requirement,
+      '',
+      'feature',
+      []
+    );
+
+    await aduIntake.generateDraftSync(draftResult.draft_id);
+
+    res.json({
+      draft_id: draftResult.draft_id,
+      recommended_target: recTarget,
+      reason: recTarget === 'epic' ? 'The requirement is complex, recommending an Epic split.' : 'The requirement is scoped, recommending a single ADU.',
+      clarification_questions: []
+    });
+  }));
+
+  // GET /api/agent-factory/operator/:targetType/:targetId/next-action
+  router.get('/operator/:targetType/:targetId/next-action', asyncHandler(async (req: Request, res: Response) => {
+    const { targetType, targetId } = req.params;
+    if (targetType === 'adu') {
+      const adu = await monitor.repo.getAduById(targetId);
+      if (!adu) {
+        res.status(404).json({ success: false, error: `ADU ${targetId} not found` });
+        return;
+      }
+      const nextAction = await nextActionAdvisor.getNextActionForAdu(adu);
+      res.json(nextAction);
+    } else if (targetType === 'epic') {
+      const epic = await epicMonitor.getEpic(targetId);
+      if (!epic) {
+        res.status(404).json({ success: false, error: `Epic ${targetId} not found` });
+        return;
+      }
+      const nextAction = await nextActionAdvisor.getNextActionForEpic(epic);
+      res.json(nextAction);
+    } else {
+      res.status(400).json({ success: false, error: `Invalid targetType: ${targetType}` });
+    }
+  }));
+
+  // POST /api/agent-factory/operator/:targetType/:targetId/actions
+  router.post('/operator/:targetType/:targetId/actions', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { targetType, targetId } = req.params;
+    const { action, idempotency_key, requested_by, payload } = req.body as {
+      action: OperatorActionType;
+      idempotency_key: string;
+      requested_by?: 'human' | 'codex' | 'system';
+      payload?: Record<string, any>;
+    };
+
+    if (targetType !== 'adu' && targetType !== 'epic') {
+      res.status(400).json({ success: false, error: 'targetType must be adu or epic' });
+      return;
+    }
+    if (!/^[A-Za-z0-9_.-]+$/.test(targetId)) {
+      res.status(400).json({ success: false, error: 'Invalid targetId format' });
+      return;
+    }
+    if (!action || !idempotency_key) {
+      res.status(400).json({ success: false, error: 'action and idempotency_key are required' });
+      return;
+    }
+
+    try {
+      const result = await operatorControl.executeAction({
+        id: `ACT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        target: { type: targetType as any, id: targetId },
+        action: action,
+        requested_by: requested_by || 'human',
+        idempotency_key,
+        payload,
+        created_at: new Date().toISOString()
+      });
+      res.json(result);
+    } catch (err: any) {
+      if (err.conflict) {
+        res.status(409).json({ success: false, error: err.message });
+      } else if (err.forbidden) {
+        res.status(403).json({ success: false, error: err.message });
+      } else {
+        logger.error({ err, targetId, action }, 'Operator action failed');
+        res.status(err.status || 500).json({ success: false, error: err.message || 'Internal server error' });
+      }
+    }
+  }));
+
+  // GET /api/agent-factory/operator/:targetType/:targetId/handoff
+  router.get('/operator/:targetType/:targetId/handoff', asyncHandler(async (req: Request, res: Response) => {
+    const { targetType, targetId } = req.params;
+
+    if (targetType === 'adu') {
+      const adu = await monitor.getAdu(targetId);
+      if (!adu) {
+        res.status(404).json({ success: false, error: `ADU ${targetId} not found` });
+        return;
+      }
+
+      const nextAction = await nextActionAdvisor.getNextActionForAdu(adu);
+      const recentRuns = adu.runs ? adu.runs.slice(0, 5) : [];
+
+      res.json({
+        target: { type: 'adu', id: targetId },
+        summary: `ADU is currently in state: ${adu.state}. Goal: ${adu.title}.`,
+        current_state: adu.state,
+        next_action: nextAction,
+        recent_events: recentRuns.map(r => `Run ${r.agent} at ${r.timestamp} finished with result ${r.result}`),
+        quality_risks: adu.health?.reasons || [],
+        token_summary: adu.token_summary || {},
+        artifact_links: adu.artifact_status ? adu.artifact_status.filter(a => a.exists).map(a => a.path) : []
+      });
+    } else if (targetType === 'epic') {
+      const epic = await epicMonitor.getEpic(targetId);
+      if (!epic) {
+        res.status(404).json({ success: false, error: `Epic ${targetId} not found` });
+        return;
+      }
+
+      const nextAction = await nextActionAdvisor.getNextActionForEpic(epic);
+      const childAdus = epic.child_adu_views || [];
+
+      res.json({
+        target: { type: 'epic', id: targetId },
+        summary: `Epic is in state: ${epic.state}. Contains ${childAdus.length} child ADUs.`,
+        current_state: epic.state,
+        next_action: nextAction,
+        recent_events: [],
+        quality_risks: epic.health?.reasons || [],
+        token_summary: {},
+        artifact_links: []
+      });
+    } else {
+      res.status(400).json({ success: false, error: `Invalid targetType: ${targetType}` });
     }
   }));
 

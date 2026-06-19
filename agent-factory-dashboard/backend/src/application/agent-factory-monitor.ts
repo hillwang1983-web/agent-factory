@@ -415,13 +415,14 @@ export class AgentFactoryMonitorUseCase {
   }
 
   async updateAduLanguage(aduId: string, language: string): Promise<void> {
-    const adus = await this.repo.readAdus();
-    const adu = adus.find((a) => a.id === aduId);
-    if (!adu) {
-      throw new Error(`ADU ${aduId} not found`);
-    }
-    adu.language = language;
-    await this.repo.writeAdus(adus);
+    await this.repo.updateAdus((adus) => {
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) {
+        throw new Error(`ADU ${aduId} not found`);
+      }
+      adu.language = language;
+      return adus;
+    });
   }
 
   async appendAduPaths(
@@ -449,48 +450,53 @@ export class AgentFactoryMonitorUseCase {
     const validatedWrite = addWritePaths.map((p) => validate(p, 'allowed_write_paths'));
     const validatedRead = addReadPaths.map((p) => validate(p, 'allowed_read_paths'));
 
-    const adus = await this.repo.readAdus();
-    const adu = adus.find((a) => a.id === aduId);
-    if (!adu) throw new Error(`ADU ${aduId} not found`);
+    let resultPaths: { allowed_write_paths: string[]; allowed_read_paths: string[] } = { allowed_write_paths: [], allowed_read_paths: [] };
+    await this.repo.updateAdus((adus) => {
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) throw new Error(`ADU ${aduId} not found`);
 
-    const TERMINAL = ['evidenced', 'canceled'];
-    if (TERMINAL.includes(adu.state)) {
-      throw Object.assign(new Error(`Cannot modify paths on a ${adu.state} ADU`), { forbidden: true });
-    }
+      const TERMINAL = ['evidenced', 'canceled'];
+      if (TERMINAL.includes(adu.state)) {
+        throw Object.assign(new Error(`Cannot modify paths on a ${adu.state} ADU`), { forbidden: true });
+      }
 
-    adu.allowed_write_paths = adu.allowed_write_paths ?? [];
-    adu.allowed_read_paths = adu.allowed_read_paths ?? [];
+      adu.allowed_write_paths = adu.allowed_write_paths ?? [];
+      adu.allowed_read_paths = adu.allowed_read_paths ?? [];
 
-    for (const p of validatedWrite) {
-      if (!adu.allowed_write_paths.includes(p)) adu.allowed_write_paths.push(p);
-    }
-    for (const p of validatedRead) {
-      if (!adu.allowed_read_paths.includes(p)) adu.allowed_read_paths.push(p);
-    }
+      for (const p of validatedWrite) {
+        if (!adu.allowed_write_paths.includes(p)) adu.allowed_write_paths.push(p);
+      }
+      for (const p of validatedRead) {
+        if (!adu.allowed_read_paths.includes(p)) adu.allowed_read_paths.push(p);
+      }
 
-    await this.repo.writeAdus(adus);
-    return { allowed_write_paths: adu.allowed_write_paths, allowed_read_paths: adu.allowed_read_paths };
+      resultPaths = { allowed_write_paths: adu.allowed_write_paths, allowed_read_paths: adu.allowed_read_paths };
+      return adus;
+    });
+    return resultPaths;
   }
 
   async pauseAdu(aduId: string): Promise<void> {
-    const adus = await this.repo.readAdus();
-    const adu = adus.find((a) => a.id === aduId);
-    if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
-    if (['evidenced', 'canceled'].includes(adu.state)) {
-      throw Object.assign(new Error(`Cannot pause a ${adu.state} ADU`), { forbidden: true });
-    }
-    (adu as any).paused = true;
-    await this.repo.writeAdus(adus);
+    await this.repo.updateAdus((adus) => {
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
+      if (['evidenced', 'canceled'].includes(adu.state)) {
+        throw Object.assign(new Error(`Cannot pause a ${adu.state} ADU`), { forbidden: true });
+      }
+      (adu as any).paused = true;
+      return adus;
+    });
   }
 
   async cancelAdu(aduId: string): Promise<void> {
-    const adus = await this.repo.readAdus();
-    const adu = adus.find((a) => a.id === aduId);
-    if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
-    if (adu.state === 'canceled') return;
-    adu.state = 'canceled';
-    (adu as any).paused = false;
-    await this.repo.writeAdus(adus);
+    await this.repo.updateAdus((adus) => {
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
+      if (adu.state === 'canceled') return adus;
+      adu.state = 'canceled';
+      (adu as any).paused = false;
+      return adus;
+    });
   }
 
   async waiveHumanGate(
@@ -502,50 +508,55 @@ export class AgentFactoryMonitorUseCase {
       throw new Error('waiver comment is required');
     }
 
-    const adus = await this.repo.readAdus();
-    const adu = adus.find((a) => a.id === aduId);
-    if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
-    if (adu.state !== 'human_gate') {
-      throw Object.assign(new Error(`ADU state must be human_gate to waive`), { forbidden: true });
-    }
+    let result: { state: string; waiver: Record<string, unknown> } | null = null;
+    await this.repo.updateAdus((adus) => {
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
+      if (adu.state !== 'human_gate') {
+        throw Object.assign(new Error(`ADU state must be human_gate to waive`), { forbidden: true });
+      }
 
-    const preGateState = (adu as any).pre_gate_state;
-    let nextState: string;
-    if (params.reasonType === 'environment' && preGateState === 'code_reviewed') {
-      nextState = 'debugged';
-    } else {
-      throw Object.assign(
-        new Error(`Unsupported waiver transition: reasonType=${params.reasonType}, pre_gate_state=${preGateState || 'none'}`),
-        { forbidden: true },
-      );
-    }
+      const preGateState = (adu as any).pre_gate_state;
+      let nextState: string;
+      if (params.reasonType === 'environment' && preGateState === 'code_reviewed') {
+        nextState = 'debugged';
+      } else {
+        throw Object.assign(
+          new Error(`Unsupported waiver transition: reasonType=${params.reasonType}, pre_gate_state=${preGateState || 'none'}`),
+          { forbidden: true },
+        );
+      }
 
-    const waiver = {
-      waiver_id: `waiver-${aduId}-${Date.now()}`,
-      type: params.reasonType,
-      from_state: adu.state,
-      pre_gate_state: preGateState,
-      to_state: nextState,
-      comment,
-      created_at: new Date().toISOString(),
-      approved_by: 'local-user',
-    };
+      const waiver = {
+        waiver_id: `waiver-${aduId}-${Date.now()}`,
+        type: params.reasonType,
+        from_state: adu.state,
+        pre_gate_state: preGateState,
+        to_state: nextState,
+        comment,
+        created_at: new Date().toISOString(),
+        approved_by: 'local-user',
+      };
 
-    (adu as any).human_gate_waivers = [
-      ...(((adu as any).human_gate_waivers as unknown[]) || []),
-      waiver,
-    ];
-    adu.state = nextState;
-    adu.human_gate_required = false;
-    adu.retry_count = 0;
-    delete (adu as any).pre_gate_state;
-    if (adu.review_counters) {
-      adu.review_counters.buildfix_failures = 0;
-    }
-    adu.updated_at = new Date().toISOString();
+      (adu as any).human_gate_waivers = [
+        ...(((adu as any).human_gate_waivers as unknown[]) || []),
+        waiver,
+      ];
+      adu.state = nextState;
+      adu.human_gate_required = false;
+      adu.retry_count = 0;
+      delete (adu as any).pre_gate_state;
+      if (adu.review_counters) {
+        adu.review_counters.buildfix_failures = 0;
+      }
+      adu.updated_at = new Date().toISOString();
 
-    await this.repo.writeAdus(adus);
-    return { state: nextState, waiver };
+      result = { state: nextState, waiver };
+      return adus;
+    });
+
+    if (!result) throw new Error('Failed to waive human gate');
+    return result;
   }
 
   async disposeHumanGate(
@@ -561,75 +572,80 @@ export class AgentFactoryMonitorUseCase {
       throw new Error('disposition comment is required');
     }
 
-    const adus = await this.repo.readAdus();
-    const adu = adus.find((a) => a.id === aduId);
-    if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
-    if (adu.state !== 'human_gate') {
-      throw Object.assign(new Error(`ADU state must be human_gate to dispose`), { forbidden: true });
-    }
+    let result: { state: string; disposition: Record<string, unknown> } | null = null;
+    await this.repo.updateAdus((adus) => {
+      const adu = adus.find((a) => a.id === aduId);
+      if (!adu) throw Object.assign(new Error(`ADU ${aduId} not found`), { notFound: true });
+      if (adu.state !== 'human_gate') {
+        throw Object.assign(new Error(`ADU state must be human_gate to dispose`), { forbidden: true });
+      }
 
-    const preGateState = (adu as any).pre_gate_state;
-    let nextState: string;
+      const preGateState = (adu as any).pre_gate_state;
+      let nextState: string;
 
-    if (params.disposition === 'environment_waiver') {
-      if (preGateState === 'code_reviewed') {
-        nextState = 'debugged';
-      } else if (preGateState === 'debugged') {
-        nextState = 'acceptance_reviewed';
+      if (params.disposition === 'environment_waiver') {
+        if (preGateState === 'code_reviewed') {
+          nextState = 'debugged';
+        } else if (preGateState === 'debugged') {
+          nextState = 'acceptance_reviewed';
+        } else {
+          throw Object.assign(
+            new Error(`Unsupported environment waiver from pre_gate_state: ${preGateState || 'none'}`),
+            { forbidden: true },
+          );
+        }
+      } else if (params.disposition === 'request_rework') {
+        nextState = 'rework_planned';
+      } else if (params.disposition === 'provide_missing_evidence' || params.disposition === 'accept_risk') {
+        nextState = preGateState || 'created';
+      } else if (params.disposition === 'external_dependency_block') {
+        nextState = 'human_gate';
+      } else if (params.disposition === 'cancel_adu') {
+        nextState = 'canceled';
       } else {
-        throw Object.assign(
-          new Error(`Unsupported environment waiver from pre_gate_state: ${preGateState || 'none'}`),
-          { forbidden: true },
-        );
+        throw Object.assign(new Error(`Unknown disposition: ${params.disposition}`), { forbidden: true });
       }
-    } else if (params.disposition === 'request_rework') {
-      nextState = 'rework_planned';
-    } else if (params.disposition === 'provide_missing_evidence' || params.disposition === 'accept_risk') {
-      nextState = preGateState || 'created';
-    } else if (params.disposition === 'external_dependency_block') {
-      nextState = 'human_gate';
-    } else if (params.disposition === 'cancel_adu') {
-      nextState = 'canceled';
-    } else {
-      throw Object.assign(new Error(`Unknown disposition: ${params.disposition}`), { forbidden: true });
-    }
 
-    const disposition = {
-      disposition_id: `disp-${aduId}-${Date.now()}`,
-      type: params.disposition,
-      from_state: adu.state,
-      pre_gate_state: preGateState,
-      to_state: nextState,
-      comment,
-      created_at: new Date().toISOString(),
-      approved_by: 'local-user',
-      affected_assertions: params.affectedAssertions || [],
-    };
+      const disposition = {
+        disposition_id: `disp-${aduId}-${Date.now()}`,
+        type: params.disposition,
+        from_state: adu.state,
+        pre_gate_state: preGateState,
+        to_state: nextState,
+        comment,
+        created_at: new Date().toISOString(),
+        approved_by: 'local-user',
+        affected_assertions: params.affectedAssertions || [],
+      };
 
-    (adu as any).human_gate_dispositions = [
-      ...(((adu as any).human_gate_dispositions as unknown[]) || []),
-      disposition,
-    ];
-    // Keep waivers array populated for backward-compatibility
-    (adu as any).human_gate_waivers = [
-      ...(((adu as any).human_gate_waivers as unknown[]) || []),
-      disposition,
-    ];
+      (adu as any).human_gate_dispositions = [
+        ...(((adu as any).human_gate_dispositions as unknown[]) || []),
+        disposition,
+      ];
+      // Keep waivers array populated for backward-compatibility
+      (adu as any).human_gate_waivers = [
+        ...(((adu as any).human_gate_waivers as unknown[]) || []),
+        disposition,
+      ];
 
-    adu.state = nextState as any;
-    if (nextState !== 'human_gate') {
-      adu.human_gate_required = false;
-      adu.retry_count = 0;
-      delete (adu as any).pre_gate_state;
-      if (adu.review_counters) {
-        adu.review_counters.buildfix_failures = 0;
+      adu.state = nextState as any;
+      if (nextState !== 'human_gate') {
+        adu.human_gate_required = false;
+        adu.retry_count = 0;
+        delete (adu as any).pre_gate_state;
+        if (adu.review_counters) {
+          adu.review_counters.buildfix_failures = 0;
+        }
       }
-    }
 
-    adu.updated_at = new Date().toISOString();
+      adu.updated_at = new Date().toISOString();
 
-    await this.repo.writeAdus(adus);
-    return { state: nextState, disposition };
+      result = { state: nextState, disposition };
+      return adus;
+    });
+
+    if (!result) throw new Error('Failed to dispose human gate');
+    return result;
   }
 
   private computeAduDisplayStatus(

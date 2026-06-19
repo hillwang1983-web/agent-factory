@@ -71,12 +71,8 @@ def resolve_agent_cwd(default_cwd_raw, workspace_root, project_repo_path):
     return Path(expanded).resolve()
 
 
-def save_json(path, data):
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    tmp.replace(path)
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from registry_lock import registry_lock, save_json_direct, save_json
 
 
 def load_quality_report_result(project_repo_path: Path, adu_id: str, agent_name: str) -> dict:
@@ -734,10 +730,21 @@ def main():
                         "usageSource": "estimated"
                     }
                 }
-                runs["runs"].append(run_record)
-                if adu_data:
-                    save_json(REGISTRY / "adu.json", adu_data)
-                save_json(REGISTRY / "runs.json", runs)
+                with registry_lock(REGISTRY):
+                    fresh_runs = load_json(REGISTRY / "runs.json") if (REGISTRY / "runs.json").exists() else {"runs": []}
+                    fresh_runs["runs"].append(run_record)
+                    save_json_direct(REGISTRY / "runs.json", fresh_runs)
+
+                    if adu_data:
+                        fresh_adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+                        fresh_adu = next((a for a in fresh_adu_data.get("adus", []) if a.get("id") == adu["id"]), None)
+                        if fresh_adu:
+                            fresh_adu["state"] = "human_gate"
+                            fresh_adu["human_gate_required"] = True
+                            fresh_adu["gate_type"] = "token_budget_approval"
+                            fresh_adu["pre_gate_state"] = adu.get("state", "created")
+                            save_json_direct(REGISTRY / "adu.json", fresh_adu_data)
+
                 print(json.dumps(run_record, ensure_ascii=False, indent=2))
                 sys.exit(1)
         except Exception:
@@ -967,23 +974,45 @@ def main():
             "usageSource": usage_source
         }
     }
-    runs["runs"].append(run_record)
+    with registry_lock(REGISTRY):
+        # 1. Update and save runs
+        fresh_runs = load_json(REGISTRY / "runs.json") if (REGISTRY / "runs.json").exists() else {"runs": []}
+        fresh_runs["runs"].append(run_record)
+        save_json_direct(REGISTRY / "runs.json", fresh_runs)
 
-    if is_epic_run:
-        if run_result == "success" and result:
-            next_state = result.get("next_state")
-            if next_state:
-                epic["state"] = next_state
-            for artifact in result.get("artifacts", []):
-                existing = epic.get("artifacts", [])
-                if artifact not in existing:
-                    existing.append(artifact)
-                epic["artifacts"] = existing
-        if epic_data:
-            save_json(REGISTRY / "epics.json", epic_data)
-    elif adu_data:
-        save_json(REGISTRY / "adu.json", adu_data)
-    save_json(REGISTRY / "runs.json", runs)
+        # 2. Update and save target state
+        if is_epic_run:
+            if epic_data:
+                fresh_epic_data = load_json(REGISTRY / "epics.json") if (REGISTRY / "epics.json").exists() else {"epics": []}
+                fresh_epic = next((e for e in fresh_epic_data.get("epics", []) if e.get("id") == args.epic), None)
+                if fresh_epic:
+                    if run_result == "success" and result:
+                        next_state = result.get("next_state")
+                        if next_state:
+                            fresh_epic["state"] = next_state
+                        for artifact in result.get("artifacts", []):
+                            existing = fresh_epic.get("artifacts", [])
+                            if artifact not in existing:
+                                existing.append(artifact)
+                            fresh_epic["artifacts"] = existing
+                    save_json_direct(REGISTRY / "epics.json", fresh_epic_data)
+        else:
+            if adu_data:
+                fresh_adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+                fresh_adu = next((a for a in fresh_adu_data.get("adus", []) if a.get("id") == adu["id"]), None)
+                if fresh_adu:
+                    # Merge mutated fields from our local adu object
+                    for key in ["pending_design_write_paths", "pending_path_requests", "allowed_write_paths",
+                                "clarification_questions", "human_gate_required", "retry_count", "pre_gate_state",
+                                "gate_type", "artifacts"]:
+                        if key in adu:
+                            fresh_adu[key] = adu[key]
+
+                    # Update state only if not canceled/paused in the registry
+                    if fresh_adu.get("state") not in ("canceled", "paused") and not fresh_adu.get("paused"):
+                        fresh_adu["state"] = adu["state"]
+
+                    save_json_direct(REGISTRY / "adu.json", fresh_adu_data)
 
     print(json.dumps(run_record, ensure_ascii=False, indent=2))
 

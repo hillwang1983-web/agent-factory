@@ -371,11 +371,11 @@ export const agentFactoryApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
-  async registerIntakeDraft(draftId: string, confirmed = false): Promise<any> {
+  async registerIntakeDraft(draftId: string, targetType: 'adu' | 'epic', confirmed = false): Promise<any> {
     const res = await fetch(`${API_URL}/api/agent-factory/intake-drafts/${draftId}/register-adu`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmed }),
+      body: JSON.stringify({ confirmed, target_type: targetType }),
     });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
@@ -640,6 +640,54 @@ export const agentFactoryApi = {
     }
     return res.json();
   },
+
+  async fetchNextAction(targetType: 'adu' | 'epic', targetId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/operator/${targetType}/${targetId}/next-action`);
+    if (!res.ok) throw new Error('Failed to fetch next action');
+    return res.json();
+  },
+
+  async executeOperatorAction(targetType: 'adu' | 'epic', targetId: string, actionData: {
+    action: string;
+    idempotency_key: string;
+    requested_by?: string;
+    payload?: any;
+  }): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/operator/${targetType}/${targetId}/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(actionData),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to execute operator action');
+    }
+    return res.json();
+  },
+
+  async fetchHandoff(targetType: 'adu' | 'epic', targetId: string): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/operator/${targetType}/${targetId}/handoff`);
+    if (!res.ok) throw new Error('Failed to fetch handoff summary');
+    return res.json();
+  },
+
+  async submitOperatorIntake(intakeData: {
+    project_id: string;
+    raw_requirement: string;
+    preferred_granularity?: string;
+    language?: string;
+  }): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/operator/intake`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(intakeData),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to submit intake');
+    }
+    return res.json();
+  },
 };
 
 
@@ -652,9 +700,17 @@ export const getIntakeDraft = (draftId: string) =>
   agentFactoryApi.getIntakeDraft(draftId);
 export const updateIntakeDraft = (draftId: string, updates: any) =>
   agentFactoryApi.updateIntakeDraft(draftId, updates);
-export const registerIntakeDraft = (draftId: string, confirmed = false) =>
-  agentFactoryApi.registerIntakeDraft(draftId, confirmed);
+export const registerIntakeDraft = (draftId: string, targetType: 'adu' | 'epic', confirmed = false) =>
+  agentFactoryApi.registerIntakeDraft(draftId, targetType, confirmed);
 export const getOperation = (operationId: string) =>
   agentFactoryApi.getOperation(operationId);
 export const getLatestOperation = (targetType: 'adu' | 'epic', targetId: string) =>
   agentFactoryApi.getLatestOperation(targetType, targetId);
+export const fetchNextAction = (targetType: 'adu' | 'epic', targetId: string) =>
+  agentFactoryApi.fetchNextAction(targetType, targetId);
+export const executeOperatorAction = (targetType: 'adu' | 'epic', targetId: string, actionData: any) =>
+  agentFactoryApi.executeOperatorAction(targetType, targetId, actionData);
+export const fetchHandoff = (targetType: 'adu' | 'epic', targetId: string) =>
+  agentFactoryApi.fetchHandoff(targetType, targetId);
+export const submitOperatorIntake = (intakeData: any) =>
+  agentFactoryApi.submitOperatorIntake(intakeData);

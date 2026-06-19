@@ -64,10 +64,10 @@ export const DraftReviewStep: React.FC<{ draftId: string, onRegistered: (aduId: 
         }
 
         // Client side validation
-        const unresolved = draft.question_answers?.filter(a => 
+        const unresolved = draft.question_answers?.filter(a =>
           a.status === 'unanswered' || (a.status === 'answered' && !a.answer.trim())
         ) || [];
-        
+
         if (unresolved.length > 0) {
             setError(`仍有 ${unresolved.length} 个问题未处理或未填写答案，请完善。`);
             return;
@@ -76,9 +76,9 @@ export const DraftReviewStep: React.FC<{ draftId: string, onRegistered: (aduId: 
         setRegistering(true);
         setError(null);
         try {
-            const confirmed = confirmLow;
-            const result = await registerIntakeDraft(draftId, confirmed);
-            onRegistered(result.adu.id);
+            const result = await registerIntakeDraft(draftId, 'adu', confirmLow);
+            const aduId = result.adu?.id || result.adu_id;
+            onRegistered(aduId);
         } catch (e: any) {
             setError(`注册失败: ${e?.message || String(e)}`);
             setRegistering(false);
@@ -195,8 +195,8 @@ export const DraftReviewStep: React.FC<{ draftId: string, onRegistered: (aduId: 
             </div>
 
             {draft.question_answers && draft.question_answers.length > 0 && (
-                <QuestionAnswerPanel 
-                    answers={draft.question_answers} 
+                <QuestionAnswerPanel
+                    answers={draft.question_answers}
                     onChange={(newAnswers) => handleChange({ question_answers: newAnswers })}
                 />
             )}

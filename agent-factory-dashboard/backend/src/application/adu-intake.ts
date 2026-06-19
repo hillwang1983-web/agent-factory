@@ -4,11 +4,14 @@ import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { FileProjectRepository } from '../infrastructure/file-project-repository';
 import { ProjectAduFactory } from './project-adu-factory';
+import { EpicFactory } from './epic-factory';
+import { RegistryLock } from '../infrastructure/registry-lock';
 import {
   AgentFactoryIntakeRawInput,
   AgentFactoryAduDraft,
   AgentFactoryIntakeSourceFile,
-  AgentFactoryDraftQuestionAnswer
+  AgentFactoryDraftQuestionAnswer,
+  AgentFactoryEpic
 } from '../domain/agent-factory';
 
 const BLOCKED_COMMAND_FRAGMENTS = [
@@ -97,7 +100,8 @@ export class AduIntake {
   constructor(
     private projectRepo: FileProjectRepository,
     private aduFactory: ProjectAduFactory,
-    private workspaceRoot: string
+    private workspaceRoot: string,
+    private epicFactory?: EpicFactory
   ) {}
 
   private normalizeQuestionAnswers(draft: any): AgentFactoryDraftQuestionAnswer[] {
@@ -160,10 +164,10 @@ export class AduIntake {
       const safeName = f.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
       const filename = `${fileId}-${safeName}`;
       const destPath = path.join(uploadDir, filename);
-      
+
       const fileBuffer = await fs.readFile(f.path);
       if (fileBuffer.includes(0x00)) throw new Error(`File ${f.originalname} contains NUL bytes`);
-      
+
       await fs.writeFile(destPath, fileBuffer);
       await fs.unlink(f.path);
       const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
@@ -309,9 +313,34 @@ export class AduIntake {
   }
 
   async registerDraft(draftId: string, options?: { confirmed?: boolean }): Promise<{ adu_id: string }> {
+    return RegistryLock.runLocked(async () => {
       const { meta, draft } = await this.getDraft(draftId);
       if (!draft) throw new Error('Draft content not found');
       if (meta.status === 'registered') throw new Error('Draft already registered');
+
+      // Command safety checks
+      if (Array.isArray(draft.requiredCommands)) {
+        for (const cmd of draft.requiredCommands) {
+          const lower = cmd.toLowerCase();
+          for (const frag of BLOCKED_COMMAND_FRAGMENTS) {
+            if (lower.includes(frag.toLowerCase())) {
+              throw new Error(`Access denied: command contains blocked fragment: ${cmd}`);
+            }
+          }
+        }
+      }
+
+      // Path safety checks
+      if (Array.isArray(draft.preferredWritePaths)) {
+        for (const p of draft.preferredWritePaths) {
+          validateRepoRelativePath(p, 'preferredWritePaths');
+        }
+      }
+      if (Array.isArray(draft.preferredReadPaths)) {
+        for (const p of draft.preferredReadPaths) {
+          validateRepoRelativePath(p, 'preferredReadPaths');
+        }
+      }
 
       // Spec §8 hard rule: empty requiredCommands requires manualEvidenceMode
       if ((!draft.requiredCommands || draft.requiredCommands.length === 0) && !draft.manualEvidenceMode) {
@@ -389,5 +418,169 @@ export class AduIntake {
       await fs.writeFile(path.join(meta.repo_path, meta.draft_path), JSON.stringify(draft, null, 2), 'utf-8');
 
       return { adu_id: createdAdu.id };
+    });
+  }
+
+  async generateDraftSync(draftId: string): Promise<void> {
+    const regPath = await this.getIntakeRegistryPath();
+    const registry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
+    const draftIndex = registry.drafts.findIndex((d: any) => d.draft_id === draftId);
+    if (draftIndex === -1) throw new Error('Draft not found');
+
+    const meta = registry.drafts[draftIndex];
+    meta.status = 'generating';
+    await fs.writeFile(regPath, JSON.stringify(registry, null, 2), 'utf-8');
+
+    const scriptPath = path.join(this.workspaceRoot, 'scripts', 'hermes_agent_run.py');
+    const child = spawn('python3', [scriptPath, '--intake-draft', draftId, '--project', meta.project_id, '--repo', meta.repo_path, '--agent', 'adu-intake-agent'], {
+        cwd: this.workspaceRoot
+    });
+
+    const updateRegistryStatus = async (status: string, title?: string, errorMsg?: string) => {
+      try {
+        const freshRegistry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
+        const fIndex = freshRegistry.drafts.findIndex((d: any) => d.draft_id === draftId);
+        if (fIndex === -1) return;
+        freshRegistry.drafts[fIndex].status = status;
+        if (title) freshRegistry.drafts[fIndex].title = title;
+        if (errorMsg) freshRegistry.drafts[fIndex].error = errorMsg;
+        await fs.writeFile(regPath, JSON.stringify(freshRegistry, null, 2), 'utf-8');
+      } catch (e) {
+        console.error(`[AduIntake] Failed to update registry status for ${draftId}:`, e);
+      }
+    };
+
+    const timeoutDuration = process.env.INTAKE_TIMEOUT_MS ? parseInt(process.env.INTAKE_TIMEOUT_MS, 10) : 180000;
+    let isTerminated = false;
+    const timeoutTimer = setTimeout(() => {
+      isTerminated = true;
+      console.error(`[AduIntake] generation timed out for ${draftId} after ${timeoutDuration}ms`);
+      child.kill('SIGTERM');
+    }, timeoutDuration);
+
+    let stderrBuf = '';
+    child.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+
+    return new Promise<void>((resolve, reject) => {
+      child.on('close', (code) => {
+        clearTimeout(timeoutTimer);
+        if (isTerminated) {
+          (async () => {
+            await updateRegistryStatus('generation_failed', undefined, 'Draft generation timed out after 3 minutes');
+            reject(new Error('Draft generation timed out after 3 minutes'));
+          })().catch(reject);
+          return;
+        }
+
+        (async () => {
+          if (code === 0) {
+            try {
+              const draftFilePath = path.join(meta.repo_path, meta.draft_path);
+              try {
+                await fs.access(draftFilePath);
+              } catch (accessErr) {
+                throw new Error(`Draft file does not exist at ${draftFilePath}`);
+              }
+
+              let draftContent: any;
+              try {
+                draftContent = JSON.parse(await fs.readFile(draftFilePath, 'utf-8'));
+              } catch (parseErr) {
+                throw new Error(`Failed to parse draft JSON: ${(parseErr as Error).message}`);
+              }
+
+              if (!draftContent.title || typeof draftContent.title !== 'string' || !draftContent.title.trim()) {
+                throw new Error('Draft schema invalid: title is missing or empty');
+              }
+              if (!draftContent.goal || typeof draftContent.goal !== 'string' || !draftContent.goal.trim()) {
+                throw new Error('Draft schema invalid: goal is missing or empty');
+              }
+
+              await updateRegistryStatus('draft_ready', draftContent.title);
+              resolve();
+            } catch (err: any) {
+              console.error(`[AduIntake] draft validation failed for ${draftId}: ${err.message}`);
+              await updateRegistryStatus('generation_failed', undefined, err.message);
+              reject(err);
+            }
+          } else {
+            const errSummary = stderrBuf.trim().split('\n').pop()?.slice(0, 200) || 'Unknown error';
+            console.error(`[AduIntake] generation failed for ${draftId}: ${errSummary}`);
+            await updateRegistryStatus('generation_failed', undefined, errSummary);
+            reject(new Error(`Draft generation failed: ${errSummary}`));
+          }
+        })().catch(reject);
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(timeoutTimer);
+        if (isTerminated) return;
+        console.error(`[AduIntake] spawn error for ${draftId}:`, err);
+        (async () => {
+          await updateRegistryStatus('generation_failed');
+          reject(err);
+        })().catch(reject);
+      });
+    });
+  }
+
+  async registerEpicDraft(draftId: string, options?: { confirmed?: boolean }): Promise<{ epic_id: string }> {
+    return RegistryLock.runLocked(async () => {
+      if (!this.epicFactory) {
+        throw new Error('EpicFactory is not configured on AduIntake');
+      }
+      const { meta, draft } = await this.getDraft(draftId);
+      if (!draft) throw new Error('Draft content not found');
+      if (meta.status === 'registered') throw new Error('Draft already registered');
+
+      // Enforce question answers validation on registration to prevent bypasses
+      const questionAnswers = this.normalizeQuestionAnswers(draft);
+      validateDraftFields({ question_answers: questionAnswers });
+
+      const unresolved = questionAnswers.filter(a => {
+        if (a.status === 'unanswered') return true;
+        if (a.status === 'answered' && (!a.answer || !a.answer.trim())) return true;
+        return false;
+      });
+
+      if (unresolved.length > 0) {
+        const err = new Error(`Draft has ${unresolved.length} unresolved question(s). Please answer them or defer to requirement analyst.`);
+        (err as any).status = 409;
+        throw err;
+      }
+
+      // Construct source_requirement by appending questions and answers
+      let finalRequirement = draft.goal || draft.title;
+      if (questionAnswers.length > 0) {
+        let summary = "\n\n用户澄清问题：\n";
+        questionAnswers.forEach((qa, idx) => {
+          summary += `${idx + 1}. 问题：${qa.question}\n   处理：${qa.status}\n   答案：${qa.answer || '无'}\n   影响范围：${qa.impact}\n`;
+        });
+        finalRequirement += summary;
+      }
+
+      // Create Epic using epicFactory
+      const createdEpic = await this.epicFactory.createForProject(meta.project_id, {
+        title: draft.title,
+        source_requirement: finalRequirement,
+        risk: draft.risk || 'medium',
+        target_level: draft.targetLevel || 'mvp',
+        language: (draft as any).language || 'zh',
+        clarifications: questionAnswers
+      });
+
+      const regPath = await this.getIntakeRegistryPath();
+      const registry = JSON.parse(await fs.readFile(regPath, 'utf-8'));
+      const fIndex = registry.drafts.findIndex((d: any) => d.draft_id === draftId);
+      registry.drafts[fIndex].status = 'registered';
+      registry.drafts[fIndex].registered_epic_id = createdEpic.id;
+      await fs.writeFile(regPath, JSON.stringify(registry, null, 2), 'utf-8');
+
+      draft.status = 'registered';
+      (draft as any).registered_epic_id = createdEpic.id;
+      await fs.writeFile(path.join(meta.repo_path, meta.draft_path), JSON.stringify(draft, null, 2), 'utf-8');
+
+      return { epic_id: createdEpic.id };
+    });
   }
 }

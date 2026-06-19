@@ -393,6 +393,7 @@ export interface AgentFactoryEpic {
     blocked_child_adus: number;
     running_child_adus: number;
   };
+  clarifications?: any[];
   created_at: string;
   updated_at: string;
 }
@@ -403,6 +404,7 @@ export interface CreateEpicInput {
   risk?: string;
   target_level?: string;
   language?: string;
+  clarifications?: any[];
 }
 
 export interface AgentFactoryEpicView extends AgentFactoryEpic {

@@ -18,6 +18,8 @@ RUNTIME_FILES = {
     "human-gates.json": {"version": 1, "gates": []},
     "token-budget.json": {"version": 1, "agents": {}},
     "artifact-edits.json": {"version": 1, "edits": []},
+    "operator-actions.json": {"version": 1, "actions": []},
+    "operator-audit-logs.json": {"version": 1, "logs": []},
 }
 
 RUNTIME_DIRS = [

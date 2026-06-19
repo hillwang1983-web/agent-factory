@@ -60,6 +60,7 @@ export class EpicFactory {
       language: input.language || 'zh',
       child_adus: [],
       dependencies: [],
+      clarifications: input.clarifications || [],
       created_at: now,
       updated_at: now,
     };

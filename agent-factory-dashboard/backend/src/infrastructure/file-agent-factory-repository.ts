@@ -12,6 +12,8 @@ import {
   AgentFactoryEpic,
 } from '../domain/agent-factory';
 
+import { RegistryLock } from './registry-lock';
+
 export class FileAgentFactoryRepository implements AgentFactoryRepository {
   private readonly workspaceRoot: string;
   private readonly maxBytes: number;
@@ -21,6 +23,11 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.maxBytes = maxBytes;
     this.logger = logger.child({ component: 'FileAgentFactoryRepository' });
+    RegistryLock.setWorkspaceRoot(this.workspaceRoot);
+  }
+
+  private async runInMutex<T>(fn: () => Promise<T>): Promise<T> {
+    return RegistryLock.runLocked(fn);
   }
 
   getWorkspaceRoot(): string {
@@ -86,7 +93,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     }
   }
 
-  async writeAdus(adus: AgentFactoryAdu[]): Promise<void> {
+  private async doWriteAdus(adus: AgentFactoryAdu[]): Promise<void> {
     const aduJsonPath = this.resolveSafePath('.ai-agent/registry/adu.json');
     try {
       const data = {
@@ -98,6 +105,10 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       this.logger.error({ err }, 'Failed to write adu.json');
       throw err;
     }
+  }
+
+  async writeAdus(adus: AgentFactoryAdu[]): Promise<void> {
+    return this.runInMutex(() => this.doWriteAdus(adus));
   }
 
   async listAdus(): Promise<AgentFactoryAdu[]> {
@@ -115,17 +126,19 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
   }
 
   async saveAdu(adu: AgentFactoryAdu): Promise<void> {
-    const adus = await this.readAdus();
-    const existingIndex = adus.findIndex(a => a.id === adu.id);
-    if (existingIndex >= 0) {
-      adus[existingIndex] = adu;
-    } else {
-      adus.push(adu);
-    }
-    await this.writeAdus(adus);
+    return this.runInMutex(async () => {
+      const adus = await this.readAdus();
+      const existingIndex = adus.findIndex(a => a.id === adu.id);
+      if (existingIndex >= 0) {
+        adus[existingIndex] = adu;
+      } else {
+        adus.push(adu);
+      }
+      await this.doWriteAdus(adus);
+    });
   }
 
-  async writeRuns(runs: AgentFactoryRun[]): Promise<void> {
+  private async doWriteRuns(runs: AgentFactoryRun[]): Promise<void> {
     const runsJsonPath = this.resolveSafePath('.ai-agent/registry/runs.json');
     try {
       const data = { version: 1, runs };
@@ -137,10 +150,16 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     }
   }
 
+  async writeRuns(runs: AgentFactoryRun[]): Promise<void> {
+    return this.runInMutex(() => this.doWriteRuns(runs));
+  }
+
   async appendRunSummary(run: AgentFactoryRun): Promise<void> {
-    const runs = await this.readRuns();
-    runs.push(run);
-    await this.writeRuns(runs);
+    return this.runInMutex(async () => {
+      const runs = await this.readRuns();
+      runs.push(run);
+      await this.doWriteRuns(runs);
+    });
   }
 
   async readAgents(): Promise<Record<string, AgentFactoryAgentConfig>> {
@@ -363,7 +382,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     }
   }
 
-  async writeReviews(reviews: AgentFactoryReview[]): Promise<void> {
+  private async doWriteReviews(reviews: AgentFactoryReview[]): Promise<void> {
     const reviewsPath = this.resolveSafePath('.ai-agent/registry/reviews.json');
     try {
       const data = { version: 1, reviews };
@@ -373,6 +392,10 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       this.logger.error({ err }, 'Failed to write reviews.json');
       throw err;
     }
+  }
+
+  async writeReviews(reviews: AgentFactoryReview[]): Promise<void> {
+    return this.runInMutex(() => this.doWriteReviews(reviews));
   }
 
   async readEdits(): Promise<AgentFactoryArtifactEdit[]> {
@@ -391,7 +414,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     }
   }
 
-  async writeEdits(edits: AgentFactoryArtifactEdit[]): Promise<void> {
+  private async doWriteEdits(edits: AgentFactoryArtifactEdit[]): Promise<void> {
     const editsPath = this.resolveSafePath('.ai-agent/registry/artifact-edits.json');
     try {
       const data = { version: 1, edits };
@@ -401,6 +424,10 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       this.logger.error({ err }, 'Failed to write artifact-edits.json');
       throw err;
     }
+  }
+
+  async writeEdits(edits: AgentFactoryArtifactEdit[]): Promise<void> {
+    return this.runInMutex(() => this.doWriteEdits(edits));
   }
 
   async writeTextArtifact(relativePath: string, content: string, workspaceRootOverride?: string): Promise<{ sha256: string; bytes: number }> {
@@ -483,14 +510,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     }
   }
 
-  async saveEpic(epic: AgentFactoryEpic): Promise<void> {
-    const epics = await this.readEpics();
-    const existingIndex = epics.findIndex(e => e.id === epic.id);
-    if (existingIndex >= 0) {
-      epics[existingIndex] = epic;
-    } else {
-      epics.push(epic);
-    }
+  private async doWriteEpics(epics: AgentFactoryEpic[]): Promise<void> {
     const epicsPath = this.resolveSafePath('.ai-agent/registry/epics.json');
     try {
       await fs.mkdir(path.dirname(epicsPath), { recursive: true });
@@ -502,6 +522,19 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       this.logger.error({ err }, 'Failed to write epics.json');
       throw err;
     }
+  }
+
+  async saveEpic(epic: AgentFactoryEpic): Promise<void> {
+    return this.runInMutex(async () => {
+      const epics = await this.readEpics();
+      const existingIndex = epics.findIndex(e => e.id === epic.id);
+      if (existingIndex >= 0) {
+        epics[existingIndex] = epic;
+      } else {
+        epics.push(epic);
+      }
+      await this.doWriteEpics(epics);
+    });
   }
 
   async getEpic(epicId: string): Promise<AgentFactoryEpic | null> {
@@ -529,5 +562,29 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       this.logger.error({ err, epicDir }, 'Failed to list Epic artifacts');
       throw err;
     }
+  }
+
+  async updateAdus(updateFn: (adus: AgentFactoryAdu[]) => Promise<AgentFactoryAdu[]> | AgentFactoryAdu[]): Promise<void> {
+    return RegistryLock.runLocked(async () => {
+      const adus = await this.readAdus();
+      const updated = await updateFn(adus);
+      await this.doWriteAdus(updated);
+    });
+  }
+
+  async updateReviews(updateFn: (reviews: AgentFactoryReview[]) => Promise<AgentFactoryReview[]> | AgentFactoryReview[]): Promise<void> {
+    return RegistryLock.runLocked(async () => {
+      const reviews = await this.readReviews();
+      const updated = await updateFn(reviews);
+      await this.doWriteReviews(updated);
+    });
+  }
+
+  async updateEdits(updateFn: (edits: AgentFactoryArtifactEdit[]) => Promise<AgentFactoryArtifactEdit[]> | AgentFactoryArtifactEdit[]): Promise<void> {
+    return RegistryLock.runLocked(async () => {
+      const edits = await this.readEdits();
+      const updated = await updateFn(edits);
+      await this.doWriteEdits(updated);
+    });
   }
 }

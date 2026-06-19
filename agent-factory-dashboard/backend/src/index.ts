@@ -29,8 +29,8 @@ async function main() {
   const projectOnboarding = new ProjectOnboardingUseCase(projectRepo, config.workspaceRoot, logger);
 
   const aduFactory = new ProjectAduFactory(projectRepo, repo);
-  const aduIntake = new AduIntake(projectRepo, aduFactory, config.workspaceRoot);
   const epicFactory = new EpicFactory(projectRepo, repo);
+  const aduIntake = new AduIntake(projectRepo, aduFactory, config.workspaceRoot, epicFactory);
 
   // Initialize WS Broadcaster
   initializeWebSocketServer(config.wsPort, monitor, config.pollIntervalMs, logger);

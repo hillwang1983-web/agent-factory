@@ -19,6 +19,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parent))
+from registry_lock import registry_lock, save_json_direct
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Dynamic registry path resolution
@@ -57,12 +60,7 @@ def load_json(path: Path):
         return json.load(f)
 
 
-def save_json(path: Path, data):
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    tmp.replace(path)
+
 
 
 def broadcast_event(event_type: str, payload: dict):
@@ -157,8 +155,6 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
     deps = split_plan.get("dependencies", [])
     decision = split_plan.get("decision", "split_required")
 
-    adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
-
     # Validate all child ADU definitions before creating any
     all_errors = []
     for i, child_def in enumerate(child_defs):
@@ -173,81 +169,84 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
         return {"result": "failed", "error": f"Child ADU validation failed: {error_msg}"}
 
     created_ids = []
-    for i, child_def in enumerate(child_defs):
-        child_id = child_def.get("id")
-        if not child_id:
-            continue
+    with registry_lock(REGISTRY):
+        adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
 
-        # Check if already exists
-        existing = next((a for a in adu_data["adus"] if a["id"] == child_id), None)
-        if existing:
+        for i, child_def in enumerate(child_defs):
+            child_id = child_def.get("id")
+            if not child_id:
+                continue
+
+            # Check if already exists
+            existing = next((a for a in adu_data.get("adus", []) if a["id"] == child_id), None)
+            if existing:
+                created_ids.append(child_id)
+                continue
+
+            now = dt.datetime.now(dt.timezone.utc).isoformat()
+            # Use validated paths (normalize_repo_relative_path may have fixed them)
+            safe_write_paths = [normalize_repo_relative_path(p) for p in child_def.get("allowed_write_paths", [])]
+            safe_write_paths = [p for p in safe_write_paths if p is not None]
+            safe_write_paths.extend([
+                ".ai-agent/analysis/", ".ai-agent/designs/", ".ai-agent/contracts/",
+                ".ai-agent/reviews/", ".ai-agent/acceptance/", ".ai-agent/evidence/",
+                ".ai-agent/runs/",
+            ])
+
+            child_adu = {
+                "id": child_id,
+                "project_id": epic.get("project_id"),
+                "project_name": epic.get("project_name"),
+                "repo_path": repo_root,
+                "artifact_root": ".ai-agent",
+                "profile_path": ".agent-factory/project-profile.json",
+                "knowledge_dir": ".agent-factory/knowledge",
+                "title": child_def.get("title", f"Child ADU {i+1}"),
+                "goal": child_def.get("goal", ""),
+                "state": "created",
+                "retry_count": 0,
+                "max_retries": 3,
+                "risk": epic.get("risk", "medium"),
+                "target_level": epic.get("target_level", "mvp"),
+                "allowed_read_paths": list(set(
+                    [".agent-factory/project-profile.json", ".agent-factory/knowledge/", ".ai-agent/"] +
+                    safe_write_paths  # write paths must also be readable
+                )),
+                "allowed_write_paths": safe_write_paths,
+                "required_commands": child_def.get("required_commands", []),
+                "required_evidence": [f".ai-agent/evidence/{child_id}.md"],
+                "artifacts": [],
+                "human_gate_required": True,
+                "language": epic.get("language", "zh"),
+                "clarifications": epic.get("clarifications", []) + child_def.get("clarifications", []),
+                "parent_epic_id": epic["id"],
+                "depends_on": [d["from"] for d in deps if d.get("to") == child_id],
+                "scope": child_def.get("scope", ""),
+                "integration_role": child_def.get("integration_role", ""),
+                "epic_sequence": i + 1,
+                "review_policy": {
+                    "analysis_review_required": True,
+                    "design_review_required": True,
+                },
+                "command_policy": {
+                    "mode": "allowlist",
+                    "allowed_commands": child_def.get("required_commands", []),
+                    "blocked_command_patterns": [
+                        "rm -rf", "sudo ", "curl ", "wget ", "ssh ", "scp ", "rsync ",
+                        "chmod -R 777", "> /dev/", "dd ", "mkfs", "launchctl",
+                        "security ", "git push", "git clean", "git reset --hard",
+                    ],
+                },
+                "review_counters": {"code_review_failures": 0, "acceptance_review_failures": 0},
+                "review_limits": {"max_code_review_failures": 5, "max_acceptance_review_failures": 5},
+                "created_at": now,
+                "updated_at": now,
+            }
+            adu_data["adus"].append(child_adu)
             created_ids.append(child_id)
-            continue
+            broadcast_event("child_adu_created", {"epicId": epic["id"], "aduId": child_id})
 
-        now = dt.datetime.now(dt.timezone.utc).isoformat()
-        # Use validated paths (normalize_repo_relative_path may have fixed them)
-        safe_write_paths = [normalize_repo_relative_path(p) for p in child_def.get("allowed_write_paths", [])]
-        safe_write_paths = [p for p in safe_write_paths if p is not None]
-        safe_write_paths.extend([
-            ".ai-agent/analysis/", ".ai-agent/designs/", ".ai-agent/contracts/",
-            ".ai-agent/reviews/", ".ai-agent/acceptance/", ".ai-agent/evidence/",
-            ".ai-agent/runs/",
-        ])
-
-        child_adu = {
-            "id": child_id,
-            "project_id": epic.get("project_id"),
-            "project_name": epic.get("project_name"),
-            "repo_path": repo_root,
-            "artifact_root": ".ai-agent",
-            "profile_path": ".agent-factory/project-profile.json",
-            "knowledge_dir": ".agent-factory/knowledge",
-            "title": child_def.get("title", f"Child ADU {i+1}"),
-            "goal": child_def.get("goal", ""),
-            "state": "created",
-            "retry_count": 0,
-            "max_retries": 3,
-            "risk": epic.get("risk", "medium"),
-            "target_level": epic.get("target_level", "mvp"),
-            "allowed_read_paths": list(set(
-                [".agent-factory/project-profile.json", ".agent-factory/knowledge/", ".ai-agent/"] +
-                safe_write_paths  # write paths must also be readable
-            )),
-            "allowed_write_paths": safe_write_paths,
-            "required_commands": child_def.get("required_commands", []),
-            "required_evidence": [f".ai-agent/evidence/{child_id}.md"],
-            "artifacts": [],
-            "human_gate_required": True,
-            "language": epic.get("language", "zh"),
-            "clarifications": epic.get("clarifications", []) + child_def.get("clarifications", []),
-            "parent_epic_id": epic["id"],
-            "depends_on": [d["from"] for d in deps if d.get("to") == child_id],
-            "scope": child_def.get("scope", ""),
-            "integration_role": child_def.get("integration_role", ""),
-            "epic_sequence": i + 1,
-            "review_policy": {
-                "analysis_review_required": True,
-                "design_review_required": True,
-            },
-            "command_policy": {
-                "mode": "allowlist",
-                "allowed_commands": child_def.get("required_commands", []),
-                "blocked_command_patterns": [
-                    "rm -rf", "sudo ", "curl ", "wget ", "ssh ", "scp ", "rsync ",
-                    "chmod -R 777", "> /dev/", "dd ", "mkfs", "launchctl",
-                    "security ", "git push", "git clean", "git reset --hard",
-                ],
-            },
-            "review_counters": {"code_review_failures": 0, "acceptance_review_failures": 0},
-            "review_limits": {"max_code_review_failures": 5, "max_acceptance_review_failures": 5},
-            "created_at": now,
-            "updated_at": now,
-        }
-        adu_data["adus"].append(child_adu)
-        created_ids.append(child_id)
-        broadcast_event("child_adu_created", {"epicId": epic["id"], "aduId": child_id})
-
-    save_json(REGISTRY / "adu.json", adu_data)
+        save_json_direct(REGISTRY / "adu.json", adu_data)
 
     # Update Epic
     epic["child_adus"] = list(set(epic.get("child_adus", []) + created_ids))
@@ -606,12 +605,13 @@ def main():
 
         elif args.mode == "pause":
             # Pause all non-terminal child ADUs and set Epic to child_adus_blocked
-            adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
-            terminal = {"evidenced", "canceled"}
-            for adu in adu_data.get("adus", []):
-                if adu.get("parent_epic_id") == args.epic and adu.get("state") not in terminal:
-                    adu["paused"] = True
-            save_json(REGISTRY / "adu.json", adu_data)
+            with registry_lock(REGISTRY):
+                adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+                terminal = {"evidenced", "canceled"}
+                for adu in adu_data.get("adus", []):
+                    if adu.get("parent_epic_id") == args.epic and adu.get("state") not in terminal:
+                        adu["paused"] = True
+                save_json_direct(REGISTRY / "adu.json", adu_data)
             epic["state"] = "child_adus_blocked"
             broadcast_event("epic_state_changed", {"epicId": args.epic, "state": "child_adus_blocked"})
             broadcast_event("epic_orchestrator_completed", {
@@ -620,12 +620,13 @@ def main():
 
         elif args.mode == "cancel":
             # Cancel all non-terminal child ADUs, then cancel the Epic
-            adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
-            for adu in adu_data.get("adus", []):
-                if adu.get("parent_epic_id") == args.epic:
-                    adu["state"] = "canceled"
-                    adu["paused"] = False
-            save_json(REGISTRY / "adu.json", adu_data)
+            with registry_lock(REGISTRY):
+                adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+                for adu in adu_data.get("adus", []):
+                    if adu.get("parent_epic_id") == args.epic:
+                        adu["state"] = "canceled"
+                        adu["paused"] = False
+                save_json_direct(REGISTRY / "adu.json", adu_data)
             epic["state"] = "canceled"
             broadcast_event("epic_state_changed", {"epicId": args.epic, "state": "canceled"})
             broadcast_event("epic_orchestrator_completed", {
@@ -633,15 +634,27 @@ def main():
             })
 
     finally:
-        # Persist Epic state
-        for i, e in enumerate(epics_data.get("epics", [])):
-            if e["id"] == args.epic:
-                epic["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-                epics_data["epics"][i] = epic
-                break
-        else:
-            epics_data.setdefault("epics", []).append(epic)
-        save_json(REGISTRY / "epics.json", epics_data)
+        # Persist Epic state using RMW registry_lock transaction
+        with registry_lock(REGISTRY):
+            fresh_epics_data = load_json(REGISTRY / "epics.json") if (REGISTRY / "epics.json").exists() else {"epics": []}
+            fresh_epic = next((e for e in fresh_epics_data.get("epics", []) if e["id"] == args.epic), None)
+            if not fresh_epic:
+                fresh_epic = {
+                    "id": args.epic,
+                    "project_id": args.project,
+                    "state": epic.get("state", "created"),
+                    "created_at": epic.get("created_at") or dt.datetime.now(dt.timezone.utc).isoformat(),
+                }
+                fresh_epics_data.setdefault("epics", []).append(fresh_epic)
+
+            # Merge mutated fields from memory
+            for key in ["state", "child_adus", "dependencies", "split_plan_path", "artifacts", "summary"]:
+                if key in epic:
+                    fresh_epic[key] = epic[key]
+
+            fresh_epic["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            save_json_direct(REGISTRY / "epics.json", fresh_epics_data)
+
         broadcast_event("epic_orchestrator_saved", {"epicId": args.epic, "state": epic.get("state")})
 
 

@@ -32,4 +32,7 @@ export interface AgentFactoryRepository {
   getEpic(epicId: string): Promise<AgentFactoryEpic | null>;
   listEpicsByProject(projectId: string): Promise<AgentFactoryEpic[]>;
   listEpicArtifacts(epicId: string, repoPath: string): Promise<AgentFactoryArtifact[]>;
+  updateAdus(updateFn: (adus: AgentFactoryAdu[]) => Promise<AgentFactoryAdu[]> | AgentFactoryAdu[]): Promise<void>;
+  updateReviews(updateFn: (reviews: AgentFactoryReview[]) => Promise<AgentFactoryReview[]> | AgentFactoryReview[]): Promise<void>;
+  updateEdits(updateFn: (edits: AgentFactoryArtifactEdit[]) => Promise<AgentFactoryArtifactEdit[]> | AgentFactoryArtifactEdit[]): Promise<void>;
 }

@@ -68,7 +68,7 @@ interface AgentFactoryState {
   generateIntakeDraft: (draftId: string) => Promise<any>;
   getIntakeDraft: (draftId: string) => Promise<any>;
   updateIntakeDraft: (draftId: string, updates: any) => Promise<any>;
-  registerIntakeDraft: (draftId: string) => Promise<any>;
+  registerIntakeDraft: (draftId: string, targetType: 'adu' | 'epic', confirmed?: boolean) => Promise<any>;
   activeOperations: Record<string, any>;
   fetchOperation: (operationId: string) => Promise<any>;
   pollOperation: (operationId: string, targetType: 'adu' | 'epic', targetId: string) => void;
@@ -400,8 +400,8 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   updateIntakeDraft: async (draftId, updates) => {
     return await agentFactoryApi.updateIntakeDraft(draftId, updates);
   },
-  registerIntakeDraft: async (draftId) => {
-    return await agentFactoryApi.registerIntakeDraft(draftId);
+  registerIntakeDraft: async (draftId, targetType, confirmed) => {
+    return await agentFactoryApi.registerIntakeDraft(draftId, targetType, confirmed);
   },
 
   fetchOperation: async (operationId) => {
