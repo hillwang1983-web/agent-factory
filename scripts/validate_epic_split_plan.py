@@ -8,6 +8,10 @@ Checks:
   - Each child ADU has scope, goal, allowed_write_paths, acceptance_summary
   - decision == 'single' => exactly 1 child ADU
   - decision == 'split_required' => at least 2 child ADUs
+  - semantics must be 'prerequisite_to_dependent'
+  - Epic-level acceptance points covered by child ADUs
+  - High risk paths must have risk_justification
+  - Verify path in required_commands is in allowed paths
 
 Exit 0 on pass, exit 1 on fail.
 """
@@ -32,6 +36,117 @@ def has_cycle_dfs(node: str, adj: dict, visited: set, rec_stack: set) -> bool:
             return True
     rec_stack.discard(node)
     return False
+
+
+def check_split_semantics(data: dict, profile_data: dict, system_flow_data: dict):
+    child_adus = data.get("child_adus") or []
+    adu_ids = {adu.get("id") for adu in child_adus if adu.get("id")}
+
+    # 1. Dependency semantics validation
+    deps = data.get("dependencies") or []
+    for i, dep in enumerate(deps):
+        semantics = dep.get("semantics")
+        if not semantics:
+            fail(f"dependencies[{i}] missing 'semantics'")
+        if semantics != "prerequisite_to_dependent":
+            fail(f"dependencies[{i}] semantics must be 'prerequisite_to_dependent'")
+
+    # 2. Acceptance coverage validation
+    coverage = data.get("acceptance_coverage", [])
+    if not isinstance(coverage, list):
+        fail("acceptance_coverage must be an array")
+        
+    covered_ids = set()
+    for idx, cov in enumerate(coverage):
+        acc_id = cov.get("acceptance_id")
+        covered_by = cov.get("covered_by", [])
+        if not acc_id:
+            fail(f"acceptance_coverage[{idx}] missing 'acceptance_id'")
+        if not covered_by or not isinstance(covered_by, list):
+            fail(f"acceptance_coverage[{idx}] missing or empty 'covered_by'")
+        for adu_id in covered_by:
+            if adu_id not in adu_ids:
+                fail(f"acceptance_coverage[{idx}] references unknown child ADU: {adu_id}")
+        covered_ids.add(acc_id)
+        
+    if system_flow_data:
+        sf_pts = system_flow_data.get("acceptance_points", [])
+        for pt in sf_pts:
+            matched = False
+            for acc_id in covered_ids:
+                if acc_id == pt or acc_id in pt or pt in acc_id:
+                    matched = True
+                    break
+            if not matched:
+                fail(f"Epic acceptance point '{pt}' is not covered by any child ADU in acceptance_coverage")
+
+    # 3. Verify path in required_commands is in allowed paths
+    for adu in child_adus:
+        req_cmds = adu.get("required_commands", [])
+        allowed_paths = adu.get("allowed_write_paths", []) + adu.get("allowed_read_paths", [])
+        for cmd in req_cmds:
+            words = cmd.split()
+            for w in words:
+                w_clean = w.strip("'\"(),")
+                if "/" in w_clean or w_clean.endswith((".c", ".py", ".js", ".ts", ".sh")):
+                    if "test" in w_clean or w_clean.startswith(("./", "lib/")):
+                        matched_path = False
+                        for ap in allowed_paths:
+                            if w_clean == ap or w_clean.startswith(ap) or ap.startswith(w_clean):
+                                matched_path = True
+                                break
+                        if not matched_path:
+                            fail(f"child ADU {adu['id']} required command '{cmd}' references path '{w_clean}' which is not in allowed_read_paths or allowed_write_paths")
+
+    # 4. WebUI requirement checks (both frontend and backend paths)
+    for adu in child_adus:
+        title_goal = (adu.get("title", "") + " " + adu.get("goal", "")).lower()
+        write_paths_str = " ".join(adu.get("allowed_write_paths", [])).lower()
+        if "webui" in title_goal or "ui" in title_goal or "webui" in write_paths_str:
+            has_frontend = False
+            has_backend = False
+            for wp in adu.get("allowed_write_paths", []):
+                wp_lower = wp.lower()
+                if "webui" in wp_lower or "frontend" in wp_lower or "src/pages" in wp_lower:
+                    has_frontend = True
+                if "backend" in wp_lower or "server" in wp_lower or "routes" in wp_lower or "api" in wp_lower:
+                    has_backend = True
+            if not has_frontend or not has_backend:
+                fail(f"child ADU {adu['id']} has UI requirements but allowed_write_paths is missing either frontend or backend paths")
+
+    # 5. Public library changes check (must include build manifest)
+    for adu in child_adus:
+        has_lib_change = any(wp.startswith("lib/") for wp in adu.get("allowed_write_paths", []))
+        if has_lib_change:
+            has_build_manifest = False
+            all_paths = adu.get("allowed_write_paths", []) + adu.get("allowed_read_paths", [])
+            for p in all_paths:
+                if "meson.build" in p or "makefile" in p.lower() or "package.json" in p:
+                    has_build_manifest = True
+                    break
+            if not has_build_manifest:
+                fail(f"child ADU {adu['id']} modifies public library in lib/ but lacks a build manifest (e.g. meson.build)")
+
+    # 6. High risk paths check
+    if profile_data:
+        risk_paths = profile_data.get("risk_paths", {})
+        for adu in child_adus:
+            write_paths = adu.get("allowed_write_paths", [])
+            hit_risk = False
+            hit_risk_path = ""
+            for wp in write_paths:
+                for rp in risk_paths:
+                    if wp.startswith(rp) or rp.startswith(wp):
+                        hit_risk = True
+                        hit_risk_path = rp
+                        break
+                if hit_risk:
+                    break
+                    
+            if hit_risk:
+                justification = adu.get("risk_justification")
+                if not justification or justification.strip() == "":
+                    fail(f"child ADU {adu['id']} modifies high-risk path '{hit_risk_path}' but missing 'risk_justification'")
 
 
 def main():
@@ -118,6 +233,32 @@ def main():
         if node not in visited:
             if has_cycle_dfs(node, adj, visited, set()):
                 fail("Dependency graph contains a cycle")
+
+    # Load system-flow.json and project-profile.json for semantic quality gates
+    system_flow_data = None
+    system_flow_path = fp.parent / "system-flow.json"
+    if system_flow_path.exists():
+        try:
+            system_flow_data = json.loads(system_flow_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    profile_data = {}
+    script_dir = Path(__file__).resolve().parent
+    profile_candidates = [
+        script_dir.parent / ".agent-factory" / "project-profile.json",
+        Path.cwd() / ".agent-factory" / "project-profile.json",
+        Path("/Users/hill/open5gs/.agent-factory/project-profile.json")
+    ]
+    for path in profile_candidates:
+        if path.exists():
+            try:
+                profile_data = json.loads(path.read_text(encoding="utf-8"))
+                break
+            except Exception:
+                pass
+
+    check_split_semantics(data, profile_data, system_flow_data)
 
     # Pre-apply path derivation rules
     import fnmatch

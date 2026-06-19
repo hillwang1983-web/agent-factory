@@ -57,7 +57,22 @@ A readable split plan including:
     }
   ],
   "dependencies": [
-    { "from": "ADU-XXX-001", "to": "ADU-XXX-002", "reason": "CLI depends on DBI helpers" }
+    { 
+      "from": "ADU-XXX-001", 
+      "to": "ADU-XXX-002", 
+      "semantics": "prerequisite_to_dependent",
+      "reason": "CLI depends on DBI helpers" 
+    }
+  ],
+  "acceptance_coverage": [
+    {
+      "acceptance_id": "A-WEBUI-STATUS",
+      "covered_by": ["ADU-XXX-002"],
+      "required_paths": [
+        "webui/src/pages/license/index.js",
+        "webui/server/routes/license.js"
+      ]
+    }
   ],
   "epic_acceptance": {
     "required_after": ["ADU-XXX-001", "ADU-XXX-002"],
@@ -93,6 +108,8 @@ A readable split plan including:
 
 - If `decision` is `single_adu`, child_adus must have exactly 1 entry.
 - If `decision` is `split_required`, child_adus must have at least 2 entries.
-- Every `depends_on` reference must exist in the child ADU list.
+- Every dependency entry MUST specify `"semantics": "prerequisite_to_dependent"`.
+- Every Epic-level acceptance point (from system-flow.json acceptance_points) MUST be covered by at least one child ADU in `acceptance_coverage`.
+- If a child ADU modifies project profile high-risk paths, it must provide a `"risk_justification"`.
 - The dependency graph must be acyclic.
-- Each child ADU must be independently verifiable via its `required_commands`.
+- Each child ADU must be independently verifiable via its `required_commands`. All paths listed in `required_commands` must be present in the read/write paths of the same ADU.

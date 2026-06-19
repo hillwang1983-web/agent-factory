@@ -177,9 +177,9 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
             if not child_id:
                 continue
 
-            # Check if already exists
             existing = next((a for a in adu_data.get("adus", []) if a["id"] == child_id), None)
             if existing:
+                existing["depends_on"] = [d["from"] for d in deps if d.get("to") == child_id]
                 created_ids.append(child_id)
                 continue
 
@@ -245,6 +245,17 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
             adu_data["adus"].append(child_adu)
             created_ids.append(child_id)
             broadcast_event("child_adu_created", {"epicId": epic["id"], "aduId": child_id})
+
+        # Verify that all materialized child ADUs have depends_on matching split plan
+        for child_def in child_defs:
+            cid = child_def["id"]
+            record = next((a for a in adu_data.get("adus", []) if a["id"] == cid), None)
+            if not record:
+                return {"result": "failed", "error": f"Internal error: child ADU {cid} not found in adu.json after creation"}
+            expected_deps = sorted([d["from"] for d in deps if d.get("to") == cid])
+            actual_deps = sorted(record.get("depends_on", []))
+            if expected_deps != actual_deps:
+                return {"result": "failed", "error": f"Dependency mismatch for child ADU {cid}: expected {expected_deps}, got {actual_deps}"}
 
         save_json_direct(REGISTRY / "adu.json", adu_data)
 

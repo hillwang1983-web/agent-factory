@@ -59,11 +59,14 @@ async function main() {
       reason: 'Cross-module requirement',
       child_adus: [
         { id: 'ADU-001', title: 'DBI', goal: 'Add model', scope: 'DBI only',
-          allowed_write_paths: ['lib/dbi/'], required_commands: ['make'], acceptance_summary: 'Tests pass' },
+          allowed_write_paths: ['lib/dbi/file.c', 'lib/dbi/meson.build'], required_commands: ['make'], acceptance_summary: 'Tests pass' },
         { id: 'ADU-002', title: 'CLI', goal: 'Add CLI', scope: 'CLI only',
           allowed_write_paths: ['src/cli/'], required_commands: ['make'], acceptance_summary: 'CLI works' },
       ],
-      dependencies: [{ from: 'ADU-001', to: 'ADU-002', reason: 'CLI needs DBI' }],
+      dependencies: [{ from: 'ADU-001', to: 'ADU-002', semantics: 'prerequisite_to_dependent', reason: 'CLI needs DBI' }],
+      acceptance_coverage: [
+        { acceptance_id: 'CLI works', covered_by: ['ADU-002'] }
+      ]
     };
     const tmp = writeTempJSON('split-plan.json', plan);
     const result = runValidator(VALIDATE_SPLIT, tmp.path);
@@ -250,6 +253,7 @@ async function main() {
           goal: 'Test multiple derived paths',
           scope: 'Testing scope',
           allowed_write_paths: ['lib/app/main.c'],
+          allowed_read_paths: ['lib/app/meson.build'],
           required_commands: [],
           acceptance_summary: 'OK'
         },
@@ -259,11 +263,15 @@ async function main() {
           goal: 'Dummy goal',
           scope: 'Dummy scope',
           allowed_write_paths: ['lib/other/file.c'],
+          allowed_read_paths: ['lib/other/meson.build'],
           required_commands: [],
           acceptance_summary: 'OK'
         }
       ],
-      dependencies: []
+      dependencies: [],
+      acceptance_coverage: [
+        { acceptance_id: 'OK', covered_by: ['ADU-001'] }
+      ]
     };
     const planTemp = writeTempJSON('split-plan.json', plan);
 
