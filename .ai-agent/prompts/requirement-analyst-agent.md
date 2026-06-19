@@ -38,6 +38,12 @@ The document must include:
 7. **Clarification Questions**: Any ambiguities that would block design or implementation.
 8. **Next Agent Guidance**: Brief notes to help the detail-designer understand key constraints.
 
+## Execution Boundary & Convergence
+
+1. You MUST generate the requirement analysis document `.ai-agent/analysis/{{ADU_ID}}.md` and the final JSON outcome in a single turn if possible.
+2. Do NOT run multi-turn agent loops or request extra tools unless absolutely necessary.
+3. Once the output document is written, immediately write the final JSON block and terminate.
+
 ## Project Context
 
 When the runtime payload contains `project_profile` and `knowledge_pack`:

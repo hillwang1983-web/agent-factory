@@ -167,7 +167,7 @@ def load_knowledge_pack(project_repo_path: Path, max_bytes: int = 80000) -> dict
     return pack
 
 
-def render_prompt(prompt_text, adu, agent_name, project_info=None):
+def render_prompt(prompt_text, adu, agent_name, project_info=None, run_dir=None):
     common_path = ROOT / ".ai-agent" / "context-packs" / "common.md"
     common = common_path.read_text(encoding="utf-8") if common_path.exists() else ""
 
@@ -266,17 +266,27 @@ def render_prompt(prompt_text, adu, agent_name, project_info=None):
                     payload["rework_feedback"] = review_data
 
     if project_info:
-        repo_path = project_repo_path
+        import context_payload_builder
+        import agent_run_policy
+        policy = agent_run_policy.load_policy(agent_name, ROOT)
+        max_bytes = policy.max_prompt_bytes
+
+        focused_payload = context_payload_builder.build_focused_payload(
+            agent_name,
+            adu,
+            project_info,
+            project_repo_path,
+            run_dir,
+            max_bytes
+        )
+
+        payload.update(focused_payload)
         payload["project"] = project_info
-        payload["project_profile"] = load_project_profile(repo_path) if repo_path else {}
-        payload["knowledge_pack"] = load_knowledge_pack(repo_path) if repo_path else {}
         payload["policies"] = {
             "review_policy": adu.get("review_policy"),
             "command_policy": adu.get("command_policy"),
         }
         payload["artifact_paths"] = {
-            "allowed_read_paths": adu.get("allowed_read_paths", []),
-            "allowed_write_paths": adu.get("allowed_write_paths", []),
             "required_evidence": adu.get("required_evidence", []),
         }
 
@@ -684,16 +694,16 @@ def main():
     if not agent_cfg:
         raise SystemExit(f"Agent not found: {args.agent}")
 
-    prompt_path = ROOT / agent_cfg["prompt"]
-    prompt_text = prompt_path.read_text(encoding="utf-8")
-    prompt = render_prompt(prompt_text, adu, args.agent, project_info)
-
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     if is_epic_run:
         run_dir = project_repo_path / ".ai-agent" / "runs" / "epics" / args.epic / f"{timestamp}-{args.agent}"
     else:
         run_dir = project_repo_path / ".ai-agent" / "runs" / f"{timestamp}-{adu['id']}-{args.agent}"
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    prompt_path = ROOT / agent_cfg["prompt"]
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    prompt = render_prompt(prompt_text, adu, args.agent, project_info, run_dir)
     (run_dir / "prompt.md").write_text(prompt, encoding="utf-8")
 
     cmd = [agents.get("hermes_bin", "hermes")]
