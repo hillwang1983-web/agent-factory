@@ -69,10 +69,27 @@ def read_completion_result(completion_path):
     result = payload.get("result")
     if not isinstance(result, dict):
         return None
-    if payload["status"] == "success" and result.get("result") != "success":
-        return None
-    if payload["status"] == "failed" and result.get("result") == "success":
-        return None
+
+    if payload["status"] == "success":
+        if result.get("result") != "success":
+            return None
+        # Enforce all required fields for success
+        if "next_state" not in result or not (result["next_state"] is None or isinstance(result["next_state"], str)):
+            return None
+        if "changed_files" not in result or not isinstance(result["changed_files"], list) or not all(isinstance(x, str) for x in result["changed_files"]):
+            return None
+        if "artifacts" not in result or not isinstance(result["artifacts"], list) or not all(isinstance(x, str) for x in result["artifacts"]):
+            return None
+        if "commands_run" not in result or not isinstance(result["commands_run"], list) or not all(isinstance(x, str) for x in result["commands_run"]):
+            return None
+        if "risks" not in result or not isinstance(result["risks"], list) or not all(isinstance(x, str) for x in result["risks"]):
+            return None
+        if "next_agent" not in result or not (result["next_agent"] is None or isinstance(result["next_agent"], str)):
+            return None
+    else:
+        # failed
+        if result.get("result") == "success":
+            return None
 
     return result
 
@@ -142,10 +159,6 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
         completion_result = read_completion_result(completion_path)
         if completion_result is not None:
             termination_reason = "completion_signal"
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             exit_code = 0 if completion_result.get("result") == "success" else 1
             break
 
@@ -216,10 +229,11 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
 
         time.sleep(0.5)
 
-    if termination_reason and termination_reason != "completion_signal":
+    if termination_reason:
         try:
             pgid = os.getpgid(proc.pid)
-            print(f"Watchdog triggered: {termination_reason}. Killing process group {pgid}", file=sys.stderr)
+            if termination_reason != "completion_signal":
+                print(f"Watchdog triggered: {termination_reason}. Killing process group {pgid}", file=sys.stderr)
             os.killpg(pgid, signal.SIGTERM)
         except Exception:
             pass
@@ -239,17 +253,27 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
                 os.killpg(pgid, signal.SIGKILL)
             except Exception:
                 pass
+            try:
+                proc.wait(timeout=2.0)
+            except Exception:
+                pass
+        else:
+            try:
+                proc.wait(timeout=1.0)
+            except Exception:
+                pass
         
-        err_code = "AGENT_RUN_TIMEOUT" if termination_reason == "max_duration_exceeded" else "AGENT_NO_PROGRESS"
-        
-        result_json = {
-            "result": "failed",
-            "error_code": err_code,
-            "termination_reason": termination_reason,
-            "next_state": None
-        }
-        print(f"__AGENT_RUN_OUTCOME__:{json.dumps(result_json)}")
-        sys.exit(1)
+        if termination_reason != "completion_signal":
+            err_code = "AGENT_RUN_TIMEOUT" if termination_reason == "max_duration_exceeded" else "AGENT_NO_PROGRESS"
+            
+            result_json = {
+                "result": "failed",
+                "error_code": err_code,
+                "termination_reason": termination_reason,
+                "next_state": None
+            }
+            print(f"__AGENT_RUN_OUTCOME__:{json.dumps(result_json)}")
+            sys.exit(1)
 
     # Read remaining output
     try:

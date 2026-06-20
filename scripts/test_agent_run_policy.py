@@ -103,6 +103,18 @@ elif scenario == "completion_invalid_version":
     tmp_path.replace(completion_file)
     time.sleep(100)
     sys.exit(0)
+
+elif scenario == "completion_missing_fields":
+    completion_file = pathlib.Path(sys.argv[3])
+    tmp_path = completion_file.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps({
+        "version": 1,
+        "status": "success",
+        "result": {"result": "success"}
+    }), encoding="utf-8")
+    tmp_path.replace(completion_file)
+    time.sleep(100)
+    sys.exit(0)
 """
     mock_hermes_path.write_text(mock_hermes_code, encoding="utf-8")
 
@@ -276,6 +288,30 @@ execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, 
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
         assert p.returncode == 1, f"Expected timeout exit code 1, got {p.returncode}"
+        wrapper_path.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        # Test Case 8: Completion missing fields -> fails/timeout, does not terminate early
+        print("Testing Case 8: Completion missing fields...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "completion_missing_fields", str(target_file), str(completion_file)]
+        wrapper_code = f"""import sys
+import pathlib
+sys.path.append("{str(scripts_dir)}")
+from agent_run_policy import AgentRunPolicy, execute_controlled_process
+policy = AgentRunPolicy(3, 10, 1, 10000, 1000)
+cmd = [sys.executable, "{str(mock_hermes_path)}", "completion_missing_fields", "{str(target_file)}", "{str(completion_file)}"]
+execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
+"""
+        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path.write_text(wrapper_code, encoding="utf-8")
+
+        p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
+        assert p.returncode == 1, f"Expected timeout exit code 1 due to missing fields, got {p.returncode}"
         wrapper_path.unlink()
         if completion_file.exists(): completion_file.unlink()
 
