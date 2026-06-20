@@ -7,7 +7,9 @@ They intentionally avoid calling Hermes.
 """
 import importlib.util
 import json
+import os
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,30 +157,134 @@ except Exception as exc:
     fail("T04: project code-review feedback is injected into developer prompt", str(exc))
 
 
-# T05: buildfix/debugger failures must route back to developer with debugger feedback.
+# T05: buildfix/debugger failures must route through rework-planner.
 try:
-    if run_mod.STATE_NEXT.get("build_rework") != ("developer", "implemented"):
-        fail("T05: build_rework routes to developer", f"got {run_mod.STATE_NEXT.get('build_rework')}")
+    if run_mod.STATE_NEXT.get("build_rework") != ("rework-planner", "rework_planned"):
+        fail("T05: build_rework routes through rework-planner", f"got {run_mod.STATE_NEXT.get('build_rework')}")
     else:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            repo = Path(tmp_dir)
-            runs_dir = repo / ".ai-agent" / "runs"
-            runs_dir.mkdir(parents=True)
-            (runs_dir / "REQ-FLOW-002-validation-summary.md").write_text(
-                "# 验证失败\n编译失败，需要 developer 修复。", encoding="utf-8"
-            )
-            prompt = run_mod.render_prompt(
-                "# Developer\n",
-                {"id": "REQ-FLOW-002", "state": "build_rework", "document_language": "zh"},
-                "developer",
-                {"repo_path": str(repo)},
-            )
-            if '"debugger_feedback"' in prompt and "编译失败，需要 developer 修复" in prompt:
-                ok("T05: buildfix/debugger feedback is injected into developer prompt")
-            else:
-                fail("T05: buildfix/debugger feedback is injected into developer prompt")
+        ok("T05: build_rework routes through rework-planner")
 except Exception as exc:
-    fail("T05: buildfix/debugger feedback is injected into developer prompt", str(exc))
+    fail("T05: build_rework routes through rework-planner", str(exc))
+
+
+# T06: design rework feedback must reach detail-designer through the registry.
+try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        registry = Path(tmp_dir) / "registry"
+        registry.mkdir()
+        (registry / "reviews.json").write_text(
+            json.dumps({
+                "version": 1,
+                "reviews": [{
+                    "review_id": "review-design-1",
+                    "adu_id": "REQ-FLOW-003",
+                    "gate": "design",
+                    "status": "rework_requested",
+                    "comment": "必须修复 Canonical String 歧义和 Base64 栈溢出风险。",
+                    "updated_at": "2026-06-20T00:00:00Z",
+                }],
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        original_registry = run_mod.REGISTRY
+        run_mod.REGISTRY = registry
+        try:
+            prompt = run_mod.render_prompt(
+                "# Detail Designer\n",
+                {"id": "REQ-FLOW-003", "state": "contexted", "document_language": "zh"},
+                "detail-designer",
+                project_info=None,
+            )
+        finally:
+            run_mod.REGISTRY = original_registry
+
+        if (
+            '"design_review_feedback"' in prompt
+            and "Canonical String 歧义" in prompt
+            and "Base64 栈溢出风险" in prompt
+        ):
+            ok("T06: design review feedback is injected into detail-designer prompt")
+        else:
+            fail("T06: design review feedback is injected into detail-designer prompt")
+except Exception as exc:
+    fail("T06: design review feedback is injected into detail-designer prompt", str(exc))
+
+
+# T07: success cannot claim an unchanged or missing file in changed_files.
+try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo = Path(tmp_dir)
+        design = repo / ".ai-agent" / "designs" / "REQ-FLOW-004-detailed-design.md"
+        design.parent.mkdir(parents=True)
+        design.write_text("# Old design", encoding="utf-8")
+        old_ns = time.time_ns() - 10_000_000_000
+        os.utime(design, ns=(old_ns, old_ns))
+        run_started_ns = time.time_ns()
+
+        stale_errors = run_mod.validate_declared_changes(
+            {
+                "result": "success",
+                "changed_files": [
+                    ".ai-agent/designs/REQ-FLOW-004-detailed-design.md",
+                    ".ai-agent/designs/REQ-FLOW-004-interfaces.json",
+                ],
+            },
+            repo,
+            run_started_ns,
+        )
+
+        design.write_text("# Revised design", encoding="utf-8")
+        interfaces = design.parent / "REQ-FLOW-004-interfaces.json"
+        interfaces.write_text('{"version":2}', encoding="utf-8")
+        fresh_errors = run_mod.validate_declared_changes(
+            {
+                "result": "success",
+                "changed_files": [
+                    ".ai-agent/designs/REQ-FLOW-004-detailed-design.md",
+                    ".ai-agent/designs/REQ-FLOW-004-interfaces.json",
+                ],
+            },
+            repo,
+            run_started_ns,
+        )
+
+        if (
+            any("not modified during this run" in error for error in stale_errors)
+            and any("does not exist" in error for error in stale_errors)
+            and fresh_errors == []
+        ):
+            ok("T07: unchanged and missing changed_files are rejected")
+        else:
+            fail(
+                "T07: unchanged and missing changed_files are rejected",
+                f"stale={stale_errors}, fresh={fresh_errors}",
+            )
+except Exception as exc:
+    fail("T07: unchanged and missing changed_files are rejected", str(exc))
+
+
+# T08: contract watchdog targets must match the prompt, validator, and dashboard paths.
+try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo = Path(tmp_dir)
+        targets = run_mod.get_agent_target_files(
+            "contract",
+            {"id": "REQ-FLOW-005"},
+            repo,
+        )
+        expected = [
+            str(repo / ".ai-agent" / "contracts" / "REQ-FLOW-005.json"),
+            str(repo / ".ai-agent" / "contracts" / "REQ-FLOW-005-notes.md"),
+        ]
+        if targets == expected:
+            ok("T08: contract watchdog targets use standard contract artifact paths")
+        else:
+            fail(
+                "T08: contract watchdog targets use standard contract artifact paths",
+                f"got {targets}",
+            )
+except Exception as exc:
+    fail("T08: contract watchdog targets use standard contract artifact paths", str(exc))
 
 
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")

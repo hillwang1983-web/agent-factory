@@ -70,8 +70,8 @@ def main():
                     "no_progress_timeout_seconds": 120
                 },
                 "requirement-analyst": {
-                    "max_duration_seconds": 240,
-                    "no_progress_timeout_seconds": 90,
+                    "max_duration_seconds": 600,
+                    "no_progress_timeout_seconds": 180,
                     "max_prompt_bytes": 60000,
                     "max_estimated_input_tokens": 16000
                 },

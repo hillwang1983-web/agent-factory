@@ -52,7 +52,31 @@ def load_policy(agent_name: str, workspace_root: pathlib.Path) -> AgentRunPolicy
     
     return AgentRunPolicy(d_max_duration, d_no_progress, d_grace, d_prompt_bytes, d_tokens)
 
-def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None):
+def read_completion_result(completion_path):
+    if completion_path is None or not completion_path.is_file():
+        return None
+
+    try:
+        payload = json.loads(completion_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if payload.get("version") != 1:
+        return None
+    if payload.get("status") not in ("success", "failed"):
+        return None
+
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return None
+    if payload["status"] == "success" and result.get("result") != "success":
+        return None
+    if payload["status"] == "failed" and result.get("result") == "success":
+        return None
+
+    return result
+
+def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, completion_file=None):
     """
     Run subprocess.Popen with active watchdog enforcing max duration and no progress.
     """
@@ -89,9 +113,13 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None):
                     pass
         return max(mtimes) if mtimes else 0
 
+    completion_path = pathlib.Path(completion_file) if completion_file else None
+    completion_result = None
+
     start_time = time.time()
     last_progress_time = start_time
     last_mtime = get_max_mtime()
+    progress_observed = False
     
     stdout_buf = []
     stderr_buf = []
@@ -110,6 +138,17 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None):
         now = time.time()
         elapsed = now - start_time
         
+        # Check completion file first
+        completion_result = read_completion_result(completion_path)
+        if completion_result is not None:
+            termination_reason = "completion_signal"
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            exit_code = 0 if completion_result.get("result") == "success" else 1
+            break
+
         # 1. Check max duration
         if elapsed > policy.max_duration_seconds:
             termination_reason = "max_duration_exceeded"
@@ -168,35 +207,16 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None):
 
         if has_new_output:
             last_progress_time = now
+            progress_observed = True
 
         # 5. Check no progress timeout
-        if (now - last_progress_time) > policy.no_progress_timeout_seconds:
+        if progress_observed and (now - last_progress_time) > policy.no_progress_timeout_seconds:
             termination_reason = "no_progress_timeout"
-            break
-
-        # 6. Early convergence: if target files are generated, exit early
-        if target_paths and all(p.exists() and p.stat().st_size > 0 for p in target_paths):
-            time.sleep(1.5)
-            try:
-                out = proc.stdout.read()
-                if out: stdout_buf.append(out)
-            except Exception: pass
-            try:
-                err = proc.stderr.read()
-                if err: stderr_buf.append(err)
-            except Exception: pass
-            
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-            except Exception:
-                pass
-            exit_code = 0
             break
 
         time.sleep(0.5)
 
-    if termination_reason:
+    if termination_reason and termination_reason != "completion_signal":
         try:
             pgid = os.getpgid(proc.pid)
             print(f"Watchdog triggered: {termination_reason}. Killing process group {pgid}", file=sys.stderr)
@@ -245,10 +265,11 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None):
     final_stderr = "".join(stderr_buf)
 
     class ControlledProcessResult:
-        def __init__(self, stdout, stderr, returncode):
+        def __init__(self, stdout, stderr, returncode, completion_result=None, termination_reason=None):
             self.stdout = stdout
             self.stderr = stderr
             self.returncode = returncode
+            self.completion_result = completion_result
+            self.termination_reason = termination_reason
     
-    return ControlledProcessResult(final_stdout, final_stderr, exit_code)
-
+    return ControlledProcessResult(final_stdout, final_stderr, exit_code, completion_result, termination_reason)
