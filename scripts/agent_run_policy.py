@@ -82,7 +82,7 @@ def read_completion_result(completion_path):
             return None
         if "commands_run" not in result or not isinstance(result["commands_run"], list) or not all(isinstance(x, str) for x in result["commands_run"]):
             return None
-        if "risks" not in result or not isinstance(result["risks"], list) or not all(isinstance(x, str) for x in result["risks"]):
+        if "risks" not in result or not isinstance(result["risks"], list) or not all(isinstance(x, (str, dict)) for x in result["risks"]):
             return None
         if "next_agent" not in result or not (result["next_agent"] is None or isinstance(result["next_agent"], str)):
             return None
@@ -289,11 +289,12 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     final_stderr = "".join(stderr_buf)
 
     class ControlledProcessResult:
-        def __init__(self, stdout, stderr, returncode, completion_result=None, termination_reason=None):
+        def __init__(self, stdout, stderr, returncode, completion_result=None, termination_reason=None, pid=None):
             self.stdout = stdout
             self.stderr = stderr
             self.returncode = returncode
             self.completion_result = completion_result
             self.termination_reason = termination_reason
+            self.pid = pid
     
-    return ControlledProcessResult(final_stdout, final_stderr, exit_code, completion_result, termination_reason)
+    return ControlledProcessResult(final_stdout, final_stderr, exit_code, completion_result, termination_reason, proc.pid)

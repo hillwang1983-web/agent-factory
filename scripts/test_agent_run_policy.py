@@ -264,6 +264,13 @@ execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, 
         assert result.completion_result is not None
         assert result.completion_result["result"] == "success"
         assert t_elapsed < 5.0, f"Expected fast completion (under 5s), took {t_elapsed}s"
+        # Assert child PID is dead and reaped
+        pid_alive = True
+        try:
+            os.kill(result.pid, 0)
+        except OSError:
+            pid_alive = False
+        assert not pid_alive, f"Expected child PID {result.pid} to be dead and reaped, but it is still alive!"
         target_file.unlink()
         completion_file.unlink()
 
