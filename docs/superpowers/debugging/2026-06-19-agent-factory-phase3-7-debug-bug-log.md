@@ -51,21 +51,21 @@
 
 | ID | 级别 | 标题 | 状态 | 影响范围 |
 |---|---|---|---|---|
-| BUG-37-001 | P2 | 运行中的后端不是最新构建，Phase 3.7 API 返回 404 | Open | 部署、自举、版本可观测性 |
-| BUG-37-002 | P1 | 同步 Intake 固定 180 秒超时，误杀正常长任务 | Planned | Operator Intake、需求草案生成 |
-| BUG-37-003 | P1 | Intake 产物完成后 Hermes 仍继续运行并消耗 Token | Planned | Hermes Runner、Token 成本 |
-| BUG-37-004 | P1 | 异步 Intake 无最大时长和进程收敛保护 | Planned | 异步任务、孤儿进程 |
-| BUG-37-005 | P1 | 已有完整产物仍被标记为 `generation_failed` 或停留在 `generating` | Planned | 状态一致性、草案注册 |
-| BUG-37-006 | P2 | Operator Intake 错误被统一返回为 `Internal server error` | Open | API 错误语义、页面提示 |
-| BUG-37-007 | P2 | 新注册 Epic 不会立即出现在 Epic 页面 | Open | 前端 Store、实时刷新 |
-| BUG-37-008 | P1 | System Flow 重新提出已由用户澄清的问题并产生冲突设计 | Open | 澄清传递、设计质量门 |
-| BUG-37-009 | P2 | Epic Operation 运行期间不更新 `current_agent/current_state` | Open | 运行监控、页面状态 |
-| BUG-37-010 | P1 | Splitter 生成的依赖边方向与编排器语义相反 | Open | Epic DAG、子 ADU 调度 |
-| BUG-37-011 | P1 | Splitter 遗漏前端页面和测试文件写路径，并选中高风险 `lib/core` | Open | 拆分完整性、路径策略 |
-| BUG-37-012 | P2 | `materialize_child_adus` 需要执行两次且审计动作被记录为 `step` | Open | Operator 语义、幂等审计 |
-| BUG-37-013 | P1 | 子 ADU 全部未启动时 Epic 被标记为 `child_adus_running` | Open | Epic 状态聚合、页面误导 |
-| BUG-37-014 | P1 | Requirement Analyst 无运行上限，连续调用模型但不生成产物 | Open | Agent Runner、Token 成本、步骤执行 |
-| BUG-37-015 | P2 | Agent 异常终止后残留锁仍按心跳存活 30 分钟 | Open | 锁回收、失败恢复、重试 |
+| BUG-37-001 | P2 | 运行中的后端不是最新构建，Phase 3.7 API 返回 404 | Verified | 部署、自举、版本可观测性 |
+| BUG-37-002 | P1 | 同步 Intake 固定 180 秒超时，误杀正常长任务 | Verified | Operator Intake、需求草案生成 |
+| BUG-37-003 | P1 | Intake 产物完成后 Hermes 仍继续运行并消耗 Token | Verified | Hermes Runner、Token 成本 |
+| BUG-37-004 | P1 | 异步 Intake 无最大时长和进程收敛保护 | Verified | 异步任务、孤儿进程 |
+| BUG-37-005 | P1 | 已有完整产物仍被标记为 `generation_failed` 或停留在 `generating` | Verified | 状态一致性、草案注册 |
+| BUG-37-006 | P2 | Operator Intake 错误被统一返回为 `Internal server error` | Verified | API 错误语义、页面提示 |
+| BUG-37-007 | P2 | 新注册 Epic 不会立即出现在 Epic 页面 | Verified | 前端 Store、实时刷新 |
+| BUG-37-008 | P1 | System Flow 重新提出已由用户澄清的问题并产生冲突设计 | Verified | 澄清传递、设计质量门 |
+| BUG-37-009 | P2 | Epic Operation 运行期间不更新 `current_agent/current_state` | Verified | 运行监控、页面状态 |
+| BUG-37-010 | P1 | Splitter 生成的依赖边方向与编排器语义相反 | Verified | Epic DAG、子 ADU 调度 |
+| BUG-37-011 | P1 | Splitter 遗漏前端页面和测试文件写路径，并选中高风险 `lib/core` | Verified | 拆分完整性、路径策略 |
+| BUG-37-012 | P2 | `materialize_child_adus` 需要执行两次且审计动作被记录为 `step` | Verified | Operator 语义、幂等审计 |
+| BUG-37-013 | P1 | 子 ADU 全部未启动时 Epic 被标记为 `child_adus_running` | Verified | Epic 状态聚合、页面误导 |
+| BUG-37-014 | P1 | Requirement Analyst 无运行上限，连续调用模型但不生成产物 | Verified | Agent Runner、Token 成本、步骤执行 |
+| BUG-37-015 | P2 | Agent 异常终止后残留锁仍按心跳存活 30 分钟 | Verified | 锁回收、失败恢复、重试 |
 
 ---
 
@@ -900,3 +900,103 @@ open5gs/.ai-agent/locks/open5gs__ADU-1351-001.lock
 | 2026-06-19 | Codex | 步骤 4 调试新增 BUG-37-010 和 BUG-37-011，记录依赖方向错误与拆分范围/写路径遗漏 |
 | 2026-06-19 | Codex | 步骤 5 调试新增 BUG-37-012 和 BUG-37-013，记录物化动作两步化与未启动子 ADU 被误报运行中 |
 | 2026-06-19 | Codex | 步骤 6 调试新增 BUG-37-014 和 BUG-37-015，记录 Requirement Analyst 无运行上限及异常退出残留锁 |
+| 2026-06-20 | Antigravity | 完成 Phase 3.7 遗留缺陷（R37-01 至 R37-07）的全面修复与自动化测试覆盖，将所有 BUG 状态更新为 Verified |
+
+---
+
+## R37-01：Agent 写完业务产物后没有可靠完成信号，可能继续消耗 Token 或被最大时限终止
+
+### 根因
+Hermes 进程执行完毕或业务产物（如 `detailed-design.md` 或 `contracts.json`）生成后，子进程并不会自动快速退出，且 Watchdog 原先仅靠业务产物存在进行提前结束，判定过于宽泛不稳固。
+
+### 修复
+在 Runner 中实现显式完成文件协议：
+- Agent 必须在全部声明变更就绪后，以原子更名方式写入 `.ai-agent/runs/<run-id>/completion.json`。
+- Watchdog 中引入 `read_completion_result` 逻辑，在轮询中检测到符合 Schema 的 `completion.json` 后，安全终止进程组并标记完成。
+
+### 自动化测试
+`scripts/test_agent_run_policy.py` 中的 `Testing Case 6: Explicit completion success then hang` 以及 `Testing Case 7: Invalid completion file`。
+
+### 真实链路证据
+在真实 ADU 运行的 `runs/<run-id>/` 目录下生成 `completion.json`，Watchdog 提前退出并不再超时。
+
+---
+
+## R37-02：ADU Operation 运行期间缺少 `agent_started`，`current_agent/current_state` 长时间为空
+
+### 根因
+Orchestrator 仅在完成时广播 `step_completed` / `state_changed`，在调用 `hermes_agent_run.py` 之前没有发送开始的生命周期事件，导致 Dashboard backend 无法获知当前正在执行何种 Agent。
+
+### 修复
+- 在 `scripts/hermes_agent_orchestrator.py` 的 `run_agent()` 之前广播 `agent_started` 事件。
+- 后端 [orchestrator-event-mapper.ts](file:///Users/hill/open5gs/agent-factory-dashboard/backend/src/application/runtime/orchestrator-event-mapper.ts) 捕获该事件并置 status 为 `running`、更新 `current_agent` 和 `current_state`。
+
+### 自动化测试
+`tools/test-operation-events.js` 中的 `1. Test agent_started` 与 `13. Lifecycle order test`。
+
+---
+
+## R37-03：`human_gate_required=true` 会让非 `human_gate` 状态显示伪 Blocked
+
+### 根因
+前端/Monitor 读取 ADU 状态时，错误地把非终端状态下的 `adu.human_gate_required` 属性也解释为 `blocked`。即便 ADU 已离开 Human Gate 进入后续流程（甚至全部完成），只要该属性存在，就会导致 Dashboard 上整条 Timeline 伪 Blocked。
+
+### 修复
+收紧 [agent-factory-monitor.ts](file:///Users/hill/open5gs/agent-factory-dashboard/backend/src/application/agent-factory-monitor.ts) 中的判定，只当 `state === 'human_gate'` 时才激活并显示 Human Gate 阻断状态。
+
+### 自动化测试
+`tools/test-monitor-human-gate.js` 中的正例及 stale flag 反例测试。
+
+---
+
+## R37-04：静默推理可能被 no-progress Watchdog 误杀
+
+### 根因
+在 Agent 启动初期（特别是在大模型生成速度慢、尚未有任何 stdout 输出或物理产物变更的“静默期”），容易提前触发 `no_progress_timeout_seconds` 而被强杀。
+
+### 修复
+在 `scripts/agent_run_policy.py` 中引入 `progress_observed` 状态。在未观察到首次实质输出或产物修改前，仅使用全局 `max_duration_seconds` 看门狗进行保护；一旦有输出产生，才激活 `no_progress` 定时器。
+
+### 自动化测试
+`scripts/test_agent_run_policy.py` 中的 `Testing Case 3: Silent inference completes` 与 `Testing Case 4: Progress followed by stall`。
+
+---
+
+## R37-05：Detail Designer 返工时收不到 Design Review 意见
+
+### 根因
+在设计返工流程中，`detail-designer` 重跑时没有从 Registry (`reviews.json`) 中检索最新的 Design Review 反馈信息并注入到 Prompt Payload 中。
+
+### 修复
+在 `hermes_agent_run.py` 的 `render_prompt` 函数中增加 `load_latest_review_feedback(adu_id, "design")` 逻辑，在 `contexted` 返工状态下，如果存在 rework请求，将 review comment 以 `design_review_feedback` 结构化对象注入 Payload。
+
+### 自动化测试
+`scripts/test_phase2_flow_integrity.py` 中的 `T06: design review feedback is injected into detail-designer prompt`。
+
+---
+
+## R37-06：Agent 可在最终 JSON 中虚报未修改 of `changed_files`
+
+### 根因
+Agent 可以在返回的 `changed_files` 包含其实际并未修改或根本不存在的文件，而系统缺乏相应的后验真实性校验。
+
+### 修复
+- 在 `hermes_agent_run.py` 中加入 `validate_declared_changes()` 校验函数。
+- 比对文件的修改时间（mtime）是否晚于 Agent 本轮运行的启动时间戳 (`run_started_ns`)。
+- 若不满足或存在路径逃逸，强制将任务置为 `failed` 并输出 `declared_changes_unverified`。
+
+### 自动化测试
+`scripts/test_phase2_flow_integrity.py` 中的 `T07: unchanged and missing changed_files are rejected`。
+
+---
+
+## R37-07：Contract runner 目标路径与 Prompt、Validator、Dashboard 不一致
+
+### 根因
+先前 contract 模块输出的文件命名为 `<ADU_ID>-contract.json`，而仪表盘、校验器和提示词预期的是标准的 `.ai-agent/contracts/<ADU_ID>.json`，从而导致衔接中断或无法通过验证。
+
+### 修复
+- 在 `hermes_agent_run.py` 中修改 `get_agent_target_files` 返回结果，使 contract 预期目标文件修正为标准路径。
+
+### 自动化测试
+`scripts/test_phase2_flow_integrity.py` 中的 `T08: contract watchdog targets use standard contract artifact paths`。
