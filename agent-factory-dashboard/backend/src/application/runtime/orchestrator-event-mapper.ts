@@ -76,7 +76,12 @@ export function mapOrchestratorEvent(
   const errorMsg = payload.error || event.error || event.message || payload.message ||
                   payload.stderr || null;
 
-  if (normalized.includes('agent_started') || normalized.includes('agent_completed')) {
+  if (normalized.includes('agent_started')) {
+    if (agent) updates.current_agent = agent;
+    if (state) updates.current_state = state;
+    updates.status = 'running';
+    updates.last_progress_at = timestamp;
+  } else if (normalized.includes('agent_completed')) {
     if (agent) updates.current_agent = agent;
     if (state) updates.current_state = state;
     updates.last_progress_at = timestamp;

@@ -600,6 +600,15 @@ def main():
                 except Exception as e:
                     print(f"WARNING: failed to run token budget check: {e}", file=sys.stderr)
 
+            # Broadcast starting event
+            broadcast_event("agent_factory_orchestrator_event", {
+                "event": "agent_started",
+                "adu_id": args.adu,
+                "agent_id": next_agent,
+                "state": current_state,
+                "operation_id": args.operation_id,
+            })
+
             # Run the agent
             update_lock_heartbeat(args.adu, args.mode, project_id, repo_root=repo_path)
             rc, out, err = run_agent(args.adu, next_agent, project_id, repo_path)
@@ -677,12 +686,14 @@ def main():
                             error_msg = err[:500]
 
                         broadcast_event("agent_factory_orchestrator_event", {
-                            "adu": args.adu,
-                            "agent": next_agent,
+                            "event": "agent_failed",
+                            "adu_id": args.adu,
+                            "agent_id": next_agent,
                             "state": current_state,
-                            "action": "agent_failed",
+                            "result": "failed",
                             "returncode": rc,
                             "stderr": error_msg,
+                            "operation_id": args.operation_id,
                         })
                         had_failure = True
                         should_break = True
@@ -777,6 +788,18 @@ def main():
                 break
 
             to_state = adu["state"]
+
+            # Broadcast successful agent run completion
+            broadcast_event("agent_factory_orchestrator_event", {
+                "event": "agent_completed",
+                "adu_id": args.adu,
+                "agent_id": next_agent,
+                "from_state": current_state,
+                "to_state": to_state,
+                "result": "success",
+                "operation_id": args.operation_id,
+            })
+
             if args.mode == "step":
                 broadcast_event("agent_factory_orchestrator_event", {
                     "event": "step_completed",

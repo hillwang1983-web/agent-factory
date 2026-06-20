@@ -24,7 +24,20 @@ async function runTests() {
   });
   eq(updates1.current_agent, 'Requirement Analyst', 'agent_started agent');
   eq(updates1.current_state, 'analyzed', 'agent_started state');
+  eq(updates1.status, 'running', 'agent_started status');
   eq(updates1.last_progress_at, '2026-06-19T12:00:00Z', 'agent_started progress timestamp');
+
+  // 1b. Test agent_completed
+  const updates1b = mapOrchestratorEvent({
+    event: 'agent_completed',
+    agent: 'Requirement Analyst',
+    state: 'analyzed',
+    timestamp: '2026-06-19T12:01:00Z'
+  });
+  eq(updates1b.current_agent, 'Requirement Analyst', 'agent_completed agent');
+  eq(updates1b.current_state, 'analyzed', 'agent_completed state');
+  eq(updates1b.status, undefined, 'agent_completed status should not be complete');
+  eq(updates1b.last_progress_at, '2026-06-19T12:01:00Z', 'agent_completed progress timestamp');
 
   // 2. Test state_changed
   const updates2 = mapOrchestratorEvent({
@@ -136,6 +149,38 @@ async function runTests() {
     }
   });
   eq(updates12.current_state, 'child_adus_blocked', 'WebSocket wrapped state_changed');
+
+  // 13. Lifecycle order test
+  console.log("🏃 Running Lifecycle Order test...");
+  const lifecycle = [
+    { event: 'agent_started', agent_id: 'contract', state: 'designed' },
+    {
+      event: 'agent_completed',
+      agent_id: 'contract',
+      from_state: 'designed',
+      to_state: 'contracted'
+    },
+    {
+      event: 'step_completed',
+      agent_id: 'contract',
+      from_state: 'designed',
+      to_state: 'contracted'
+    }
+  ];
+
+  const up1 = mapOrchestratorEvent(lifecycle[0]);
+  eq(up1.current_agent, 'contract', 'lifecycle step 1 agent');
+  eq(up1.current_state, 'designed', 'lifecycle step 1 state');
+  eq(up1.status, 'running', 'lifecycle step 1 status');
+
+  const up2 = mapOrchestratorEvent(lifecycle[1]);
+  eq(up2.current_agent, 'contract', 'lifecycle step 2 agent');
+  eq(up2.current_state, 'contracted', 'lifecycle step 2 state');
+  eq(up2.status, undefined, 'lifecycle step 2 status');
+
+  const up3 = mapOrchestratorEvent(lifecycle[2]);
+  eq(up3.current_state, 'contracted', 'lifecycle step 3 state');
+  eq(up3.status, undefined, 'lifecycle step 3 status');
 
   console.log("✅ T09 operation mapping tests passed!");
 }
