@@ -918,7 +918,7 @@ Hermes 进程执行完毕或业务产物（如 `detailed-design.md` 或 `contrac
 `scripts/test_agent_run_policy.py` 中的 `Testing Case 6: Explicit completion success then hang` 以及 `Testing Case 7: Invalid completion file`。
 
 ### 真实链路证据
-在真实 ADU 运行的 `runs/<run-id>/` 目录下生成 `completion.json`，Watchdog 提前退出并不再超时。
+目前已在集成测试（`test_agent_run_policy.py` 测试用例 6、7、8）中模拟并验证了这一机制；待真实 Agent 部署上线并在实际链路上运行后，将在对应的 `runs/<run-id>/` 目录下原子写入 `completion.json`，由 Watchdog 提前捕获以退出。
 
 ---
 
