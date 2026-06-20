@@ -197,7 +197,7 @@ export class AgentFactoryMonitorUseCase {
       // Only show the HumanGate workflow step when the ADU is genuinely blocked.
       // A terminal ADU (evidenced/mvp_ready) may still carry a stale
       // human_gate_required flag from an earlier failure run — ignore it there.
-      if (adu.state === 'human_gate' || (!isTerminal && adu.human_gate_required)) {
+      if (adu.state === 'human_gate') {
         workflow.push({
           state: 'human_gate',
           label: 'Human Gate',

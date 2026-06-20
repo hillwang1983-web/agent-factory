@@ -5,8 +5,10 @@ const commands = [
   ['node', ['tools/test-phase37-bugs.js']],
   ['node', ['tools/test-intake-lifecycle.js']],
   ['node', ['tools/test-operation-events.js']],
+  ['node', ['tools/test-monitor-human-gate.js']],
   ['node', ['tools/test-runtime-contract.js']],
   ['node', ['tools/test-epic-state-semantics.js']],
+  ['python3', [path.resolve(__dirname, '../../../scripts/test_phase2_flow_integrity.py')]],
   ['python3', [path.resolve(__dirname, '../../../scripts/test_agent_run_policy.py')]],
   ['python3', [path.resolve(__dirname, '../../../scripts/test_context_payload_builder.py')]],
 ];
