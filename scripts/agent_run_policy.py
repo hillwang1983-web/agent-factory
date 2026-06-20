@@ -63,7 +63,7 @@ def read_completion_result(completion_path):
 
     if payload.get("version") != 1:
         return None
-    if payload.get("status") not in ("success", "failed"):
+    if payload.get("status") not in ("success", "failed", "human_gate"):
         return None
 
     result = payload.get("result")
@@ -86,9 +86,25 @@ def read_completion_result(completion_path):
             return None
         if "next_agent" not in result or not (result["next_agent"] is None or isinstance(result["next_agent"], str)):
             return None
+    elif payload["status"] == "human_gate":
+        if result.get("result") != "human_gate":
+            return None
+        # Enforce same fields for human_gate (consistent schema)
+        if "next_state" not in result or not (result["next_state"] is None or isinstance(result["next_state"], str)):
+            return None
+        if "changed_files" not in result or not isinstance(result["changed_files"], list) or not all(isinstance(x, str) for x in result["changed_files"]):
+            return None
+        if "artifacts" not in result or not isinstance(result["artifacts"], list) or not all(isinstance(x, str) for x in result["artifacts"]):
+            return None
+        if "commands_run" not in result or not isinstance(result["commands_run"], list) or not all(isinstance(x, str) for x in result["commands_run"]):
+            return None
+        if "risks" not in result or not isinstance(result["risks"], list) or not all(isinstance(x, (str, dict)) for x in result["risks"]):
+            return None
+        if "next_agent" not in result or not (result["next_agent"] is None or isinstance(result["next_agent"], str)):
+            return None
     else:
         # failed
-        if result.get("result") == "success":
+        if result.get("result") in ("success", "human_gate"):
             return None
 
     return result
@@ -159,7 +175,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
         completion_result = read_completion_result(completion_path)
         if completion_result is not None:
             termination_reason = "completion_signal"
-            exit_code = 0 if completion_result.get("result") == "success" else 1
+            exit_code = 0 if completion_result.get("result") in ("success", "human_gate") else 1
             break
 
         # 1. Check max duration

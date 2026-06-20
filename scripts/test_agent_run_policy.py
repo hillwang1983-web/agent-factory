@@ -84,7 +84,14 @@ elif scenario == "completion_success_then_hang":
             "changed_files": [str(output_file)],
             "commands_run": [],
             "artifacts": [str(output_file)],
-            "risks": [],
+            "risks": [
+                {
+                    "description": "API signature mismatch risk",
+                    "severity": "medium",
+                    "mitigation": "Perform automated checks during builds"
+                },
+                "Standard string risk"
+            ],
             "next_agent": "testwriter"
         }
     }), encoding="utf-8")
@@ -111,6 +118,33 @@ elif scenario == "completion_missing_fields":
         "version": 1,
         "status": "success",
         "result": {"result": "success"}
+    }), encoding="utf-8")
+    tmp_path.replace(completion_file)
+    time.sleep(100)
+    sys.exit(0)
+
+elif scenario == "completion_human_gate_then_hang":
+    completion_file = pathlib.Path(sys.argv[3])
+    output_file.write_text("business artifact", encoding="utf-8")
+    tmp_path = completion_file.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps({
+        "version": 1,
+        "status": "human_gate",
+        "result": {
+            "result": "human_gate",
+            "next_state": "human_gate",
+            "changed_files": [str(output_file)],
+            "commands_run": [],
+            "artifacts": [str(output_file)],
+            "risks": [
+                {
+                    "description": "Requires environment validation evidence verification",
+                    "severity": "high",
+                    "mitigation": "Manually verify deployment log"
+                }
+            ],
+            "next_agent": "human"
+        }
     }), encoding="utf-8")
     tmp_path.replace(completion_file)
     time.sleep(100)
@@ -321,6 +355,40 @@ execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, 
         assert p.returncode == 1, f"Expected timeout exit code 1 due to missing fields, got {p.returncode}"
         wrapper_path.unlink()
         if completion_file.exists(): completion_file.unlink()
+
+        # Test Case 9: Explicit completion human_gate then hang -> early exit on completion_signal (human_gate status)
+        print("Testing Case 9: Explicit completion human_gate then hang...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "completion_human_gate_then_hang", str(target_file), str(completion_file)]
+        t_start = time.time()
+        result = execute_controlled_process(
+            cmd,
+            workspace,
+            None,
+            AgentRunPolicy(20, 10, 1, 10000, 1000),
+            [str(target_file)],
+            completion_file=str(completion_file)
+        )
+        t_elapsed = time.time() - t_start
+        assert result.returncode == 0, f"Expected 0 exit on completion human_gate, got {result.returncode}"
+        assert result.termination_reason == "completion_signal", f"Expected termination_reason completion_signal, got {result.termination_reason}"
+        assert result.completion_result is not None
+        assert result.completion_result["result"] == "human_gate"
+        assert t_elapsed < 5.0, f"Expected fast completion (under 5s), took {t_elapsed}s"
+        
+        # Assert child PID is dead and reaped
+        pid_alive = True
+        try:
+            os.kill(result.pid, 0)
+        except OSError:
+            pid_alive = False
+        assert not pid_alive, f"Expected child PID {result.pid} to be dead and reaped, but it is still alive!"
+        target_file.unlink()
+        completion_file.unlink()
 
         print("✅ All Agent Run Policy Watchdog Tests Passed!")
     finally:
