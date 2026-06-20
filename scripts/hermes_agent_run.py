@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 import agent_run_policy
 
@@ -167,6 +168,83 @@ def load_knowledge_pack(project_repo_path: Path, max_bytes: int = 80000) -> dict
     return pack
 
 
+def load_latest_review_feedback(adu_id: str, gate: str):
+    reviews_path = REGISTRY / "reviews.json"
+    if not reviews_path.exists():
+        return None
+    try:
+        data = load_json(reviews_path)
+    except Exception:
+        return None
+
+    reviews = data.get("reviews", []) if isinstance(data, dict) else data
+    if not isinstance(reviews, list):
+        return None
+
+    matching = [
+        review for review in reviews
+        if isinstance(review, dict)
+        and review.get("adu_id") == adu_id
+        and review.get("gate") == gate
+        and review.get("status") == "rework_requested"
+    ]
+    if not matching:
+        return None
+
+    return max(
+        matching,
+        key=lambda review: review.get("updated_at") or review.get("created_at") or "",
+    )
+
+
+def validate_declared_changes(result, project_repo_path: Path, run_started_ns: int):
+    changed_files = result.get("changed_files", []) if isinstance(result, dict) else []
+    if not isinstance(changed_files, list):
+        return ["changed_files must be an array"]
+
+    repo_root = project_repo_path.resolve()
+    errors = []
+    for raw_path in changed_files:
+        normalized = normalize_repo_relative_path(raw_path)
+        if not normalized:
+            errors.append(f"changed_files contains an invalid repository path: {raw_path!r}")
+            continue
+
+        file_path = (repo_root / normalized).resolve()
+        try:
+            file_path.relative_to(repo_root)
+        except ValueError:
+            errors.append(f"changed_files escapes the project repository: {raw_path}")
+            continue
+
+        if not file_path.is_file():
+            errors.append(f"declared changed file does not exist: {normalized}")
+            continue
+
+        if file_path.stat().st_mtime_ns < run_started_ns:
+            errors.append(f"declared changed file was not modified during this run: {normalized}")
+
+    return errors
+
+
+def get_agent_target_files(agent, adu, project_repo_path: Path):
+    adu_id = adu["id"]
+    if agent == "requirement-analyst":
+        return [str(project_repo_path / ".ai-agent" / "analysis" / f"{adu_id}.md")]
+    if agent == "system-flow-designer":
+        return [str(project_repo_path / ".ai-agent" / "epics" / adu_id / "system-flow.json")]
+    if agent == "adu-splitter":
+        return [str(project_repo_path / ".ai-agent" / "epics" / adu_id / "split-plan.json")]
+    if agent == "detail-designer":
+        return [str(project_repo_path / ".ai-agent" / "designs" / f"{adu_id}-detailed-design.md")]
+    if agent == "contract":
+        return [
+            str(project_repo_path / ".ai-agent" / "contracts" / f"{adu_id}.json"),
+            str(project_repo_path / ".ai-agent" / "contracts" / f"{adu_id}-notes.md"),
+        ]
+    return []
+
+
 def render_prompt(prompt_text, adu, agent_name, project_info=None, run_dir=None):
     common_path = ROOT / ".ai-agent" / "context-packs" / "common.md"
     common = common_path.read_text(encoding="utf-8") if common_path.exists() else ""
@@ -199,9 +277,31 @@ def render_prompt(prompt_text, adu, agent_name, project_info=None, run_dir=None)
         project_repo_path = Path(project_info.get("repo_path", "")).resolve()
     artifact_root = project_repo_path if project_repo_path else ROOT
 
+    if run_dir:
+        completion_path = run_dir / "completion.json"
+        payload["runtime_control"] = {
+            "completion_file": str(completion_path.relative_to(artifact_root)),
+            "completion_schema_version": 1,
+            "completion_write_rule": (
+                "Write the JSON to completion.json.tmp and atomically rename it "
+                "to completion.json only after all declared artifacts are complete."
+            ),
+        }
+
     # Inject latest review/debugger report when developer is reworking code.
     adu_id = adu.get("id", "")
     rework_state = adu.get("state")
+    if agent_name == "detail-designer" and rework_state == "contexted":
+        design_feedback = load_latest_review_feedback(adu_id, "design")
+        if design_feedback:
+            payload["design_review_feedback"] = {
+                "review_id": design_feedback.get("review_id"),
+                "status": design_feedback.get("status"),
+                "comment": design_feedback.get("comment"),
+                "artifact_paths": design_feedback.get("artifact_paths", []),
+                "updated_at": design_feedback.get("updated_at"),
+            }
+
     if agent_name == "developer" and rework_state in ("code_rework", "acceptance_rework", "build_rework", "rework_planned"):
         # When rework_planned, load the rework-plan first (it's the authoritative action list)
         if rework_state == "rework_planned":
@@ -301,6 +401,15 @@ def render_prompt(prompt_text, adu, agent_name, project_info=None, run_dir=None)
     if "repo_path" in adu:
         rendered = rendered.replace("{{REPO_PATH}}", adu["repo_path"])
         rendered = rendered.replace("{{SCAN_RESULT_PATH}}", f"/tmp/{adu['project_id']}-scan.json")
+
+    if run_dir:
+        rendered += (
+            "\n\n# Runtime Completion Protocol\n\n"
+            "Before finishing, write the same final structured result to the "
+            "`runtime_control.completion_file` path. Write a temporary sibling "
+            "file first, then atomically rename it. Do not write completion.json "
+            "until all declared files are fully persisted.\n"
+        )
 
     section_header = "# Project Context Payload" if project_info else "# Runtime Payload"
     rendered += f"\n\n{section_header}\n\n"
@@ -784,30 +893,23 @@ def main():
     cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
 
     policy = agent_run_policy.load_policy(args.agent, ROOT)
-    target_files = []
-    if args.agent == "requirement-analyst":
-        target_files = [str(project_repo_path / ".ai-agent" / "analysis" / f"{adu['id']}.md")]
-    elif args.agent == "system-flow-designer":
-        target_files = [str(project_repo_path / ".ai-agent" / "epics" / adu['id'] / "system-flow.json")]
-    elif args.agent == "adu-splitter":
-        target_files = [str(project_repo_path / ".ai-agent" / "epics" / adu['id'] / "split-plan.json")]
-    elif args.agent == "detail-designer":
-        target_files = [str(project_repo_path / ".ai-agent" / "designs" / f"{adu['id']}-detailed-design.md")]
-    elif args.agent == "contract":
-        target_files = [str(project_repo_path / ".ai-agent" / "contracts" / f"{adu['id']}-contract.json")]
+    target_files = get_agent_target_files(args.agent, adu, project_repo_path)
 
+    completion_file = run_dir / "completion.json"
+    run_started_ns = time.time_ns()
     proc = agent_run_policy.execute_controlled_process(
         cmd,
         cwd_path,
         env,
         policy,
-        target_files=target_files
+        target_files=target_files,
+        completion_file=completion_file
     )
 
     (run_dir / "stdout.md").write_text(proc.stdout, encoding="utf-8")
     (run_dir / "stderr.md").write_text(proc.stderr, encoding="utf-8")
 
-    result = extract_json_result(proc.stdout)
+    result = proc.completion_result or extract_json_result(proc.stdout)
     if proc.returncode != 0:
         adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
         run_result = "failed"
@@ -818,6 +920,22 @@ def main():
     else:
         run_result = result.get("result") or result.get("status") or "unknown"
         next_state = result.get("next_state")
+
+        if run_result == "success":
+            change_errors = validate_declared_changes(
+                result,
+                project_repo_path,
+                run_started_ns,
+            )
+            if change_errors:
+                run_result = "failed"
+                result["result"] = "failed"
+                result["error_code"] = "declared_changes_unverified"
+                result["error"] = "Agent declared file changes that were not produced during this run."
+                result["change_validation_errors"] = change_errors
+                with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
+                    stderr_file.write("\n".join(change_errors))
+                    stderr_file.write("\n")
 
         if run_result == "success":
             # Quality gate: validate output artifacts deterministically
@@ -1000,6 +1118,8 @@ def main():
         "result": run_result,
         "run_dir": str(run_dir.relative_to(project_repo_path)),
         "parsed_result": result,
+        "termination_reason": proc.termination_reason or "process_exit",
+        "completion_signal_used": proc.completion_result is not None,
         "token_usage": {
             "inputTokens": input_tokens,
             "outputTokens": output_tokens,
