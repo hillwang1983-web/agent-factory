@@ -405,10 +405,19 @@ def render_prompt(prompt_text, adu, agent_name, project_info=None, run_dir=None)
     if run_dir:
         rendered += (
             "\n\n# Runtime Completion Protocol\n\n"
-            "Before finishing, write the same final structured result to the "
-            "`runtime_control.completion_file` path. Write a temporary sibling "
-            "file first, then atomically rename it. Do not write completion.json "
-            "until all declared files are fully persisted.\n"
+            "Before finishing, write your final structured JSON result to the "
+            "`runtime_control.completion_file` path wrapped in the following envelope format:\n"
+            "```json\n"
+            "{\n"
+            '  "version": 1,\n'
+            '  "status": "success",\n'
+            '  "result": {\n'
+            "    // Insert the exact final structured JSON result expected from your agent role\n"
+            "  }\n"
+            "}\n"
+            "```\n"
+            "Write a temporary sibling file first, then atomically rename it. Do not write "
+            "the completion file until all declared files are fully persisted.\n"
         )
 
     section_header = "# Project Context Payload" if project_info else "# Runtime Payload"
