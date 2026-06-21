@@ -19,7 +19,8 @@
     "test:phase37-regression": "node tools/test-phase37-regression.js",
     "test:portability": "python3 ../../scripts/test_portability.py && node tools/test-portability-config.js",
     "check:portable": "python3 ../../scripts/check_tracked_path_leaks.py && python3 ../../scripts/test_portability.py && node tools/test-portability-config.js",
-    "doctor": "python3 ../../scripts/agent_factory_doctor.py"
+    "doctor": "python3 ../../scripts/agent_factory_doctor.py",
+    "test:adu1351-regressions": "node tools/test-adu1351-regressions.js"
   },
   "dependencies": {
     "compression": "^1.7.4",
