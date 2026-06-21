@@ -960,6 +960,32 @@ def main():
                     stderr_file.write("\n".join(change_errors))
                     stderr_file.write("\n")
 
+        if run_result == "success" and args.agent in ("buildfix-debugger", "code-reviewer", "acceptance-reviewer"):
+            trusted_cmd = [
+                sys.executable,
+                str(ROOT / "scripts" / "run_trusted_verification.py"),
+                "--adu", adu["id"],
+                "--run-dir", str(run_dir),
+                "--repo-root", str(project_repo_path),
+                "--registry-dir", str(REGISTRY)
+            ]
+            trusted_proc = subprocess.run(trusted_cmd, text=True, capture_output=True)
+            if trusted_proc.returncode == 20:
+                run_result = "human_gate"
+                result["result"] = "human_gate"
+                result["gate_type"] = "command_policy_exception"
+                result["next_state"] = "human_gate"
+                result["next_agent"] = "human"
+                result["error"] = "Verification command requires operator approval."
+            elif trusted_proc.returncode != 0:
+                run_result = "failed"
+                result["result"] = "failed"
+                result["error_code"] = "trusted_verification_failed"
+                result["error"] = f"Trusted verification failed with exit code {trusted_proc.returncode}."
+                if trusted_proc.stderr:
+                    with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
+                        stderr_file.write(f"\n[Trusted Verification Error]: {trusted_proc.stderr}")
+
         if run_result == "success":
             # Quality gate: validate output artifacts deterministically
             val_cmd = None
@@ -967,7 +993,7 @@ def main():
                 val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_agent_contract.py"), "--adu", adu["id"], "--repo-root", str(project_repo_path)]
             elif args.agent in ("code-reviewer", "acceptance-reviewer"):
                 kind = "code-review" if args.agent == "code-reviewer" else "acceptance"
-                val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_quality_report.py"), "--adu", adu["id"], "--kind", kind, "--repo-root", str(project_repo_path)]
+                val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_quality_report.py"), "--adu", adu["id"], "--kind", kind, "--repo-root", str(project_repo_path), "--run-dir", str(run_dir)]
             elif args.agent == "evidence":
                 val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_evidence_package.py"), "--adu", adu["id"], "--repo-root", str(project_repo_path), "--registry-dir", str(REGISTRY)]
             elif args.agent == "system-flow-designer":
@@ -1129,6 +1155,11 @@ def main():
     elif run_result != "success":
         effective_rc = 1
 
+    try:
+        verification_results_path = str((run_dir / "verification-results.json").relative_to(project_repo_path))
+    except ValueError:
+        verification_results_path = str(run_dir / "verification-results.json")
+
     run_record = {
         "timestamp": timestamp,
         "adu_id": None if is_epic_run else adu["id"],
@@ -1141,6 +1172,7 @@ def main():
         "result": run_result,
         "run_dir": str(run_dir.relative_to(project_repo_path)),
         "parsed_result": result,
+        "verification_results_path": verification_results_path if (run_dir / "verification-results.json").exists() else None,
         "termination_reason": proc.termination_reason or "process_exit",
         "completion_signal_used": proc.completion_result is not None,
         "token_usage": {

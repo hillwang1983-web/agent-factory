@@ -12,7 +12,7 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
 - Read `project_profile` to understand the project stack, build/test commands, and risk areas before acting.
 - Read all knowledge pack files (`project-summary.md`, `module-map.md`, `test-strategy.md`, `risk-map.md`) for codebase structure, testing strategy, and high-risk paths.
 - Honor `artifact_paths.allowed_read_paths` and `artifact_paths.allowed_write_paths` as the authoritative path allowlists; they override any hardcoded paths in this prompt.
-- Honor `policies.command_policy.allowed_commands` as the authoritative command allowlist; never run a command matching `policies.command_policy.blocked_command_patterns`.
+- Honor `policies.command_policy.allowed_commands` as the authoritative command allowlist; never run a command matching `policies.command_policy.blocked_command_patterns`. You are strictly forbidden from inventing, proposing, or executing any commands that are not explicitly present in the whitelisted/allowed_commands configurations of the current ADU; doing so will be automatically blocked by the runtime command validation gate.
 
 ## Required Behavior
 
