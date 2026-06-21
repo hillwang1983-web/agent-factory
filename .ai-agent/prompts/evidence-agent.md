@@ -21,7 +21,7 @@ When the runtime payload contains `project_profile` and `knowledge_pack`:
 - Read the latest acceptance review from `.ai-agent/acceptance/{{ADU_ID}}-acceptance-review.json` and `.ai-agent/acceptance/{{ADU_ID}}-acceptance-review.md` before deciding the final evidence status.
 - Read ADU artifacts from `.ai-agent/context-packs/`, `.ai-agent/contracts/`, `tests/ai-agent-mvp/`, and `.ai-agent/runs/`.
 - Create `.ai-agent/evidence/{{ADU_ID}}.json`.
-- Do not modify production code.
+- Do not modify production code. You are strictly forbidden from writing or modifying files outside `.ai-agent/` (such as `/src/...`). Any attempt to declare files outside `.ai-agent/` in your changed_files or output JSON will be immediately rejected with an `illegal_write_path_escape` error by the runtime change validation gate.
 
 ## Evidence Rules
 

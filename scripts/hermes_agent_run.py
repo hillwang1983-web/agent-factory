@@ -960,6 +960,19 @@ def main():
                     stderr_file.write("\n".join(change_errors))
                     stderr_file.write("\n")
 
+        if run_result == "success" and args.agent != "developer":
+            for filepath in result.get("changed_files", []):
+                try:
+                    Path(project_repo_path / filepath).resolve().relative_to(project_repo_path.resolve() / ".ai-agent")
+                except ValueError:
+                    run_result = "failed"
+                    result["result"] = "failed"
+                    result["error_code"] = "illegal_write_path_escape"
+                    result["error"] = f"Non-developer agent {args.agent} attempted to write outside .ai-agent/ directory: {filepath}"
+                    with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
+                        stderr_file.write(f"\n[Illegal Write Path Escape]: Non-developer agent attempted to write outside .ai-agent/: {filepath}\n")
+                    break
+
         if run_result == "success" and args.agent in ("buildfix-debugger", "code-reviewer", "acceptance-reviewer"):
             trusted_cmd = [
                 sys.executable,
