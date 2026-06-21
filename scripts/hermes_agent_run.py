@@ -919,7 +919,13 @@ def main():
     (run_dir / "stdout.md").write_text(proc.stdout, encoding="utf-8")
     (run_dir / "stderr.md").write_text(proc.stderr, encoding="utf-8")
 
-    result = proc.completion_result or extract_json_result(proc.stdout)
+    if proc.completion_status == "valid":
+        result = proc.completion_result
+    elif proc.completion_status == "not_expected":
+        result = extract_json_result(proc.stdout)
+    else:
+        result = None
+
     if proc.returncode != 0:
         adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
         run_result = "failed"
@@ -927,6 +933,13 @@ def main():
         adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
         run_result = "unstructured"
         result = build_unstructured_result(proc.stdout, proc.stderr)
+        if proc.completion_status in ("invalid", "missing"):
+            result["error_code"] = (
+                "invalid_completion_envelope"
+                if proc.completion_status == "invalid"
+                else "missing_completion_envelope"
+            )
+            result["stdout_candidate"] = extract_json_result(proc.stdout)
     else:
         run_result = result.get("result") or result.get("status") or "unknown"
         next_state = result.get("next_state")

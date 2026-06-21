@@ -149,6 +149,33 @@ elif scenario == "completion_human_gate_then_hang":
     tmp_path.replace(completion_file)
     time.sleep(100)
     sys.exit(0)
+
+elif scenario == "write_business_json_then_completion":
+    print(json.dumps({
+        "version": 1,
+        "adu_id": "ADU-TEST",
+        "source": "code-review",
+        "must_fix_now": []
+    }), flush=True)
+    completion_file = pathlib.Path(sys.argv[3])
+    envelope = {
+        "version": 1,
+        "status": "success",
+        "result": {
+            "result": "success",
+            "next_state": "rework_planned",
+            "changed_files": [".ai-agent/rework/ADU-TEST-rework-plan.json"],
+            "artifacts": [".ai-agent/rework/ADU-TEST-rework-plan.json"],
+            "commands_run": [],
+            "risks": [],
+            "next_agent": "developer"
+        }
+    }
+    tmp = completion_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(envelope), encoding="utf-8")
+    tmp.replace(completion_file)
+    time.sleep(100)
+    sys.exit(0)
 """
     mock_hermes_path.write_text(mock_hermes_code, encoding="utf-8")
 
@@ -389,6 +416,41 @@ execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, 
         assert not pid_alive, f"Expected child PID {result.pid} to be dead and reaped, but it is still alive!"
         target_file.unlink()
         completion_file.unlink()
+
+        # Test Case 10: Explicit completion envelope priority -> completion_status is valid, stdout business JSON ignored
+        print("Testing Case 10: Explicit completion envelope priority...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "write_business_json_then_completion", str(target_file), str(completion_file)]
+        t_start = time.time()
+        result = execute_controlled_process(
+            cmd,
+            workspace,
+            None,
+            AgentRunPolicy(20, 10, 1, 10000, 1000),
+            [str(target_file)],
+            completion_file=str(completion_file)
+        )
+        t_elapsed = time.time() - t_start
+        assert result.returncode == 0, f"Expected 0 exit on completion, got {result.returncode}"
+        assert result.termination_reason == "completion_signal", f"Expected termination_reason completion_signal, got {result.termination_reason}"
+        assert result.completion_status == "valid", f"Expected completion_status valid, got {result.completion_status}"
+        assert result.completion_result is not None
+        assert result.completion_result["next_state"] == "rework_planned"
+        assert t_elapsed < 5.0, f"Expected fast completion (under 5s), took {t_elapsed}s"
+        
+        # Assert child PID is dead and reaped
+        pid_alive = True
+        try:
+            os.kill(result.pid, 0)
+        except OSError:
+            pid_alive = False
+        assert not pid_alive, f"Expected child PID {result.pid} to be dead and reaped, but it is still alive!"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
 
         print("✅ All Agent Run Policy Watchdog Tests Passed!")
     finally:

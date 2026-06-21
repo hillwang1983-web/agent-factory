@@ -304,13 +304,27 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     final_stdout = "".join(stdout_buf)
     final_stderr = "".join(stderr_buf)
 
+    # final check of completion file if not already set
+    if completion_result is None and completion_path is not None:
+        completion_result = read_completion_result(completion_path)
+
+    if completion_path is None:
+        completion_status = "not_expected"
+    elif completion_result is not None:
+        completion_status = "valid"
+    elif completion_path.exists():
+        completion_status = "invalid"
+    else:
+        completion_status = "missing"
+
     class ControlledProcessResult:
-        def __init__(self, stdout, stderr, returncode, completion_result=None, termination_reason=None, pid=None):
+        def __init__(self, stdout, stderr, returncode, completion_result=None, completion_status="not_expected", termination_reason=None, pid=None):
             self.stdout = stdout
             self.stderr = stderr
             self.returncode = returncode
             self.completion_result = completion_result
+            self.completion_status = completion_status
             self.termination_reason = termination_reason
             self.pid = pid
     
-    return ControlledProcessResult(final_stdout, final_stderr, exit_code, completion_result, termination_reason, proc.pid)
+    return ControlledProcessResult(final_stdout, final_stderr, exit_code, completion_result, completion_status, termination_reason, proc.pid)
