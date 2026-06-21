@@ -95,7 +95,10 @@ You MUST write these two files:
       "reason": "In-scope per ADU goal"
     }
   ],
-  "next_state": "code_reviewed"
+  "next_state": "code_reviewed",
+  "commands_run": [
+    "meson test -C build unit"
+  ]
 }
 ```
 
@@ -134,7 +137,7 @@ For a `review_status: "fail"` report:
 
 ## Final Response
 
-End your final response with exactly one fenced JSON block:
+End your final response with exactly one fenced JSON block. You MUST include a "commands_run" field containing the exact command lines you actually executed (matching those in verification-results.json). Any mismatch or omission will trigger a factual false-pass block by the quality verification gate.
 
 ### Pass Response:
 ```json
@@ -151,6 +154,9 @@ End your final response with exactly one fenced JSON block:
     ".ai-agent/reviews/{{ADU_ID}}-code-review.md"
   ],
   "approved_write_paths": [],
+  "commands_run": [
+    "meson test -C build unit"
+  ],
   "risks": [],
   "next_agent": "buildfix-debugger"
 }
@@ -171,6 +177,7 @@ End your final response with exactly one fenced JSON block:
     ".ai-agent/reviews/{{ADU_ID}}-code-review.md"
   ],
   "approved_write_paths": [],
+  "commands_run": [],
   "risks": [
     "Code review failed. Developer rework required."
   ],
