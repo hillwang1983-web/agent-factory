@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "open5gs-lib-app-source-to-meson",
+      "project_glob": "*open5gs*",
+      "when_requested_path_matches": [
+        "lib/app/*.c",
+        "lib/app/*.h"
+      ],
+      "allow_derived_paths": [
+        "lib/app/meson.build"
+      ],
+      "risk": "low",
+      "reason": "lib/app 新增 C/H 文件需要注册到 meson.build"
+    },
+    {
+      "id": "open5gs-lib-app-header-to-aggregate",
+      "project_glob": "*open5gs*",
+      "when_requested_path_matches": [
+        "lib/app/*.h"
+      ],
+      "allow_derived_paths": [
+        "lib/app/ogs-app.h"
+      ],
+      "risk": "low",
+      "reason": "lib/app 公共头文件需要加入 ogs-app.h 聚合头"
+    },
+    {
+      "id": "agent-factory-controller-to-index",
+      "project_glob": "*agent-factory*",
+      "when_requested_path_matches": [
+        "agent-factory-dashboard/backend/src/interfaces/*controller.ts"
+      ],
+      "allow_derived_paths": [
+        "agent-factory-dashboard/backend/src/index.ts"
+      ],
+      "risk": "low",
+      "reason": "新增 controller 需要在 index.ts 注册路由"
+    }
+  ],
+  "blocked_paths": [
+    ".git/",
+    ".ai-agent/registry/projects.json",
+    ".ai-agent/registry/agent-model-settings.json",
+    ".ai-agent/registry/adu.json",
+    ".ai-agent/registry/runs.json",
+    ".ai-agent/registry/epics.json",
+    ".ai-agent/registry/token-budget.json",
+    ".ai-agent/registry/write-path-expansion-requests.json",
+    "**/.env",
+    ".env",
+    "*.env",
+    "**/id_rsa",
+    "**/secrets*",
+    "secrets*"
+  ],
+  "high_risk_prefixes": [
+    "src/security/",
+    "src/auth/",
+    "migrations/",
+    "infrastructure/"
+  ]
+}

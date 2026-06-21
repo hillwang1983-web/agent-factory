@@ -313,6 +313,72 @@ async function main() {
     }
   });
 
+  assert('epic split derives project-scoped paths from repository location', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'epic-project-scope-'));
+    const repoRoot = path.join(tempRoot, 'project-b');
+    const planDir = path.join(repoRoot, '.ai-agent', 'epics', 'EPIC-SCOPE');
+    fs.mkdirSync(planDir, { recursive: true });
+    const planPath = path.join(planDir, 'split-plan.json');
+    const rulesPath = path.join(tempRoot, 'rules.json');
+    fs.writeFileSync(rulesPath, JSON.stringify({
+      version: 1,
+      rules: [{
+        id: 'project-b-build-rule',
+        project_glob: 'project-b',
+        when_requested_path_matches: ['src/module/*.c'],
+        allow_derived_paths: ['src/module/build.file'],
+        risk: 'low',
+        reason: 'Project B build registration',
+      }],
+    }));
+    fs.writeFileSync(planPath, JSON.stringify({
+      version: 1,
+      epic_id: 'EPIC-SCOPE',
+      decision: 'split_required',
+      reason: 'Project-scoped derivation',
+      child_adus: [
+        {
+          id: 'ADU-SCOPE-1',
+          title: 'Scoped child',
+          goal: 'Verify scoped derivation',
+          scope: 'Module',
+          allowed_write_paths: ['src/module/main.c'],
+          allowed_read_paths: ['src/module/main.c'],
+          required_commands: [],
+          acceptance_summary: 'Derived build path is present',
+        },
+        {
+          id: 'ADU-SCOPE-2',
+          title: 'Sibling',
+          goal: 'Keep split valid',
+          scope: 'Sibling',
+          allowed_write_paths: ['src/sibling/file.c'],
+          allowed_read_paths: ['src/sibling/file.c'],
+          required_commands: [],
+          acceptance_summary: 'Sibling remains unchanged',
+        },
+      ],
+      dependencies: [],
+      acceptance_coverage: [
+        { acceptance_id: 'Derived build path is present', covered_by: ['ADU-SCOPE-1'] },
+      ],
+    }));
+    try {
+      execFileSync('python3', [VALIDATE_SPLIT, planPath], {
+        cwd: ROOT,
+        env: { ...process.env, AGENT_FACTORY_RULES_PATH: rulesPath },
+        stdio: 'pipe',
+      });
+      const updated = JSON.parse(fs.readFileSync(planPath, 'utf-8'));
+      const child = updated.child_adus.find((item) => item.id === 'ADU-SCOPE-1');
+      if (!child.allowed_write_paths.includes('src/module/build.file')) {
+        throw new Error(`Project-scoped derived path missing: ${JSON.stringify(child.allowed_write_paths)}`);
+      }
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);
   process.exit(failed > 0 ? 1 : 0);
 }

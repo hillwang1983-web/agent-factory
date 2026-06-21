@@ -59,7 +59,7 @@ Produce TWO files:
     {
       "finding_id": "CR-3",
       "decision": "return_to_design",
-      "reason": "Requires changing Epic-level acceptance for immediate online UE release."
+      "reason": "Requires changing the Epic-level acceptance criteria for immediate cache invalidation."
     }
   ],
   "additional_write_paths": [],

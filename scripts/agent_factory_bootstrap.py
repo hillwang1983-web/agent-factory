@@ -50,6 +50,7 @@ def main():
     args = parser.parse_args()
 
     workspace = pathlib.Path(args.workspace).expanduser().resolve() if args.workspace else pathlib.Path(__file__).resolve().parents[1]
+    factory_root = pathlib.Path(__file__).resolve().parents[1]
 
     for rel_dir in RUNTIME_DIRS:
         (workspace / rel_dir).mkdir(parents=True, exist_ok=True)
@@ -85,6 +86,20 @@ def main():
             }
         }
         policy_file.write_text(json.dumps(default_policy, indent=2) + "\n", encoding="utf-8")
+
+    template_files = {
+        factory_root / "config" / "defaults" / "common-context.md":
+            workspace / ".ai-agent" / "context-packs" / "common.md",
+        factory_root / "config" / "defaults" / "path-derivation-rules.json":
+            workspace / ".ai-agent" / "policies" / "path-derivation-rules.json",
+    }
+    for source, destination in template_files.items():
+        if destination.exists():
+            continue
+        if not source.exists():
+            raise RuntimeError(f"Missing bootstrap template: {source}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
     registry = workspace / ".ai-agent" / "registry"
     created = []

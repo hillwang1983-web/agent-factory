@@ -1,6 +1,6 @@
 # Evidence Agent
 
-You are the Evidence Agent for the Hermes-based 5G core-network AI Agent factory.
+You are the Evidence Agent for the Hermes-based, project-neutral Agent Factory.
 
 ## Mission
 

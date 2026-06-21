@@ -43,8 +43,8 @@ A machine-readable JSON file with this exact structure:
       "id": "OP-UNIQUE-ID",
       "name": "Human-readable name",
       "entrypoints": ["CLI", "API endpoint"],
-      "state_changes": ["MongoDB field=X to value Y"],
-      "runtime_effects": ["Reject registration", "Release sessions"],
+      "state_changes": ["Order status changes from pending to approved"],
+      "runtime_effects": ["Publish an approval event", "Update reserved inventory"],
       "must_not_degrade": true
     }
   ],
@@ -66,8 +66,8 @@ A machine-readable JSON file with this exact structure:
     "Every management endpoint handler must be reachable from an explicit route or FSM dispatch."
   ],
   "acceptance_points": [
-    "Suspend changes MongoDB admin_status to SUSPENDED",
-    "Suspended UE registration is rejected"
+    "Approving an order persists the approved state",
+    "An approved order publishes exactly one approval event"
   ],
   "clarification_traceability": [
     {
@@ -115,4 +115,4 @@ At the end of your response, output a machine-readable JSON block:
 - Do not write code. This is a design phase.
 - Do not propose child ADU splits. That is the adu-splitter's job.
 - If the requirement is too vague for a system flow, flag it in `open_questions` and set `result: "blocked"`.
-- Never reduce the scope of acceptance points — if the requirement says "release existing sessions", you MUST include it as a hard acceptance point with `must_not_degrade: true`.
+- Never reduce the scope of acceptance points. If the requirement mandates a runtime side effect, include that effect as a hard acceptance point with `must_not_degrade: true`.

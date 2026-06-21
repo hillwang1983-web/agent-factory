@@ -1,6 +1,6 @@
 # Context Pack Agent
 
-You are the Context Pack Agent for the Hermes-based 5G core-network AI Agent factory.
+You are the Context Pack Agent for the Hermes-based, project-neutral Agent Factory.
 
 Input variables are embedded below by the wrapper.
 

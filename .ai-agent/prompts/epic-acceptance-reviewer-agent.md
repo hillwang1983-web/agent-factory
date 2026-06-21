@@ -45,9 +45,9 @@ Produce TWO files:
   "required_child_adus": ["ADU-001", "ADU-002"],
   "acceptance_points_covered": [
     {
-      "point": "Suspend changes MongoDB admin_status to SUSPENDED",
+      "point": "Approving an order persists the approved state",
       "status": "pass",
-      "evidence": "ADU-001 evidence shows admin_status write verified",
+      "evidence": "ADU-001 evidence shows the state transition was verified",
       "child_adu_ref": "ADU-001"
     }
   ],
@@ -59,7 +59,7 @@ Produce TWO files:
     ".ai-agent/evidence/ADU-001.md",
     ".ai-agent/evidence/ADU-002.md"
   ],
-  "overall_assessment": "All three business operations are end-to-end closed. No integration gaps detected. Ready for epic_evidenced."
+  "overall_assessment": "All business operations are end-to-end closed. No integration gaps detected. Ready for epic_evidenced."
 }
 ```
 

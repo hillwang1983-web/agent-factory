@@ -80,6 +80,26 @@ def test_bootstrap_creates_runtime_registry_files():
                 raise AssertionError(f"missing bootstrap file: {path}")
             json.loads(path.read_text(encoding="utf-8"))
 
+        common_context = workspace / ".ai-agent" / "context-packs" / "common.md"
+        if not common_context.exists():
+            raise AssertionError(f"missing bootstrap common context: {common_context}")
+        common_text = common_context.read_text(encoding="utf-8")
+        if "runtime project payload is authoritative" not in common_text:
+            raise AssertionError("bootstrap common context must defer to runtime project context")
+        if "open5gs" in common_text.lower() or "/Users/" in common_text:
+            raise AssertionError("bootstrap common context must not contain project or host assumptions")
+
+        derivation_rules = workspace / ".ai-agent" / "policies" / "path-derivation-rules.json"
+        if not derivation_rules.exists():
+            raise AssertionError(f"missing bootstrap derivation rules: {derivation_rules}")
+        rules = json.loads(derivation_rules.read_text(encoding="utf-8"))
+        if any(
+            rule.get("project_glob") == "*"
+            for rule in rules.get("rules", [])
+            if rule.get("id", "").startswith("open5gs-")
+        ):
+            raise AssertionError("project-specific derivation rules must not apply to every project")
+
 def test_doctor_detects_tracked_path_leaks():
     result = subprocess.run(
         [

@@ -286,6 +286,24 @@ def main():
                         return True
                 return False
 
+            def rule_applies_to_project(rule):
+                project_glob = rule.get("project_glob")
+                if not project_glob or project_glob == "*":
+                    return True
+                patterns = project_glob if isinstance(project_glob, list) else [project_glob]
+                identifiers = {
+                    str(data.get("project_id") or ""),
+                    str(profile_data.get("project_id") or ""),
+                    str(profile_data.get("name") or ""),
+                    fp.parents[3].name if len(fp.parents) > 3 else "",
+                    Path.cwd().name,
+                }
+                return any(
+                    identifier and fnmatch.fnmatch(identifier.lower(), str(pattern).lower())
+                    for identifier in identifiers
+                    for pattern in patterns
+                )
+
             if rules:
                 for adu in child_adus:
                     write_paths = adu.get("allowed_write_paths", [])
@@ -298,6 +316,8 @@ def main():
                     while changed:
                         changed = False
                         for rule in rules:
+                            if not rule_applies_to_project(rule):
+                                continue
                             when_patterns = rule.get("when_requested_path_matches", [])
                             derived_patterns = rule.get("allow_derived_paths", [])
 

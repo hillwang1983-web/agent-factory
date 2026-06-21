@@ -40,6 +40,22 @@ def matches_glob_list(path, glob_list):
             return True
     return False
 
+def rule_applies_to_project(rule, adu_entry, repo_root):
+    project_glob = rule.get("project_glob")
+    if not project_glob or project_glob == "*":
+        return True
+    patterns = project_glob if isinstance(project_glob, list) else [project_glob]
+    identifiers = {
+        str(adu_entry.get("project_id") or ""),
+        str(adu_entry.get("project_name") or ""),
+        Path(repo_root).name,
+    }
+    return any(
+        identifier and fnmatch.fnmatch(identifier.lower(), str(pattern).lower())
+        for identifier in identifiers
+        for pattern in patterns
+    )
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate ADU write path expansions")
     parser.add_argument("--adu", required=True, help="ADU ID")
@@ -151,35 +167,12 @@ def main():
         "secrets*"
     ])
     high_risk_prefixes = rules_data.get("high_risk_prefixes", [
-        "lib/core/",
-        "src/amf/",
-        "src/smf/",
-        "src/upf/",
-        "src/mme/"
+        "src/security/",
+        "src/auth/",
+        "migrations/",
+        "infrastructure/"
     ])
-    rules = rules_data.get("rules", [
-        {
-            "id": "open5gs-lib-app-source-to-meson",
-            "when_requested_path_matches": ["lib/app/*.c", "lib/app/*.h"],
-            "allow_derived_paths": ["lib/app/meson.build"],
-            "risk": "low",
-            "reason": "lib/app 新增 C/H 文件需要注册到 meson.build"
-        },
-        {
-            "id": "open5gs-lib-app-header-to-aggregate",
-            "when_requested_path_matches": ["lib/app/*.h"],
-            "allow_derived_paths": ["lib/app/ogs-app.h"],
-            "risk": "low",
-            "reason": "lib/app 公共头文件需要加入 ogs-aggregate 头"
-        },
-        {
-            "id": "backend-controller-to-index",
-            "when_requested_path_matches": ["agent-factory-dashboard/backend/src/interfaces/*controller.ts"],
-            "allow_derived_paths": ["agent-factory-dashboard/backend/src/index.ts"],
-            "risk": "low",
-            "reason": "新增 controller 需要在 index.ts 注册路由"
-        }
-    ])
+    rules = rules_data.get("rules", [])
 
     approved = []
     pending = []
@@ -203,6 +196,8 @@ def main():
         # 3. Check derivation rules
         matched_rule = None
         for rule in rules:
+            if not rule_applies_to_project(rule, adu_entry, root):
+                continue
             derived_patterns = rule.get("allow_derived_paths", [])
             if matches_glob_list(rp, derived_patterns):
                 when_patterns = rule.get("when_requested_path_matches", [])
