@@ -37,6 +37,7 @@ RUNTIME_REGISTRY_NAMES = {
     ".ai-agent/registry/human-gates.json",
     ".ai-agent/registry/operator-actions.json",
     ".ai-agent/registry/operator-audit-logs.json",
+    ".ai-agent/registry/operator-overrides.json",
 }
 
 def run_git(workspace, args):

@@ -100,9 +100,16 @@ export interface AgentFactoryAdu {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    runCount: number;
+    successCount?: number;
+    failureCount?: number;
     agentBreakdown: Record<string, {
       inputTokens: number;
       outputTokens: number;
+      totalTokens?: number;
+      runCount?: number;
+      successCount?: number;
+      failureCount?: number;
       status: string;
     }>;
   };

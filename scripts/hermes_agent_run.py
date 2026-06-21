@@ -508,6 +508,100 @@ def extend_unique(target_list, values):
     return target_list
 
 
+RUNTIME_MANAGED_PREFIXES = (
+    ".ai-agent/registry/",
+    ".ai-agent/locks/",
+    ".ai-agent/runs/",
+)
+
+GENERATED_PREFIXES = (
+    "build/",
+    "dist/",
+    "coverage/",
+    "node_modules/",
+)
+
+
+def normalize_path_simple(raw: str) -> str | None:
+    """Lightweight path normalizer that only rejects truly dangerous paths.
+    Unlike normalize_repo_relative_path, this does not block .ai-agent/registry/
+    because the file declaration classifier needs to categorize those paths,
+    not reject them."""
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip().replace("\\", "/")
+    if not value or value.startswith("/") or "\0" in value:
+        return None
+    if any(part == ".." for part in value.split("/")):
+        return None
+    return value
+
+
+ALLOWED_WRITE_AGENTS = {"developer", "buildfix-debugger"}
+
+def validate_agent_file_declarations(agent_name, result, repo_root, run_started_ns):
+    """Classify changed_files declarations into valid/runtime/generated/errors."""
+    declared = result.get("changed_files", [])
+    if not isinstance(declared, list):
+        return {"errors": ["changed_files must be an array"]}
+
+    valid_changed_files = []
+    runtime_managed_files = []
+    generated_files = []
+    errors = []
+
+    for raw_path in declared:
+        normalized = normalize_path_simple(raw_path)
+        if not normalized:
+            errors.append(f"invalid changed_files path: {raw_path!r}")
+            continue
+
+        # Runtime-managed paths (registry, lock, run metadata)
+        if normalized.startswith(RUNTIME_MANAGED_PREFIXES):
+            runtime_managed_files.append(normalized)
+            continue
+
+        # Generated/build output paths
+        if normalized.startswith(GENERATED_PREFIXES):
+            generated_files.append(normalized)
+            continue
+
+        # Evidence agent: only .ai-agent/evidence/ files are valid changes
+        if agent_name == "evidence":
+            allowed_prefix = ".ai-agent/evidence/"
+            if not normalized.startswith(allowed_prefix):
+                errors.append(f"evidence_agent_declared_source_change: {normalized}")
+                continue
+
+        # Role-based write policy: only developer/buildfix-debugger may modify production source.
+        # All other agents are restricted to .ai-agent/ paths.
+        if agent_name not in ALLOWED_WRITE_AGENTS and agent_name != "evidence":
+            if not normalized.startswith(".ai-agent/"):
+                errors.append(f"illegal_write_path_escape: agent {agent_name} attempted to write outside .ai-agent/: {normalized}")
+                continue
+
+        file_path = (repo_root / normalized).resolve()
+        try:
+            file_path.relative_to(repo_root.resolve())
+        except ValueError:
+            errors.append(f"changed file escapes repository: {normalized}")
+            continue
+        if not file_path.is_file():
+            errors.append(f"declared changed file does not exist: {normalized}")
+            continue
+        if file_path.stat().st_mtime_ns < run_started_ns:
+            errors.append(f"declared changed file was not modified during this run: {normalized}")
+            continue
+        valid_changed_files.append(normalized)
+
+    return {
+        "valid_changed_files": valid_changed_files,
+        "runtime_managed_files": runtime_managed_files,
+        "generated_files": generated_files,
+        "errors": errors,
+    }
+
+
 def apply_agent_side_effects(adu, agent_name, result):
     if not isinstance(result, dict):
         return
@@ -819,6 +913,7 @@ def main():
         raise SystemExit(f"Agent not found: {args.agent}")
 
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_started_ns = time.time_ns()
     if is_epic_run:
         run_dir = project_repo_path / ".ai-agent" / "runs" / "epics" / args.epic / f"{timestamp}-{args.agent}"
     else:
@@ -945,33 +1040,26 @@ def main():
         next_state = result.get("next_state")
 
         if run_result == "success":
-            change_errors = validate_declared_changes(
-                result,
-                project_repo_path,
-                run_started_ns,
+            # Unified file declaration validation — replaces validate_declared_changes and the
+            # old non-developer write path escape check. This classifies changed_files into:
+            #   valid_changed_files (source/output actually modified)
+            #   runtime_managed_files (registry/lock/run metadata — not agent-authored)
+            #   generated_files (build/dist/coverage output — not agent-authored)
+            #   errors (invalid, missing, unmodified, or evidence declaring source paths)
+            file_decls = validate_agent_file_declarations(
+                args.agent, result, project_repo_path, run_started_ns
             )
-            if change_errors:
+            if file_decls.get("errors"):
                 run_result = "failed"
                 result["result"] = "failed"
                 result["error_code"] = "declared_changes_unverified"
-                result["error"] = "Agent declared file changes that were not produced during this run."
-                result["change_validation_errors"] = change_errors
+                result["error"] = "; ".join(file_decls["errors"])
+                result["file_declaration_errors"] = file_decls["errors"]
                 with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
-                    stderr_file.write("\n".join(change_errors))
+                    stderr_file.write("\n".join(file_decls["errors"]))
                     stderr_file.write("\n")
-
-        if run_result == "success" and args.agent != "developer":
-            for filepath in result.get("changed_files", []):
-                try:
-                    Path(project_repo_path / filepath).resolve().relative_to(project_repo_path.resolve() / ".ai-agent")
-                except ValueError:
-                    run_result = "failed"
-                    result["result"] = "failed"
-                    result["error_code"] = "illegal_write_path_escape"
-                    result["error"] = f"Non-developer agent {args.agent} attempted to write outside .ai-agent/ directory: {filepath}"
-                    with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
-                        stderr_file.write(f"\n[Illegal Write Path Escape]: Non-developer agent attempted to write outside .ai-agent/: {filepath}\n")
-                    break
+            else:
+                result["file_declarations"] = file_decls
 
         if run_result == "success" and args.agent in ("buildfix-debugger", "code-reviewer", "acceptance-reviewer"):
             trusted_cmd = [
@@ -1081,11 +1169,12 @@ def main():
                             encoding="utf-8",
                         )
 
+        apply_agent_side_effects(adu, args.agent, result)
+
         if run_result == "success" and next_state:
             adu["state"] = next_state
             adu["retry_count"] = 0
         elif run_result == "human_gate":
-            # Agent explicitly requested human intervention — set gate state immediately
             adu["pre_gate_state"] = adu.get("state", "created")
             adu["state"] = "human_gate"
             adu["human_gate_required"] = True
@@ -1093,8 +1182,6 @@ def main():
                 adu["gate_type"] = result["gate_type"]
         else:
             adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
-
-        apply_agent_side_effects(adu, args.agent, result)
 
         for artifact in result.get("artifacts", []):
             if artifact not in adu["artifacts"]:

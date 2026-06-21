@@ -13,6 +13,7 @@ import { ReviewGatePanel } from './ReviewGatePanel';
 import { WritePathExpansionPanel } from './WritePathExpansionPanel';
 import { QualityReportBadge } from './QualityReportBadge';
 import { QualityReportPanel } from './QualityReportPanel';
+import { OperatorOverridePanel } from './OperatorOverridePanel';
 import { FileText, Shield, Terminal, RefreshCw, FolderOpen, Plus } from 'lucide-react';
 import { ProjectContextPanel } from './ProjectContextPanel';
 import { OperationStatusBanner } from '../operations/OperationStatusBanner';
@@ -231,6 +232,13 @@ export function AgentFactoryPage(): JSX.Element {
 
               {/* Quality Gate review report panel */}
               <QualityReportPanel adu={selectedAdu} />
+
+              {/* Operator Override panel (failed run correction) */}
+              <OperatorOverridePanel
+                adu={selectedAdu}
+                latestRun={selectedAdu.runs?.[0] ?? null}
+                onApplied={() => refresh()}
+              />
 
               {/* Review Gate panel (Editable docs & Approve actions) */}
               <ReviewGatePanel aduId={selectedAdu.id} />

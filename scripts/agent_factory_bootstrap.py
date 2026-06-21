@@ -21,6 +21,7 @@ RUNTIME_FILES = {
     "artifact-edits.json": {"version": 1, "edits": []},
     "operator-actions.json": {"version": 1, "actions": []},
     "operator-audit-logs.json": {"version": 1, "logs": []},
+    "operator-overrides.json": {"version": 1, "overrides": []},
 }
 
 RUNTIME_DIRS = [

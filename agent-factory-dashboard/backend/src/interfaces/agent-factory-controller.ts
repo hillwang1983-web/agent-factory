@@ -945,29 +945,39 @@ export function createAgentFactoryRouter(
         warnAtRatio: 0.8,
       };
 
-      let inputUsed = 0;
-      let outputUsed = 0;
+      let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, runCount: 0, agentBreakdown: {} };
 
       if (aduId) {
-        const runs = await monitor.getAllRuns({ aduId });
-        for (const run of runs) {
-          const usage = (run as any).token_usage;
-          if (usage) {
-            inputUsed += usage.inputTokens || 0;
-            outputUsed += usage.outputTokens || 0;
+        // Prefer the ADU's cached token_summary (computed by the unified Token Ledger).
+        // This correctly accumulates per-agent across all runs including failed/unstructured.
+        const adu = await monitor.repo.getAduById(aduId);
+        if (adu && (adu as any).token_summary) {
+          usage = (adu as any).token_summary;
+        } else {
+          // Fallback: manual sum (legacy ADUs without token_summary)
+          const runs = await monitor.getAllRuns({ aduId });
+          for (const run of runs) {
+            const tokenUsage = (run as any).token_usage;
+            if (tokenUsage) {
+              usage.inputTokens += tokenUsage.inputTokens || 0;
+              usage.outputTokens += tokenUsage.outputTokens || 0;
+              usage.runCount++;
+            }
           }
+          usage.totalTokens = usage.inputTokens + usage.outputTokens;
         }
       }
 
       res.json({
-        default: {
-          inputTokenLimit: defaultCfg.inputTokenLimit ?? 500000,
-          outputTokenLimit: defaultCfg.outputTokenLimit ?? 100000,
-          warnAtRatio: defaultCfg.warnAtRatio ?? 0.8,
-          inputUsed,
-          outputUsed,
+        usage,
+        limits: {
+          default: {
+            inputTokenLimit: defaultCfg.inputTokenLimit ?? 500000,
+            outputTokenLimit: defaultCfg.outputTokenLimit ?? 100000,
+            warnAtRatio: defaultCfg.warnAtRatio ?? 0.8,
+          },
+          agents: budget.agents || {},
         },
-        agents: budget.agents || {},
       });
     } catch (err: unknown) {
       logger.error({ err, aduId }, 'AgentFactory: getTokenBudget error');
@@ -1407,27 +1417,64 @@ export function createAgentFactoryRouter(
     }
   }));
 
-  // POST /api/agent-factory/adus/:aduId/operator-override
-  router.post('/adus/:aduId/operator-override', requireControl, asyncHandler(async (req: Request, res: Response) => {
-    const { aduId } = req.params;
-    const { action, approved_by, override_notes, payload } = req.body;
-
-    if (!aduId || !action || !approved_by || !override_notes) {
-      res.status(400).json({ error: 'Missing required override fields' });
+  // ── Phase 3.7: Operator Override (accept_validator_result) ──
+  // POST /api/agent-factory/adus/:aduId/runs/:runTimestamp/override
+  router.post('/adus/:aduId/runs/:runTimestamp/override', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { aduId, runTimestamp } = req.params;
+    if (!/^[A-Za-z0-9_.-]+$/.test(aduId)) {
+      res.status(400).json({ error: 'Invalid aduId format' });
       return;
     }
-
+    if (!/^[A-Za-z0-9_.-]+$/.test(runTimestamp)) {
+      res.status(400).json({ error: 'Invalid runTimestamp format' });
+      return;
+    }
     try {
-      const service = OperatorOverrideService.getInstance();
-      await service.applyOverride({
-        adu_id: aduId,
-        action,
-        approved_by,
-        override_notes,
-        timestamp: new Date().toISOString(),
-        payload
+      const service = new OperatorOverrideService(config.workspaceRoot);
+      const override = await service.applyOverride(aduId, runTimestamp, req.body);
+      // Broadcast and persist event
+      broadcastOrchestratorEvent({
+        type: 'agentFactoryEvent',
+        event: 'operator_override_applied',
+        aduId,
+        runTimestamp,
+        overrideId: override.override_id,
+        toState: override.to_state,
       });
-      res.json({ success: true });
+      // Persist event to operation timeline: find the latest operation for this ADU
+      const latestOp = operationStore.getLatestForTarget('adu', aduId);
+      if (latestOp) {
+        operationStore.addEvent(latestOp.operation_id!, {
+          type: 'operator_override_applied',
+          aduId,
+          runTimestamp,
+          overrideId: override.override_id,
+          toState: override.to_state,
+          fromResult: override.from_result,
+          fromState: override.from_state,
+          reasonCode: override.reason_code,
+          scope: 'adu',
+          target_id: aduId,
+        });
+      }
+      res.status(201).json(override);
+    } catch (err: any) {
+      const status = err.status || 500;
+      res.status(status).json({ error: err.message });
+    }
+  }));
+
+  // GET /api/agent-factory/adus/:aduId/overrides
+  router.get('/adus/:aduId/overrides', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { aduId } = req.params;
+    if (!/^[A-Za-z0-9_.-]+$/.test(aduId)) {
+      res.status(400).json({ error: 'Invalid aduId format' });
+      return;
+    }
+    try {
+      const service = new OperatorOverrideService(config.workspaceRoot);
+      const overrides = await service.getOverrides(aduId);
+      res.json({ aduId, overrides });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -124,6 +124,23 @@ export interface AgentFactoryAduView {
   integration_role?: string;
   epic_sequence?: number;
   rework_plan_path?: string;
+  token_summary?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    runCount: number;
+    successCount?: number;
+    failureCount?: number;
+    agentBreakdown: Record<string, {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens?: number;
+      runCount?: number;
+      successCount?: number;
+      failureCount?: number;
+      status: string;
+    }>;
+  };
   gate_type?: string;
   write_path_policy?: {
     mode: string;
@@ -410,6 +427,34 @@ export interface CreateEpicInput {
   target_level?: string;
   language?: string;
 }
+
+// ── Operator Override ──
+
+export interface AgentFactoryOperatorOverride {
+  override_id: string;
+  adu_id: string;
+  run_timestamp: string;
+  operation: 'accept_validator_result';
+  from_result: string;
+  to_result: 'success';
+  from_state: string;
+  to_state: string;
+  reason_code:
+    | 'agent_declaration_mismatch'
+    | 'validator_false_negative'
+    | 'environment_verified'
+    | 'manual_evidence_accepted';
+  comment: string;
+  validator: {
+    command: string;
+    exit_code: 0;
+    output: string;
+  };
+  actor: string;
+  created_at: string;
+}
+
+export type OperatorOverrideReason = AgentFactoryOperatorOverride['reason_code'];
 
 export interface AgentFactoryEpicView extends AgentFactoryEpic {
   child_adu_views?: AgentFactoryAduView[];

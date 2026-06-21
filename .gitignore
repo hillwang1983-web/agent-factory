@@ -20,6 +20,7 @@ kamailio/
 .ai-agent/registry/human-gates.json
 .ai-agent/registry/operator-actions.json
 .ai-agent/registry/operator-audit-logs.json
+.ai-agent/registry/operator-overrides.json
 .ai-agent/registry/intake-operations.json
 .ai-agent/epics/
 .ai-agent/intake/

@@ -21,10 +21,14 @@ async function runTests() {
 
   const registryAduPath = path.join(workspaceRoot, '.ai-agent', 'registry', 'adu.json');
   const registryAgentsPath = path.join(workspaceRoot, '.ai-agent', 'registry', 'agents.json');
+  const registryRunsPath = path.join(workspaceRoot, '.ai-agent', 'registry', 'runs.json');
+  const runsRoot = path.join(workspaceRoot, '.ai-agent', 'runs');
 
   // Backups
   const aduBackup = fs.readFileSync(registryAduPath, 'utf-8');
   const agentsBackup = fs.readFileSync(registryAgentsPath, 'utf-8');
+  const runsBackup = fs.readFileSync(registryRunsPath, 'utf-8');
+  const existingRunDirs = new Set(fs.existsSync(runsRoot) ? fs.readdirSync(runsRoot) : []);
 
   // Build optional --project / --repo-root suffix for project-bound ADUs
   const aduBackupData = JSON.parse(aduBackup);
@@ -75,6 +79,7 @@ async function runTests() {
       review_status: "fail",
       summary: "Simulated code review failure for E2E testing",
       checked_files: ["scripts/hermes_agent_orchestrator.py"],
+      commands_run: ["find docs -maxdepth 2 -type f"],
       findings: [
         {
           id: "CR-1",
@@ -103,6 +108,12 @@ async function runTests() {
     const aduData = JSON.parse(aduBackup);
     const aduIdx = aduData.adus.findIndex(a => a.id === aduId);
     aduData.adus[aduIdx].state = 'implemented';
+    aduData.adus[aduIdx].required_commands = ['find docs -maxdepth 2 -type f'];
+    aduData.adus[aduIdx].command_policy = {
+      mode: 'allowlist',
+      allowed_commands: [...aduData.adus[aduIdx].required_commands],
+      blocked_command_patterns: [],
+    };
     // Reset rework counters for clean test
     if (!aduData.adus[aduIdx].review_counters) {
       aduData.adus[aduIdx].review_counters = {};
@@ -553,7 +564,15 @@ async function runTests() {
     console.log('\nCleaning up and restoring original files...');
     fs.writeFileSync(registryAduPath, aduBackup, 'utf-8');
     fs.writeFileSync(registryAgentsPath, agentsBackup, 'utf-8');
-    console.log('Restored adu.json and agents.json backups.');
+    fs.writeFileSync(registryRunsPath, runsBackup, 'utf-8');
+    if (fs.existsSync(runsRoot)) {
+      for (const entry of fs.readdirSync(runsRoot)) {
+        if (!existingRunDirs.has(entry) && entry.includes(`-${aduId}-`)) {
+          fs.rmSync(path.join(runsRoot, entry), { recursive: true, force: true });
+        }
+      }
+    }
+    console.log('Restored adu.json, agents.json, runs.json, and generated run directories.');
 
     if (codeReviewBackup) {
       fs.writeFileSync(codeReviewJsonPath, codeReviewBackup, 'utf-8');

@@ -94,7 +94,7 @@ def setup_temp_registry():
     # Write agents.json with mock agents
     agents_data = {
         "version": 1,
-        "hermes_bin": str(Path(tmp) / "mock-hermes.sh"),
+        "hermes_bin": str(Path(tmp) / "mock-hermes.py"),
         "agents": {
             "system-flow-designer": {
                 "description": "Test",
@@ -141,27 +141,43 @@ def setup_temp_registry():
     projects_path.write_text(json.dumps(projects_data, indent=2))
 
     # Create a mock hermes binary that outputs success JSON but creates NO artifact files
-    mock_hermes = Path(tmp) / "mock-hermes.sh"
-    mock_hermes.write_text("""#!/bin/bash
-cat <<'JSONEOF'
-```json
-{
-  "result": "success",
-  "next_state": "flow_designed",
-  "changed_files": [
-    ".ai-agent/epics/EPIC-TEST-0001/system-flow.md",
-    ".ai-agent/epics/EPIC-TEST-0001/system-flow.json"
-  ],
-  "artifacts": [
-    ".ai-agent/epics/EPIC-TEST-0001/system-flow.md",
-    ".ai-agent/epics/EPIC-TEST-0001/system-flow.json"
-  ],
-  "risks": [],
-  "next_agent": "adu-splitter"
+    mock_hermes = Path(tmp) / "mock-hermes.py"
+    mock_hermes.write_text("""#!/usr/bin/env python3
+import json
+import pathlib
+import re
+import sys
+
+result = {
+    "result": "success",
+    "next_state": "flow_designed",
+    "changed_files": [
+        ".ai-agent/epics/EPIC-TEST-0001/system-flow.md",
+        ".ai-agent/epics/EPIC-TEST-0001/system-flow.json"
+    ],
+    "artifacts": [
+        ".ai-agent/epics/EPIC-TEST-0001/system-flow.md",
+        ".ai-agent/epics/EPIC-TEST-0001/system-flow.json"
+    ],
+    "commands_run": [],
+    "risks": [],
+    "next_agent": "adu-splitter"
 }
-```
-JSONEOF
-exit 0
+prompt = sys.argv[-1] if len(sys.argv) > 1 else ""
+match = re.search(r'"completion_file"\\s*:\\s*"([^"]+)"', prompt)
+if match:
+    completion = pathlib.Path.cwd() / match.group(1)
+    completion.parent.mkdir(parents=True, exist_ok=True)
+    temporary = completion.with_name(completion.name + ".tmp")
+    temporary.write_text(json.dumps({
+        "version": 1,
+        "status": "success",
+        "result": result,
+    }), encoding="utf-8")
+    temporary.replace(completion)
+print("```json")
+print(json.dumps(result))
+print("```")
 """)
     mock_hermes.chmod(0o755)
 

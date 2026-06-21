@@ -696,6 +696,23 @@ export const agentFactoryApi = {
     }
     return res.json();
   },
+
+  // ── Operator Override ──
+  async applyRunOverride(aduId: string, runTimestamp: string, input: {
+    operation: 'accept_validator_result'; to_result: 'success'; to_state: string;
+    reason_code: string; comment: string;
+  }): Promise<any> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/runs/${runTimestamp}/override`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+    });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || 'Failed to apply override'); }
+    return res.json();
+  },
+  async getRunOverrides(aduId: string): Promise<{ aduId: string; overrides: any[] }> {
+    const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/overrides`);
+    if (!res.ok) throw new Error('Failed to fetch overrides');
+    return res.json();
+  },
 };
 
 

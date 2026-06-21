@@ -1,50 +1,84 @@
 #!/usr/bin/env node
 const fs = require('fs');
+const path = require('path');
 
 const args = process.argv;
 const promptArg = args[args.length - 1] || '';
 
+function emitResult(result) {
+  const completionMatch = promptArg.match(/"completion_file"\s*:\s*"([^"]+)"/);
+  if (completionMatch) {
+    const completionPath = path.resolve(process.cwd(), completionMatch[1]);
+    fs.mkdirSync(path.dirname(completionPath), { recursive: true });
+    const tempPath = `${completionPath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify({
+      version: 1,
+      status: result.result === 'human_gate' ? 'human_gate' : result.result === 'success' ? 'success' : 'failed',
+      result,
+    }, null, 2));
+    fs.renameSync(tempPath, completionPath);
+  }
+  console.log('```json\n' + JSON.stringify(result, null, 2) + '\n```');
+}
+
+function touchDeclaredFiles(files) {
+  for (const relativePath of files) {
+    const absolutePath = path.resolve(process.cwd(), relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const content = fs.readFileSync(absolutePath);
+    fs.writeFileSync(absolutePath, content);
+    const modifiedAt = new Date(Date.now() + 1000);
+    fs.utimesSync(absolutePath, modifiedAt, modifiedAt);
+  }
+}
+
 if (promptArg.includes('Code Reviewer Agent') || promptArg.includes('# Code Reviewer')) {
-  console.log('```json\n' + JSON.stringify({
+  const changedFiles = [
+    ".ai-agent/reviews/REQ-MVP-004-code-review.json",
+    ".ai-agent/reviews/REQ-MVP-004-code-review.md"
+  ];
+  touchDeclaredFiles(changedFiles);
+  emitResult({
     "result": "success",
     "review_status": "fail",
     "next_state": "code_rework",
-    "changed_files": [
-      ".ai-agent/reviews/REQ-MVP-004-code-review.json",
-      ".ai-agent/reviews/REQ-MVP-004-code-review.md"
-    ],
-    "artifacts": [
-      ".ai-agent/reviews/REQ-MVP-004-code-review.json",
-      ".ai-agent/reviews/REQ-MVP-004-code-review.md"
-    ],
+    "changed_files": changedFiles,
+    "artifacts": changedFiles,
+    "commands_run": [],
     "risks": [
       "Code review failed. Developer rework required."
     ],
     "next_agent": "developer"
-  }, null, 2) + '\n```');
+  });
 } else if (promptArg.includes('Acceptance Reviewer Agent') || promptArg.includes('# Acceptance Reviewer')) {
   const acceptanceStatus = process.env.MOCK_HERMES_ACCEPTANCE_STATUS || 'fail';
   const nextState = acceptanceStatus === 'pass' ? 'acceptance_reviewed' : 'acceptance_rework';
   const nextAgent = acceptanceStatus === 'pass' ? 'evidence' : 'developer';
-  console.log('```json\n' + JSON.stringify({
+  const changedFiles = [
+    ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.json",
+    ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.md"
+  ];
+  touchDeclaredFiles(changedFiles);
+  emitResult({
     "result": "success",
     "acceptance_status": acceptanceStatus,
     "next_state": nextState,
-    "changed_files": [
-      ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.json",
-      ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.md"
-    ],
-    "artifacts": [
-      ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.json",
-      ".ai-agent/acceptance/REQ-MVP-004-acceptance-review.md"
-    ],
+    "changed_files": changedFiles,
+    "artifacts": changedFiles,
+    "commands_run": [],
     "risks": [
       acceptanceStatus === 'pass' ? "Acceptance review passed." : "Acceptance review failed. Developer rework required."
     ],
     "next_agent": nextAgent
-  }, null, 2) + '\n```');
+  });
 } else {
-  console.log('```json\n' + JSON.stringify({
-    "result": "success"
-  }) + '\n```');
+  emitResult({
+    "result": "success",
+    "next_state": null,
+    "changed_files": [],
+    "artifacts": [],
+    "commands_run": [],
+    "risks": [],
+    "next_agent": null
+  });
 }

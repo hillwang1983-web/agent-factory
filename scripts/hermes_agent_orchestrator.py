@@ -736,51 +736,20 @@ def main():
                     else:
                         adu["state"] = next_state
 
-                    # Update adu token_summary
-                    runs_path = REGISTRY / "runs.json"
-                    if runs_path.exists():
-                        try:
-                            runs_data = load_json(runs_path)
-                            budget_path = REGISTRY / "token-budget.json"
-                            budget_data = load_json(budget_path) if budget_path.exists() else {}
-
-                            adu_runs = [r for r in runs_data.get("runs", []) if r.get("adu_id") == args.adu]
-                            input_sum = 0
-                            output_sum = 0
-                            breakdown = {}
-                            for r in adu_runs:
-                                agent = r.get("agent")
-                                usage = r.get("token_usage", {})
-                                inp = usage.get("inputTokens", 0)
-                                outp = usage.get("outputTokens", 0)
-                                input_sum += inp
-                                output_sum += outp
-
-                                # Compute status for this agent
-                                agent_status = "normal"
-                                agent_budget_cfg = budget_data.get("agents", {}).get(agent, budget_data.get("default", {}))
-                                lim_inp = agent_budget_cfg.get("inputTokenLimit", 0)
-                                lim_outp = agent_budget_cfg.get("outputTokenLimit", 0)
-                                warn_rat = agent_budget_cfg.get("warnAtRatio", 0.8)
-
-                                if (lim_inp > 0 and inp >= lim_inp) or (lim_outp > 0 and outp >= lim_outp):
-                                    agent_status = "exceeded"
-                                elif (lim_inp > 0 and inp >= lim_inp * warn_rat) or (lim_outp > 0 and outp >= lim_outp * warn_rat):
-                                    agent_status = "warning"
-
-                                breakdown[agent] = {
-                                    "inputTokens": inp,
-                                    "outputTokens": outp,
-                                    "status": agent_status
-                                }
-                            adu["token_summary"] = {
-                                "inputTokens": input_sum,
-                                "outputTokens": output_sum,
-                                "totalTokens": input_sum + output_sum,
-                                "agentBreakdown": breakdown
-                            }
-                        except Exception:
-                            pass
+                    # Update adu token_summary using the unified Token Ledger.
+                    try:
+                        import sys as _sys
+                        _sys.path.insert(0, str(ROOT / "scripts"))
+                        from token_ledger import aggregate_adu_tokens
+                        _runs_data = load_json(REGISTRY / "runs.json") if (REGISTRY / "runs.json").exists() else {"runs": []}
+                        _budget_data = load_json(REGISTRY / "token-budget.json") if (REGISTRY / "token-budget.json").exists() else {}
+                        adu["token_summary"] = aggregate_adu_tokens(
+                            _runs_data.get("runs", []), args.adu, _budget_data
+                        )
+                    except ImportError:
+                        pass
+                    except Exception:
+                        pass
 
                     save_json_direct(adu_path, adu_data)
 

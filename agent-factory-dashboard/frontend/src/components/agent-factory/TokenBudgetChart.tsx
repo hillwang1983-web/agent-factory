@@ -21,12 +21,13 @@ export function TokenBudgetChart({ aduId }: TokenBudgetChartProps): JSX.Element 
     const fetchBudget = async () => {
       try {
         const data = await agentFactoryApi.fetchTokenBudget(aduId);
-        const defaultCfg = data.default ?? {};
+        const defaultCfg = data.limits?.default ?? data.default ?? {};
+        const usage = data.usage ?? defaultCfg;
         setBudget({
           inputTokenLimit: defaultCfg.inputTokenLimit ?? 500000,
           outputTokenLimit: defaultCfg.outputTokenLimit ?? 100000,
-          inputUsed: defaultCfg.inputUsed ?? 0,
-          outputUsed: defaultCfg.outputUsed ?? 0,
+          inputUsed: usage.inputTokens ?? usage.inputUsed ?? 0,
+          outputUsed: usage.outputTokens ?? usage.outputUsed ?? 0,
           warnAtRatio: defaultCfg.warnAtRatio ?? 0.8,
         });
       } catch {
