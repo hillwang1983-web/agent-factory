@@ -15,6 +15,7 @@ import type { AgentFactoryArtifactEdit, AgentFactoryReview } from '../domain/age
 import { OrchestrationOperationStore, mapOrchestratorEvent } from '../application/orchestration-operation-store';
 import { EpicMonitor } from '../application/epic-monitor';
 import { RegistryLock } from '../infrastructure/registry-lock';
+import { OperatorOverrideService } from '../application/operator-override-service';
 
 const config = loadAppConfig();
 const operationStore = OrchestrationOperationStore.getInstance();
@@ -1403,6 +1404,32 @@ export function createAgentFactoryRouter(
       }
       logger.error({ err, aduId }, 'AgentFactory: continueOrchestrator error');
       res.status(500).json({ success: false, error: 'Failed to continue orchestrator' });
+    }
+  }));
+
+  // POST /api/agent-factory/adus/:aduId/operator-override
+  router.post('/adus/:aduId/operator-override', requireControl, asyncHandler(async (req: Request, res: Response) => {
+    const { aduId } = req.params;
+    const { action, approved_by, override_notes, payload } = req.body;
+
+    if (!aduId || !action || !approved_by || !override_notes) {
+      res.status(400).json({ error: 'Missing required override fields' });
+      return;
+    }
+
+    try {
+      const service = OperatorOverrideService.getInstance();
+      await service.applyOverride({
+        adu_id: aduId,
+        action,
+        approved_by,
+        override_notes,
+        timestamp: new Date().toISOString(),
+        payload
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   }));
 
