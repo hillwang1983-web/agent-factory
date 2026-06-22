@@ -26,8 +26,8 @@ jobs:
           # pure-stdlib and require no LLM keys or external services.
           #
           # EXCLUDE: scripts/test_validate_epic_flow_clarifications.py has a
-          # pre-existing Case 4 (token-bucket) failure unrelated to these tests
-          # and is tracked separately. Remove it from EXCLUDE once fixed.
+          # pre-existing Case 4 (token-bucket) failure unrelated to these tests.
+          # Tracked in issue #4; remove from EXCLUDE once fixed.
           EXCLUDE="scripts/test_validate_epic_flow_clarifications.py"
           rc=0
           for t in scripts/test_*.py; do
