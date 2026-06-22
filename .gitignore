@@ -44,6 +44,7 @@ kamailio/
 regression_reports/
 .gstack/
 .playwright-mcp/
+.superpowers/
 
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
