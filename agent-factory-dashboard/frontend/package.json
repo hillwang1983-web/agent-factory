@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:navigation": "node tools/test-navigation.mjs",
-    "test:agent-runtime-view": "vitest run --environment jsdom tools/test-agent-runtime-view.test.tsx"
+    "test:agent-runtime-view": "vitest run --environment jsdom tools/test-agent-runtime-view.test.tsx",
+    "test:websocket-url": "vitest run tools/test-websocket-url.test.ts"
   },
   "dependencies": {
     "lucide-react": "^0.344.0",

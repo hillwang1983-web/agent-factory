@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAgentFactoryStore } from '../stores/agentFactory';
+import { resolveWebSocketUrl } from './websocket-url';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3012';
+const WS_URL = resolveWebSocketUrl(
+  import.meta.env.VITE_WS_URL,
+  window.location,
+  import.meta.env.VITE_WS_PORT || '3012',
+);
 
 export type WebSocketStatus = 'idle' | 'connecting' | 'connected' | 'disconnected';
 

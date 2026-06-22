@@ -125,9 +125,15 @@ cp .env.example .env
 
 ```dotenv
 VITE_API_BASE_URL=http://localhost:3011
-VITE_WS_URL=ws://localhost:3012
+VITE_WS_PORT=3012
 VITE_API_PROXY_TARGET=http://localhost:3011
 ```
+
+前端默认使用浏览器当前访问的主机建立 WebSocket。例如通过
+`http://192.168.1.33:5175` 访问时，会连接
+`ws://192.168.1.33:3012`，不会连接浏览器本机的 `localhost`。
+只有在 WebSocket 使用独立域名或反向代理路径时才设置
+`VITE_WS_URL`。
 
 ### 6. 运行 Doctor
 
