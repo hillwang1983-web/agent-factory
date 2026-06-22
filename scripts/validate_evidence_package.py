@@ -147,14 +147,19 @@ def main():
 
             # 1. Check evidence.json matching entries for command, exitCode, output
             for key, val in evidence_dict.items():
-                if ass_id.lower() in key.lower() or (isinstance(val, dict) and (val.get("path") and ass_id in val.get("path") or val.get("assertion_id") == ass_id)):
+                # Match evidence to the assertion by EXACT id (dict key or an
+                # explicit assertion_id), never a loose substring like "A1" in "A12".
+                if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
                     if isinstance(val, dict):
                         sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
-                        has_cmd = "command" in sub or "script" in sub
-                        # Runtime evidence requires a real exit code; a self-reported
-                        # status string is NOT accepted as a substitute for it.
+                        cmd_val = sub.get("command") or sub.get("script") or ""
+                        out_val = sub.get("output") or sub.get("stdout") or ""
+                        # Runtime evidence requires a non-empty command, non-empty
+                        # output, and a real exit code 0. Field presence alone is not
+                        # enough, and a self-reported status is not accepted.
+                        has_cmd = bool(str(cmd_val).strip())
                         has_code = sub.get("exitCode") == 0 or sub.get("exit_code") == 0
-                        has_out = "output" in sub or "stdout" in sub
+                        has_out = bool(str(out_val).strip())
                         if has_cmd and has_code and has_out:
                             has_evidence = True
                             break
@@ -163,10 +168,12 @@ def main():
             if not has_evidence and ass_id in assertions_dict:
                 val = assertions_dict[ass_id]
                 if isinstance(val, dict):
-                    has_cmd = "command" in val
-                    # Same rule: a self-reported status cannot substitute for a real exit code.
+                    cmd_val = val.get("command") or ""
+                    out_val = val.get("observed_result") or val.get("output") or ""
+                    # Same rule: non-empty command + output and a real exit code 0.
+                    has_cmd = bool(str(cmd_val).strip())
                     has_code = val.get("exitCode") == 0 or val.get("exit_code") == 0
-                    has_out = "observed_result" in val or "output" in val
+                    has_out = bool(str(out_val).strip())
                     if has_cmd and has_code and has_out:
                         has_evidence = True
 

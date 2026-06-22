@@ -152,6 +152,49 @@ with tempfile.TemporaryDirectory() as tmp:
     assert_exit("T06: runtime evidence via assertions dict w/ status but no exitCode → human_gate (20)",
                 20, "REQ-T06", repo, reg)
 
+# T07 — runtime evidence with an empty command (and empty output) but exitCode 0
+# must NOT pass. Field presence is not enough; command/output must be non-empty.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T07",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"command": "", "exitCode": 0, "output": ""}}}
+    repo, reg = setup(tmp, "REQ-T07", contract, evidence)
+    assert_exit("T07: runtime evidence w/ empty command/output → human_gate (20)",
+                20, "REQ-T07", repo, reg)
+
+# T08 — runtime evidence with a real command + exitCode 0 but EMPTY output must
+# NOT pass. Output/stdout must be non-empty.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T08",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"command": "curl http://localhost", "exitCode": 0, "output": ""}}}
+    repo, reg = setup(tmp, "REQ-T08", contract, evidence)
+    assert_exit("T08: runtime evidence w/ empty output → human_gate (20)",
+                20, "REQ-T08", repo, reg)
+
+# T09 — evidence keyed by a different assertion id that merely *contains* the
+# target id as a substring must NOT satisfy it. Matching is by exact id.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T09",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    # "A12" contains "A1" as a substring; with exact matching it must not count as A1.
+    evidence = {"evidence": {"A12": {"command": "curl http://localhost", "exitCode": 0, "output": "200 OK"}}}
+    repo, reg = setup(tmp, "REQ-T09", contract, evidence)
+    assert_exit("T09: substring-only id match must not satisfy assertion → human_gate (20)",
+                20, "REQ-T09", repo, reg)
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
