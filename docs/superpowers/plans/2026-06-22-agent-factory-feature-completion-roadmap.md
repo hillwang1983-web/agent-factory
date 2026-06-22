@@ -37,7 +37,7 @@
 2. **交付闭环**:流水线止于 `evidenced`,`git push` 在禁令清单里,产出停留在 worktree + 证据包,没有进入真实仓库历史。
 3. **跨 ADU 回归门**:每个 ADU 自证,没有工厂级"历史测试全绿"的保证,ADU-N 可能悄悄打破 ADU-M。
 
-> 已实现但**尚未提交**的相关改动(本地待验证后提交,勿当作已落地):evidence 证据策略中的 runtime 断言假通过漏洞(`acceptance` 格式恒判 static、整包自报 status 旁路)已在 `scripts/validate_evidence_package.py` 修复,并新增 `scripts/test_validate_evidence_package.py`(4 测试通过)。提交前状态:`validate_evidence_package.py` 为已修改、测试文件为未跟踪。
+> 相关改动**已提交至 PR #1,尚未合并**:evidence 证据策略中的 runtime 断言假通过漏洞已在 `scripts/validate_evidence_package.py` 修复(`acceptance` 格式恒判 static、整包自报 status 旁路、runtime 证据以自报 status 顶替 exitCode 三个假通过向量),并新增 `scripts/test_validate_evidence_package.py`。PR #1 仍需处理 legacy `acceptance` 合约的兼容迁移后方可合并。
 
 ## 3. 与现有 3.7–3.9 设计的关系
 
