@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""
+Tests for validate_evidence_package.py.
+
+Focus: runtime-assertion false-pass vectors.
+
+  Hole A: contracts using the plain `acceptance` array format had every
+          assertion hardcoded to verification_type "static", so runtime
+          requirements were never enforced.
+  Hole B: a self-reported top-level evidence package status of
+          "success"/"passed" auto-satisfied every static assertion with
+          zero per-assertion evidence.
+
+Uses isolated temp directories to avoid touching the real registry.
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+VALIDATOR = ROOT / "scripts" / "validate_evidence_package.py"
+
+passed = 0
+failed = 0
+
+
+def run(adu, repo_root, registry_dir):
+    cmd = [
+        sys.executable, str(VALIDATOR),
+        "--adu", adu,
+        "--repo-root", repo_root,
+        "--registry-dir", registry_dir,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode, result.stdout, result.stderr
+
+
+def assert_exit(label, expected, adu, repo_root, registry_dir):
+    global passed, failed
+    rc, out, err = run(adu, repo_root, registry_dir)
+    if rc == expected:
+        print(f"✅  {label}")
+        passed += 1
+    else:
+        print(f"❌  {label}: expected exit {expected} but got {rc}\n  stdout: {out.strip()}\n  stderr: {err.strip()}")
+        failed += 1
+
+
+def write_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def setup(tmp, adu_id, contract, evidence):
+    repo = Path(tmp) / "repo"
+    write_json(repo / ".ai-agent" / "contracts" / f"{adu_id}.json", contract)
+    write_json(repo / ".ai-agent" / "evidence" / f"{adu_id}.json", evidence)
+    reg = Path(tmp) / "registry"
+    reg.mkdir(parents=True, exist_ok=True)
+    return str(repo), str(reg)
+
+
+print("Running validate_evidence_package tests...\n")
+
+# T01 — Hole A+B composition: `acceptance`-format runtime requirement that is
+# only "verified" by a self-reported package status must NOT pass. It needs
+# real runtime evidence, so the validator should demand a human gate (exit 20).
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T01",
+        "acceptance": [
+            "Run the end-to-end registration test via curl http://localhost:3000 and observe success",
+        ],
+    }
+    evidence = {"status": "success"}  # self-report only, no per-assertion runtime evidence
+    repo, reg = setup(tmp, "REQ-T01", contract, evidence)
+    assert_exit("T01: acceptance-format runtime requirement w/ only self-reported status → human_gate (20)",
+                20, "REQ-T01", repo, reg)
+
+# T02 — Hole B isolation: an explicitly static assertion with no per-assertion
+# evidence must NOT pass on the self-reported package status alone (exit 1).
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T02",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "config file present", "verification_type": "static", "must_pass": True},
+        ],
+    }
+    evidence = {"status": "success"}  # self-report only, no entry for A1
+    repo, reg = setup(tmp, "REQ-T02", contract, evidence)
+    assert_exit("T02: static assertion w/ only self-reported package status → fail (1)",
+                1, "REQ-T02", repo, reg)
+
+# T03 — regression guard: a static assertion WITH real per-assertion evidence
+# still passes (exit 0). Guards against over-tightening when removing Hole B.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T03",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "config file present", "verification_type": "static", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"status": "verified", "path": ".ai-agent/evidence/A1.json"}}}
+    repo, reg = setup(tmp, "REQ-T03", contract, evidence)
+    assert_exit("T03: static assertion w/ real per-assertion evidence → pass (0)",
+                0, "REQ-T03", repo, reg)
+
+# T04 — regression guard: a runtime assertion WITH real runtime evidence
+# (command + exit 0 + output) still passes (exit 0).
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T04",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"command": "curl http://localhost:3000", "exitCode": 0, "output": "200 OK"}}}
+    repo, reg = setup(tmp, "REQ-T04", contract, evidence)
+    assert_exit("T04: runtime assertion w/ real runtime evidence → pass (0)",
+                0, "REQ-T04", repo, reg)
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
+if failed > 0:
+    sys.exit(1)

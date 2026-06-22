@@ -50,11 +50,18 @@ def main():
                 "expected_evidence": [ac.get("expected", "")]
             })
     elif "acceptance" in contract:
+        # The plain `acceptance` array format carries no explicit
+        # verification_type. Infer runtime vs static from the assertion text so
+        # runtime requirements still demand real execution evidence, mirroring
+        # the heuristic used for the `acceptance_criteria` format above.
+        runtime_markers = ("run", "curl", "http", "request", "execute", "端到端", "运行")
         for idx, acc in enumerate(contract["acceptance"]):
+            text = acc if isinstance(acc, str) else json.dumps(acc, ensure_ascii=False)
+            is_runtime = any(m in text.lower() for m in runtime_markers)
             assertions.append({
                 "id": f"A-{idx+1}",
                 "title": f"Acceptance {idx+1}",
-                "verification_type": "static",
+                "verification_type": "runtime" if is_runtime else "static",
                 "must_pass": True,
                 "expected_evidence": [acc]
             })
@@ -131,9 +138,10 @@ def main():
                 if isinstance(val, dict) and val.get("status") in ("passed", "success", "pass"):
                     has_evidence = True
 
-            # Also static validation can pass if evidence_data status is success/passed
-            if not has_evidence and evidence_data.get("status") in ("success", "passed"):
-                has_evidence = True
+            # NOTE: a self-reported top-level evidence package status
+            # ("success"/"passed") is deliberately NOT accepted as evidence here.
+            # Per-assertion evidence is required; trusting the agent's own
+            # package status would let assertions pass with no real artifact.
         else:
             # Runtime assertions: MUST have concrete runtime evidence
 
