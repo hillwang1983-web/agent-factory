@@ -151,7 +151,9 @@ def main():
                     if isinstance(val, dict):
                         sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
                         has_cmd = "command" in sub or "script" in sub
-                        has_code = sub.get("exitCode") == 0 or sub.get("exit_code") == 0 or sub.get("status") == "success"
+                        # Runtime evidence requires a real exit code; a self-reported
+                        # status string is NOT accepted as a substitute for it.
+                        has_code = sub.get("exitCode") == 0 or sub.get("exit_code") == 0
                         has_out = "output" in sub or "stdout" in sub
                         if has_cmd and has_code and has_out:
                             has_evidence = True
@@ -162,7 +164,8 @@ def main():
                 val = assertions_dict[ass_id]
                 if isinstance(val, dict):
                     has_cmd = "command" in val
-                    has_code = val.get("status") in ("passed", "success", "pass")
+                    # Same rule: a self-reported status cannot substitute for a real exit code.
+                    has_code = val.get("exitCode") == 0 or val.get("exit_code") == 0
                     has_out = "observed_result" in val or "output" in val
                     if has_cmd and has_code and has_out:
                         has_evidence = True

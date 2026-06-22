@@ -123,6 +123,35 @@ with tempfile.TemporaryDirectory() as tmp:
     assert_exit("T04: runtime assertion w/ real runtime evidence → pass (0)",
                 0, "REQ-T04", repo, reg)
 
+# T05 — runtime evidence with a self-reported status:success but NO exitCode
+# must NOT pass. A real exit code is required; a status string cannot stand in
+# for it (evidence-dict path).
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T05",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"command": "curl http://localhost", "status": "success", "output": "200 OK"}}}
+    repo, reg = setup(tmp, "REQ-T05", contract, evidence)
+    assert_exit("T05: runtime evidence w/ status:success but no exitCode → human_gate (20)",
+                20, "REQ-T05", repo, reg)
+
+# T06 — same principle via the 'assertions' dict path: a runtime assertion with a
+# self-reported status but no exitCode must NOT pass.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T06",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    evidence = {"assertions": {"A1": {"command": "curl http://localhost", "status": "passed", "observed_result": "200 OK"}}}
+    repo, reg = setup(tmp, "REQ-T06", contract, evidence)
+    assert_exit("T06: runtime evidence via assertions dict w/ status but no exitCode → human_gate (20)",
+                20, "REQ-T06", repo, reg)
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
