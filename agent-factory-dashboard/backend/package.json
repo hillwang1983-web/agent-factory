@@ -20,6 +20,7 @@
     "test:portability": "python3 ../../scripts/test_portability.py && node tools/test-portability-config.js",
     "check:portable": "python3 ../../scripts/check_tracked_path_leaks.py && python3 ../../scripts/test_portability.py && python3 ../../scripts/test_prompt_portability.py && node tools/test-portability-config.js",
     "doctor": "python3 ../../scripts/agent_factory_doctor.py",
+    "test:agent-runtime-status": "npm run build && node tools/test-agent-runtime-status.js && node tools/test-runtime-isolation.js",
     "test:adu1351-regressions": "node tools/test-adu1351-regressions.js"
   },
   "dependencies": {

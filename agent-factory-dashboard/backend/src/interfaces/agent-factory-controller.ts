@@ -16,9 +16,9 @@ import { OrchestrationOperationStore, mapOrchestratorEvent } from '../applicatio
 import { EpicMonitor } from '../application/epic-monitor';
 import { RegistryLock } from '../infrastructure/registry-lock';
 import { OperatorOverrideService } from '../application/operator-override-service';
+import { deriveAgentRuntimeView } from '../application/agent-runtime-status';
 
 const config = loadAppConfig();
-const operationStore = OrchestrationOperationStore.getInstance();
 
 function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
@@ -578,7 +578,7 @@ export function createAgentFactoryRouter(
     epicMonitor,
     operatorRepo,
     operatorLock,
-    operationStore,
+    OrchestrationOperationStore.getInstance(),
     runnerDelegate
   );
 
@@ -862,6 +862,135 @@ export function createAgentFactoryRouter(
     }
   }));
 
+  // GET /api/agent-factory/agents/runtime-status
+  router.get('/agents/runtime-status', asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const scope = (req.query.scope as string) || 'global';
+      const aduId = req.query.aduId as string;
+      const statusesParam = req.query.status as string;
+      const searchParam = req.query.search as string;
+
+      if ((scope === 'adu' || scope === 'epic') && !aduId) {
+        res.status(400).json({ success: false, error: 'aduId is required when scope is adu or epic' });
+        return;
+      }
+
+      const dashboard = await monitor.getDashboard();
+      const operations = OrchestrationOperationStore.getInstance().getAllOperations();
+      const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
+      const humanGates = await HumanGateService.getInstance().listGates();
+      const runs = await agentFactoryRepository.readRuns();
+
+      const { epics: epicViews } = await epicMonitor.getEpicDashboard();
+      const qualityDecisions = await agentFactoryRepository.readReviews();
+      const reworkChains = dashboard.adus
+        .filter(a => ['code_rework', 'build_rework', 'acceptance_rework'].includes(a.state))
+        .map(a => ({
+          agent: a.next_agent || (a.latest_run ? a.latest_run.agent : null),
+          target_id: a.id,
+          created_at: a.updated_at,
+          id: a.id
+        }));
+
+      const now = Date.now();
+      const staleAfterSeconds = 60; // default heartbeat timeout
+
+      let targetAgentIds: Set<string> | null = null;
+      if (scope === 'adu') {
+        const adu = dashboard.adus.find(a => a.id === aduId);
+        if (!adu) {
+          res.status(404).json({ success: false, error: 'ADU not found' });
+          return;
+        }
+
+        targetAgentIds = new Set<string>();
+        // Add completed and pending agents from workflow
+        adu.workflow.forEach(step => {
+          if (step.agent) targetAgentIds!.add(step.agent);
+        });
+        // Add current next_agent
+        if (adu.next_agent) targetAgentIds!.add(adu.next_agent);
+      }
+
+      let filteredRuns = runs;
+      let filteredAdus = dashboard.adus;
+      let filteredEpics = epicViews;
+      let filteredOps = operations;
+      let filteredGates = humanGates;
+      let filteredQd = qualityDecisions;
+      let filteredRework = reworkChains;
+
+      if ((scope === 'adu' || scope === 'epic') && aduId) {
+        const validTargetIds = new Set<string>([aduId]);
+        if (scope === 'epic') {
+          const epic = epicViews.find(e => e.id === aduId);
+          if (epic && epic.child_adus) {
+            epic.child_adus.forEach(childId => validTargetIds.add(childId));
+          }
+        }
+
+        filteredRuns = runs.filter(r => validTargetIds.has(r.adu_id));
+        filteredAdus = dashboard.adus.filter(a => validTargetIds.has(a.id));
+        filteredEpics = epicViews.filter(e => validTargetIds.has(e.id));
+        filteredOps = operations.filter(o => validTargetIds.has(o.target_id));
+        filteredGates = humanGates.filter(g => validTargetIds.has(g.target_id));
+        filteredQd = qualityDecisions.filter(q => validTargetIds.has(q.adu_id));
+        filteredRework = reworkChains.filter(r => validTargetIds.has(r.target_id));
+      }
+
+      const runtimeAgents = dashboard.agents.map(agent =>
+        deriveAgentRuntimeView({
+          agent,
+          runs: filteredRuns,
+          aduViews: filteredAdus,
+          epicViews: filteredEpics,
+          operations: filteredOps,
+          humanGates: filteredGates,
+          qualityDecisions: filteredQd,
+          reworkChains: filteredRework,
+          now,
+          staleAfterSeconds
+        })
+      );
+
+      let scopedAgents = runtimeAgents;
+      if (targetAgentIds) {
+        scopedAgents = scopedAgents.filter(a => targetAgentIds!.has(a.id));
+      }
+
+      const summary = {
+        running: scopedAgents.filter(a => a.runtime_status === 'running').length,
+        ready: scopedAgents.filter(a => a.runtime_status === 'ready').length,
+        needs_attention: scopedAgents.filter(a => a.runtime_status === 'needs_attention').length,
+        idle: scopedAgents.filter(a => a.runtime_status === 'idle').length
+      };
+
+      let filteredAgents = scopedAgents;
+
+      if (statusesParam) {
+        const statuses = statusesParam.split(',');
+        filteredAgents = filteredAgents.filter(a => statuses.includes(a.runtime_status));
+      }
+
+      if (searchParam) {
+        const search = searchParam.toLowerCase();
+        filteredAgents = filteredAgents.filter(a =>
+          a.id.toLowerCase().includes(search) || (a.description || '').toLowerCase().includes(search)
+        );
+      }
+
+      res.json({
+        generated_at: new Date(now).toISOString(),
+        scope,
+        summary,
+        agents: filteredAgents
+      });
+    } catch (err: unknown) {
+      logger.error({ err }, 'AgentFactory: getAgentRuntimeStatus error');
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  }));
+
   // GET /api/agent-factory/agents/model-settings
   router.get('/agents/model-settings', asyncHandler(async (_req: Request, res: Response) => {
     try {
@@ -1080,7 +1209,7 @@ export function createAgentFactoryRouter(
       throw new Error(`Orchestrator script not found at ${orchestratorPath}`);
     }
 
-    const activeOp = operationStore.getActiveOperation(aduId);
+    const activeOp = OrchestrationOperationStore.getInstance().getActiveOperation(aduId);
     if (activeOp || activeOrchestrators.has(aduId)) {
       const err: any = new Error(`Orchestrator is already running or waiting for ADU ${aduId}`);
       err.conflict = true;
@@ -1127,7 +1256,7 @@ export function createAgentFactoryRouter(
     }
 
     // Create Operation
-    const op = operationStore.createOperation({
+    const op = OrchestrationOperationStore.getInstance().createOperation({
       scope: 'adu',
       target_id: aduId,
       action: mode as any,
@@ -1148,7 +1277,7 @@ export function createAgentFactoryRouter(
       env: process.env,
     });
 
-    operationStore.updateOperation(op.operation_id, { pid: child.pid });
+    OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, { pid: child.pid });
 
     let stdoutData = '';
     child.stdout.on('data', (chunk) => {
@@ -1163,7 +1292,7 @@ export function createAgentFactoryRouter(
             broadcastOrchestratorEvent(parsed);
 
             // Map parsed fields into the new Event schema
-            operationStore.addEvent(op.operation_id, {
+            OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
               type: parsed.event || parsed.type || 'orchestrator_event',
               payload: parsed,
               stream: 'stdout',
@@ -1174,11 +1303,11 @@ export function createAgentFactoryRouter(
             // Update current status / current agent of operation
             const updates = mapOrchestratorEvent(parsed);
             if (Object.keys(updates).length > 0) {
-              operationStore.updateOperation(op.operation_id, updates);
+              OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, updates);
             }
           } catch (e) {
             logger.debug({ line }, 'Failed to parse line from orchestrator stdout');
-            operationStore.addEvent(op.operation_id, {
+            OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
               type: 'stdout_raw',
               payload: { line },
               stream: 'stdout',
@@ -1199,7 +1328,7 @@ export function createAgentFactoryRouter(
         const line = stderrBuf.substring(0, lineEnd).trim();
         stderrBuf = stderrBuf.substring(lineEnd + 1);
         if (line) {
-          operationStore.addEvent(op.operation_id, {
+          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: 'stderr_line',
             payload: { line },
             stream: 'stderr',
@@ -1218,7 +1347,7 @@ export function createAgentFactoryRouter(
         try {
           const parsed = JSON.parse(stdoutData.trim());
           broadcastOrchestratorEvent(parsed);
-          operationStore.addEvent(op.operation_id, {
+          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: parsed.event || parsed.type || 'orchestrator_event',
             payload: parsed,
             stream: 'stdout',
@@ -1226,7 +1355,7 @@ export function createAgentFactoryRouter(
             severity: parsed.severity || 'info'
           });
         } catch (_) {
-          operationStore.addEvent(op.operation_id, {
+          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: 'stdout_raw',
             payload: { line: stdoutData.trim() },
             stream: 'stdout',
@@ -1234,7 +1363,7 @@ export function createAgentFactoryRouter(
         }
       }
       if (stderrBuf.trim()) {
-        operationStore.addEvent(op.operation_id, {
+        OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
           type: 'stderr_line',
           payload: { line: stderrBuf.trim() },
           stream: 'stderr',
@@ -1277,7 +1406,7 @@ export function createAgentFactoryRouter(
         result = 'failed';
       }
 
-      operationStore.updateOperation(op.operation_id, {
+      OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, {
         status,
         result,
         exitCode: code,
@@ -1442,9 +1571,9 @@ export function createAgentFactoryRouter(
         toState: override.to_state,
       });
       // Persist event to operation timeline: find the latest operation for this ADU
-      const latestOp = operationStore.getLatestForTarget('adu', aduId);
+      const latestOp = OrchestrationOperationStore.getInstance().getLatestForTarget('adu', aduId);
       if (latestOp) {
-        operationStore.addEvent(latestOp.operation_id!, {
+        OrchestrationOperationStore.getInstance().addEvent(latestOp.operation_id!, {
           type: 'operator_override_applied',
           aduId,
           runTimestamp,
@@ -2649,14 +2778,14 @@ export function createAgentFactoryRouter(
       throw new Error(`Epic orchestrator script not found at ${orchestratorPath}`);
     }
 
-    const activeOp = operationStore.getActiveOperation(epicId);
+    const activeOp = OrchestrationOperationStore.getInstance().getActiveOperation(epicId);
     if (activeOp || activeOrchestrators.has(epicId)) {
       throw Object.assign(new Error(`Orchestrator is already running or waiting for Epic ${epicId}`), { conflict: true });
     }
 
     // Create Operation
     const opAction = mode === 'materialize' ? 'materialize_child_adus' : mode;
-    const op = operationStore.createOperation({
+    const op = OrchestrationOperationStore.getInstance().createOperation({
       scope: 'epic',
       target_id: epicId,
       action: opAction as any,
@@ -2683,7 +2812,7 @@ export function createAgentFactoryRouter(
       env: process.env,
     });
 
-    operationStore.updateOperation(op.operation_id, { pid: child.pid });
+    OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, { pid: child.pid });
 
     let stdoutData = '';
     child.stdout.on('data', (chunk) => {
@@ -2696,7 +2825,7 @@ export function createAgentFactoryRouter(
           try {
             const parsed = JSON.parse(line);
             broadcastOrchestratorEvent(parsed);
-            operationStore.addEvent(op.operation_id, {
+            OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
               type: parsed.event || parsed.type || 'orchestrator_event',
               payload: parsed,
               stream: 'stdout',
@@ -2707,11 +2836,11 @@ export function createAgentFactoryRouter(
             // Update current status / state of operation
             const updates = mapOrchestratorEvent(parsed);
             if (Object.keys(updates).length > 0) {
-              operationStore.updateOperation(op.operation_id, updates);
+              OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, updates);
             }
           } catch (_) {
             logger.debug({ line }, 'Failed to parse line from epic orchestrator stdout');
-            operationStore.addEvent(op.operation_id, {
+            OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
               type: 'stdout_raw',
               payload: { line },
               stream: 'stdout',
@@ -2732,7 +2861,7 @@ export function createAgentFactoryRouter(
         const line = stderrBuf.substring(0, lineEnd).trim();
         stderrBuf = stderrBuf.substring(lineEnd + 1);
         if (line) {
-          operationStore.addEvent(op.operation_id, {
+          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: 'stderr_line',
             payload: { line },
             stream: 'stderr',
@@ -2751,7 +2880,7 @@ export function createAgentFactoryRouter(
         try {
           const parsed = JSON.parse(stdoutData.trim());
           broadcastOrchestratorEvent(parsed);
-          operationStore.addEvent(op.operation_id, {
+          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: parsed.event || parsed.type || 'orchestrator_event',
             payload: parsed,
             stream: 'stdout',
@@ -2759,7 +2888,7 @@ export function createAgentFactoryRouter(
             severity: parsed.severity || 'info'
           });
         } catch (_) {
-          operationStore.addEvent(op.operation_id, {
+          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: 'stdout_raw',
             payload: { line: stdoutData.trim() },
             stream: 'stdout',
@@ -2767,7 +2896,7 @@ export function createAgentFactoryRouter(
         }
       }
       if (stderrBuf.trim()) {
-        operationStore.addEvent(op.operation_id, {
+        OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
           type: 'stderr_line',
           payload: { line: stderrBuf.trim() },
           stream: 'stderr',
@@ -2807,7 +2936,7 @@ export function createAgentFactoryRouter(
         result = 'failed';
       }
 
-      operationStore.updateOperation(op.operation_id, {
+      OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, {
         status,
         result,
         exitCode: code,
@@ -2911,7 +3040,7 @@ export function createAgentFactoryRouter(
   // GET /api/agent-factory/operations
   router.get('/operations', asyncHandler(async (req: Request, res: Response) => {
     const { targetId, scope } = req.query as { targetId?: string; scope?: string };
-    let ops = operationStore.getAll();
+    let ops = OrchestrationOperationStore.getInstance().getAll();
     if (targetId) {
       ops = ops.filter(o => o.target_id === targetId || o.targetId === targetId);
     }
@@ -2928,7 +3057,7 @@ export function createAgentFactoryRouter(
       res.status(400).json({ success: false, error: 'Invalid operationId format' });
       return;
     }
-    const op = operationStore.getOperation(operationId);
+    const op = OrchestrationOperationStore.getInstance().getOperation(operationId);
     if (!op) {
       res.status(404).json({ error: `Operation ${operationId} not found` });
       return;
@@ -3008,7 +3137,7 @@ export function createAgentFactoryRouter(
       res.status(400).json({ success: false, error: 'Invalid epicId format' });
       return;
     }
-    const op = operationStore.getLatestForTarget('epic', epicId);
+    const op = OrchestrationOperationStore.getInstance().getLatestForTarget('epic', epicId);
     res.json(op || null);
   }));
 
@@ -3019,7 +3148,7 @@ export function createAgentFactoryRouter(
       res.status(400).json({ success: false, error: 'Invalid aduId format' });
       return;
     }
-    const op = operationStore.getLatestForTarget('adu', aduId);
+    const op = OrchestrationOperationStore.getInstance().getLatestForTarget('adu', aduId);
     res.json(op || null);
   }));
 

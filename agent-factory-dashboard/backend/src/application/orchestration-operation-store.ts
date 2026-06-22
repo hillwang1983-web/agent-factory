@@ -134,6 +134,11 @@ export class OrchestrationOperationStore {
     return compatible;
   }
 
+  getAllOperations(): OrchestrationOperation[] {
+    const ops = this.readOperations();
+    return ops.map(op => toCompatibility(op));
+  }
+
   getLatestForTarget(targetType: 'adu' | 'epic', targetId: string): OrchestrationOperation | null {
     const ops = this.readOperations();
     const filtered = ops

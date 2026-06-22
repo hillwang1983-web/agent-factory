@@ -4,7 +4,7 @@ import { agentFactoryApi } from '../../api/agentFactory';
 import { SummaryStrip } from './SummaryStrip';
 import { AduQueuePanel } from './AduQueuePanel';
 import { WorkflowTimeline } from './WorkflowTimeline';
-import { AgentLanePanel } from './AgentLanePanel';
+import { AgentRuntimeTable } from './AgentRuntimeTable';
 import { RunHistoryTable } from './RunHistoryTable';
 import { ArtifactDrawer } from './ArtifactDrawer';
 import { OrchestratorControlPanel } from './OrchestratorControlPanel';
@@ -262,7 +262,7 @@ export function AgentFactoryPage(): JSX.Element {
           )}
 
           {/* Agent lanes overview */}
-          <AgentLanePanel dashboard={dashboard} />
+          <AgentRuntimeTable />
         </div>
       </div>
 

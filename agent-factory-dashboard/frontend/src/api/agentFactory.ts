@@ -35,6 +35,25 @@ export const agentFactoryApi = {
     return res.json();
   },
 
+  async fetchAgentRuntimeStatus(params: {
+    scope?: 'global' | 'adu';
+    aduId?: string;
+    status?: string[];
+    search?: string;
+  }): Promise<{ generated_at: string; scope: string; summary: any; agents: any[] }> {
+    const query = new URLSearchParams();
+    if (params.scope) query.append('scope', params.scope);
+    if (params.aduId) query.append('aduId', params.aduId);
+    if (params.status && params.status.length > 0) query.append('status', params.status.join(','));
+    if (params.search) query.append('search', params.search);
+
+    const res = await fetch(`${API_URL}/api/agent-factory/agents/runtime-status?${query.toString()}`);
+    if (!res.ok) {
+      throw new Error('Failed to fetch agent runtime status');
+    }
+    return res.json();
+  },
+
   async fetchAgentFactoryRuns(params: {
     aduId?: string;
     agent?: string;

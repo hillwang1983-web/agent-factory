@@ -42,7 +42,7 @@ const STATE_ORDER = [
   'mvp_ready',
 ];
 
-const NEXT_AGENT_BY_STATE: Record<string, string | null> = {
+export const NEXT_AGENT_BY_STATE: Record<string, string | null> = {
   created: 'requirement-analyst',
   analysis_review: null,
   analyzed: 'context-pack',
@@ -51,9 +51,9 @@ const NEXT_AGENT_BY_STATE: Record<string, string | null> = {
   designed: 'contract',
   contracted: 'testwriter',
   test_red: 'developer',
-  code_rework: 'developer',
-  build_rework: 'developer',
-  acceptance_rework: 'developer',
+  code_rework: 'rework-planner',
+  build_rework: 'rework-planner',
+  acceptance_rework: 'rework-planner',
   implemented: 'code-reviewer',
   code_reviewed: 'buildfix-debugger',
   debugged: 'acceptance-reviewer',
@@ -318,6 +318,21 @@ export class AgentFactoryMonitorUseCase {
         latest_run: latestRun,
         active_adu_ids,
         status: agentStatus,
+
+        runtime_status: 'idle',
+        current_operations: [],
+        queued_targets: [],
+        attention_items: [],
+        last_result: latestRun ? {
+          run_timestamp: latestRun.timestamp,
+          target_id: latestRun.adu_id,
+          result: latestRun.result,
+          effective_returncode: latestRun.effective_returncode ?? latestRun.returncode,
+          finished_at: latestRun.timestamp
+        } : null,
+        last_run_at: latestRun ? latestRun.timestamp : null,
+        success_rate: total_runs > 0 ? Math.round((success_runs / total_runs) * 100) : null,
+        stale_warning: { stale: false, reason: null, last_heartbeat_at: null, stale_after_seconds: 60 }
       });
     }
 

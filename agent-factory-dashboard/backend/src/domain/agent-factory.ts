@@ -191,6 +191,55 @@ export interface AgentFactoryAduView extends AgentFactoryAdu {
   };
 }
 
+export type AgentRuntimeStatus =
+  | 'running'
+  | 'ready'
+  | 'needs_attention'
+  | 'idle';
+
+export interface AgentFactoryAgentOperationRef {
+  operation_id: string;
+  target_type: 'adu' | 'epic';
+  target_id: string;
+  status: 'spawning' | 'running';
+  current_state: string | null;
+  started_at: string | null;
+  updated_at: string | null;
+  elapsed_seconds: number | null;
+}
+
+export interface AgentFactoryAgentQueuedTarget {
+  target_type: 'adu' | 'epic';
+  target_id: string;
+  title: string;
+  state: string;
+  queued_since: string | null;
+}
+
+export interface AgentFactoryAgentAttentionItem {
+  id: string;
+  target_type: 'adu' | 'epic';
+  target_id: string;
+  kind:
+    | 'run_failed'
+    | 'human_gate'
+    | 'quality_decision'
+    | 'rework_required'
+    | 'operation_failed';
+  severity: 'P0' | 'P1' | 'P2' | 'P3' | 'unknown';
+  summary: string;
+  recommended_action: string | null;
+  created_at: string;
+}
+
+export interface AgentFactoryAgentLastResult {
+  run_timestamp: string;
+  target_id: string;
+  result: string;
+  effective_returncode: number | null;
+  finished_at: string | null;
+}
+
 export interface AgentFactoryAgentView {
   id: string;
   description: string;
@@ -201,8 +250,26 @@ export interface AgentFactoryAgentView {
   success_runs: number;
   failed_runs: number;
   unstructured_runs: number;
-  latest_run: AgentFactoryRun | null;
+
+  runtime_status: AgentRuntimeStatus;
+  current_operations: AgentFactoryAgentOperationRef[];
+  queued_targets: AgentFactoryAgentQueuedTarget[];
+  attention_items: AgentFactoryAgentAttentionItem[];
+  last_result: AgentFactoryAgentLastResult | null;
+  last_run_at: string | null;
+  success_rate: number | null;
+  stale_warning: {
+    stale: boolean;
+    reason: string | null;
+    last_heartbeat_at: string | null;
+    stale_after_seconds: number;
+  };
+
+  /** @deprecated Frontend should use last_result instead */
+  latest_run?: AgentFactoryRun | null;
+  /** @deprecated Frontend should use runtime_status instead */
   active_adu_ids: string[];
+  /** @deprecated Frontend should use runtime_status instead */
   status: 'idle' | 'active' | 'failed' | 'stale';
 }
 
