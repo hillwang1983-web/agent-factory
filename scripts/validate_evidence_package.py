@@ -50,21 +50,20 @@ def main():
                 "expected_evidence": [ac.get("expected", "")]
             })
     elif "acceptance" in contract:
-        # The plain `acceptance` array format carries no explicit
-        # verification_type. Infer runtime vs static from the assertion text so
-        # runtime requirements still demand real execution evidence, mirroring
-        # the heuristic used for the `acceptance_criteria` format above.
-        runtime_markers = ("run", "curl", "http", "request", "execute", "端到端", "运行")
-        for idx, acc in enumerate(contract["acceptance"]):
-            text = acc if isinstance(acc, str) else json.dumps(acc, ensure_ascii=False)
-            is_runtime = any(m in text.lower() for m in runtime_markers)
-            assertions.append({
-                "id": f"A-{idx+1}",
-                "title": f"Acceptance {idx+1}",
-                "verification_type": "runtime" if is_runtime else "static",
-                "must_pass": True,
-                "expected_evidence": [acc]
-            })
+        # The plain `acceptance` array is a legacy, pre-per-assertion format: no
+        # assertion ids, no verification types. The contract gate
+        # (validate_agent_contract.py) now requires structured
+        # `acceptance_assertions`, so this format is unsupported here. Reject it
+        # deterministically with a migration hint instead of guessing runtime vs
+        # static from assertion text (keyword guessing misclassifies, e.g.
+        # "runnable validation" -> runtime).
+        print(
+            f"FAIL: Contract {adu_id} uses the legacy plain 'acceptance' array format, "
+            f"which is unsupported. Migrate it to structured 'acceptance_assertions' "
+            f"with an explicit 'verification_type' per assertion.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # 2. Load Waivers
     waivers = []

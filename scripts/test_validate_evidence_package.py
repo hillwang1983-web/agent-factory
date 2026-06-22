@@ -66,9 +66,10 @@ def setup(tmp, adu_id, contract, evidence):
 
 print("Running validate_evidence_package tests...\n")
 
-# T01 — Hole A+B composition: `acceptance`-format runtime requirement that is
-# only "verified" by a self-reported package status must NOT pass. It needs
-# real runtime evidence, so the validator should demand a human gate (exit 20).
+# T01 — the legacy plain `acceptance` array format is unsupported. The contract
+# gate (validate_agent_contract.py) now requires structured `acceptance_assertions`,
+# so this evidence validator rejects the plain-array format deterministically with
+# a migration hint, instead of guessing runtime vs static from assertion text.
 with tempfile.TemporaryDirectory() as tmp:
     contract = {
         "adu_id": "REQ-T01",
@@ -78,8 +79,8 @@ with tempfile.TemporaryDirectory() as tmp:
     }
     evidence = {"status": "success"}  # self-report only, no per-assertion runtime evidence
     repo, reg = setup(tmp, "REQ-T01", contract, evidence)
-    assert_exit("T01: acceptance-format runtime requirement w/ only self-reported status → human_gate (20)",
-                20, "REQ-T01", repo, reg)
+    assert_exit("T01: legacy plain 'acceptance' array format is rejected → fail (1)",
+                1, "REQ-T01", repo, reg)
 
 # T02 — Hole B isolation: an explicitly static assertion with no per-assertion
 # evidence must NOT pass on the self-reported package status alone (exit 1).
