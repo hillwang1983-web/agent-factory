@@ -50,14 +50,20 @@ def main():
                 "expected_evidence": [ac.get("expected", "")]
             })
     elif "acceptance" in contract:
-        for idx, acc in enumerate(contract["acceptance"]):
-            assertions.append({
-                "id": f"A-{idx+1}",
-                "title": f"Acceptance {idx+1}",
-                "verification_type": "static",
-                "must_pass": True,
-                "expected_evidence": [acc]
-            })
+        # The plain `acceptance` array is a legacy, pre-per-assertion format: no
+        # assertion ids, no verification types. The contract gate
+        # (validate_agent_contract.py) now requires structured
+        # `acceptance_assertions`, so this format is unsupported here. Reject it
+        # deterministically with a migration hint instead of guessing runtime vs
+        # static from assertion text (keyword guessing misclassifies, e.g.
+        # "runnable validation" -> runtime).
+        print(
+            f"FAIL: Contract {adu_id} uses the legacy plain 'acceptance' array format, "
+            f"which is unsupported. Migrate it to structured 'acceptance_assertions' "
+            f"with an explicit 'verification_type' per assertion.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # 2. Load Waivers
     waivers = []
@@ -68,8 +74,55 @@ def main():
         except Exception as e:
             print(f"WARNING: Failed to parse waivers JSON: {e}", file=sys.stderr)
 
-    # Filter waivers for this ADU
-    adu_waivers = [w for w in waivers if w.get("adu_id") == adu_id]
+    # Filter and validate waivers for this ADU
+    gates_file = registry_dir / "human-gates.json"
+    gates_data = []
+    if gates_file.exists():
+        try:
+            with open(gates_file, 'r', encoding='utf-8') as f:
+                gates_data = json.load(f).get("gates", [])
+        except Exception:
+            pass
+
+    valid_waivers = []
+    for w in waivers:
+        if w.get("adu_id") == adu_id:
+            # P2-2: Waiver Schema and status check
+            w_status = w.get("status")
+            w_ids = w.get("assertion_ids", [])
+            w_gate_id = w.get("gate_id") or w.get("human_gate_id")
+            w_reason = w.get("reason")
+            w_time = w.get("created_at")
+            w_approved_by = w.get("approved_by")
+
+            if not (w_status == "approved" and w_gate_id and w_approved_by and w_reason and w_time and isinstance(w_ids, list) and len(w_ids) > 0):
+                continue
+
+            matching_gate = next((g for g in gates_data if g.get("gate_id") == w_gate_id), None)
+            if not matching_gate:
+                continue
+
+            if matching_gate.get("target_id") != adu_id:
+                continue
+
+            # P1 Waiver未绑定受影响断言
+            if matching_gate.get("status") not in ("approved", "resolved", "waived"):
+                continue
+
+            gate_type = matching_gate.get("gate_type")
+            if gate_type not in ("environment_verification_required",):
+                continue
+
+            gate_assertions = matching_gate.get("affected_assertions", [])
+            if not isinstance(gate_assertions, list) or len(gate_assertions) == 0:
+                continue
+
+            # Waiver assertion must belong to gate.affected_assertions
+            if not all(a in gate_assertions for a in w_ids):
+                continue
+
+            valid_waivers.append(w)
+    adu_waivers = valid_waivers
 
     # 3. Load Evidence
     evidence_data = {}
@@ -92,15 +145,43 @@ def main():
         except Exception as e:
             print(f"WARNING: Failed to parse adu.json: {e}", file=sys.stderr)
 
+    # Map the Contract Agent's verification_type vocabulary to evidence kind.
+    # "automated_test" requires real runtime evidence; "manual_review" is a
+    # static/manual check. ("runtime"/"static" also occur via the
+    # acceptance_criteria conversion above.) Unknown types are rejected rather
+    # than silently treated as static, which would let a runtime requirement
+    # pass with weak evidence.
+    RUNTIME_TYPES = {"automated_test", "runtime"}
+    STATIC_TYPES = {"manual_review", "static"}
+
     missing_runtime = []
     missing_static = []
+    unknown_types = []
 
-    for ass in assertions:
+    # Include both acceptance and negative assertions
+    all_assertions = list(assertions)
+    for nass in contract.get("negative_assertions", []):
+        all_assertions.append({
+            "id": nass["id"],
+            "title": nass.get("title", ""),
+            "verification_type": "manual_review", # negative assertions are typically manually reviewed / statically checked
+            "must_pass": nass.get("must_pass", True)
+        })
+
+    for ass in all_assertions:
         ass_id = ass.get("id")
-        is_runtime = ass.get("verification_type") == "runtime"
+        vtype = ass.get("verification_type")
         must_pass = ass.get("must_pass", True)
 
         if not must_pass:
+            continue
+
+        if vtype in RUNTIME_TYPES:
+            is_runtime = True
+        elif vtype in STATIC_TYPES:
+            is_runtime = False
+        else:
+            unknown_types.append((ass_id, vtype))
             continue
 
         # Check if waived
@@ -112,71 +193,190 @@ def main():
         has_evidence = False
         evidence_dict = evidence_data.get("evidence", {})
         assertions_dict = evidence_data.get("assertions", {})
+        ass_reqs = [r for r in contract.get("evidence_requirements", []) if r.get("assertion_id") == ass_id or ass_id in r.get("assertion_ids", [])]
+
+        def evaluate_required_fields(reqs, ev_data):
+            if not reqs:
+                return False
+            for req in reqs:
+                req_fields = req.get("required_fields", [])
+                for field_path in req_fields:
+                    parts = field_path.split(".")
+                    curr = ev_data
+                    found = True
+                    for p in parts:
+                        if isinstance(curr, dict) and p in curr:
+                            curr = curr[p]
+                        else:
+                            found = False
+                            break
+                    if not found:
+                        return False
+            return True
 
         if not is_runtime:
+            def is_valid_static(ev_val):
+                if not isinstance(ev_val, dict):
+                    return False
+                status = ev_val.get("status")
+                if status in ("failed", "fail"):
+                    return False
+                if ass_reqs:
+                    return evaluate_required_fields(ass_reqs, evidence_data)
+                if status not in ("passed", "success", "pass", "verified"):
+                    return False
+                # P1-5: Substantial fields check
+                has_notes = isinstance(ev_val.get("reviewer_notes"), str) and bool(ev_val.get("reviewer_notes").strip())
+                has_path = isinstance(ev_val.get("artifact_path"), str) and bool(ev_val.get("artifact_path").strip())
+                has_legacy_path = isinstance(ev_val.get("path"), str) and bool(ev_val.get("path").strip())
+                has_summary_path = isinstance(ev_val.get("summary_path"), str) and bool(ev_val.get("summary_path").strip())
+                has_hash = isinstance(ev_val.get("hash"), str) and bool(ev_val.get("hash").strip())
+                has_evidence_url = isinstance(ev_val.get("evidence_url"), str) and bool(ev_val.get("evidence_url").strip())
+                return has_notes or has_path or has_legacy_path or has_summary_path or has_hash or has_evidence_url
+
             for key, val in evidence_dict.items():
-                if ass_id.lower() in key.lower():
-                    has_evidence = True
-                    break
-                if isinstance(val, dict) and val.get("path") and ass_id in val.get("path"):
-                    has_evidence = True
-                    break
-                if isinstance(val, dict) and val.get("status") == "verified" and ass_id in str(val):
-                    has_evidence = True
-                    break
+                if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
+                    if is_valid_static(val):
+                        has_evidence = True
+                        break
+
+            if not has_evidence:
+                negative_assertions_dict = evidence_data.get("negative_assertions", {})
+                for key, val in negative_assertions_dict.items():
+                    if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
+                        if is_valid_static(val):
+                            has_evidence = True
+                            break
 
             # Check inside 'assertions' dict if not found in 'evidence'
             if not has_evidence and ass_id in assertions_dict:
                 val = assertions_dict[ass_id]
-                if isinstance(val, dict) and val.get("status") in ("passed", "success", "pass"):
+                if is_valid_static(val):
                     has_evidence = True
 
-            # Also static validation can pass if evidence_data status is success/passed
-            if not has_evidence and evidence_data.get("status") in ("success", "passed"):
-                has_evidence = True
+            # NOTE: a self-reported top-level evidence package status
+            # ("success"/"passed") is deliberately NOT accepted as evidence here.
+            # Per-assertion evidence is required; trusting the agent's own
+            # package status would let assertions pass with no real artifact.
         else:
             # Runtime assertions: MUST have concrete runtime evidence
 
             # 1. Check evidence.json matching entries for command, exitCode, output
             for key, val in evidence_dict.items():
-                if ass_id.lower() in key.lower() or (isinstance(val, dict) and (val.get("path") and ass_id in val.get("path") or val.get("assertion_id") == ass_id)):
+                # Match evidence to the assertion by EXACT id (dict key or an
+                # explicit assertion_id), never a loose substring like "A1" in "A12".
+                if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
                     if isinstance(val, dict):
                         sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
-                        has_cmd = "command" in sub or "script" in sub
-                        has_code = sub.get("exitCode") == 0 or sub.get("exit_code") == 0 or sub.get("status") == "success"
-                        has_out = "output" in sub or "stdout" in sub
+                        cmd_val = sub.get("command") or sub.get("script")
+                        out_val = sub.get("output") or sub.get("stdout") or sub.get("observed_output") or sub.get("observed_result")
+                        code_val = sub.get("exitCode")
+                        if code_val is None:
+                            code_val = sub.get("exit_code")
+
+                        has_code = type(code_val) is int and code_val == 0
+
+                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                        has_out = isinstance(out_val, str) and bool(out_val.strip())
                         if has_cmd and has_code and has_out:
-                            has_evidence = True
-                            break
+                            if ass_reqs:
+                                if evaluate_required_fields(ass_reqs, evidence_data):
+                                    has_evidence = True
+                                    break
+                            else:
+                                has_evidence = True
+                                break
 
             # Also check 'assertions' dict for runtime execution evidence
             if not has_evidence and ass_id in assertions_dict:
                 val = assertions_dict[ass_id]
                 if isinstance(val, dict):
-                    has_cmd = "command" in val
-                    has_code = val.get("status") in ("passed", "success", "pass")
-                    has_out = "observed_result" in val or "output" in val
-                    if has_cmd and has_code and has_out:
-                        has_evidence = True
+                    cmd_val = val.get("command")
+                    out_val = val.get("observed_result") or val.get("output") or val.get("observed_output")
+                    code_val = val.get("exitCode")
+                    if code_val is None:
+                        code_val = val.get("exit_code")
 
-            # 2. Check runtime records (runtime_evidence_records in adu.json)
+                    has_code = type(code_val) is int and code_val == 0
+
+                    has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                    has_out = isinstance(out_val, str) and bool(out_val.strip())
+                    if has_cmd and has_code and has_out:
+                        if ass_reqs:
+                            if evaluate_required_fields(ass_reqs, evidence_data):
+                                has_evidence = True
+                        else:
+                            has_evidence = True
+
+            # 2. Check runtime records (runtime_evidence_records in adu.json).
+            # Require an EXACT assertion_id, a real exit code 0, and a non-empty
+            # command + output. No substring/text guessing (so an "A12" record
+            # cannot satisfy "A1"), and no empty-content records.
             if not has_evidence:
-                matching_records = []
                 for r in runtime_records:
-                    if r.get("exitCode") == 0:
-                        cmd = r.get("command") or ""
-                        out = r.get("output") or ""
-                        r_ass_id = r.get("assertion_id") or r.get("assertionId") or ""
-                        if ass_id in cmd or ass_id in out or r_ass_id == ass_id:
-                            matching_records.append(r)
-                if len(matching_records) > 0:
-                    has_evidence = True
+                    # Exact id match only: a plural `assertion_ids` list (written
+                    # by the Human Gate) by membership, or a singular
+                    # `assertion_id`. No substring/text guessing.
+                    r_ids = r.get("assertion_ids")
+                    if isinstance(r_ids, list):
+                        matched = ass_id in r_ids
+                    else:
+                        matched = (r.get("assertion_id") or r.get("assertionId") or "") == ass_id
+                    if not matched:
+                        continue
+                    cmd_val = r.get("command")
+                    out_val = r.get("output") or r.get("stdout") or r.get("observed_output") or r.get("observed_result")
+                    code_val = r.get("exitCode")
+                    if code_val is None:
+                        code_val = r.get("exit_code")
+
+                    has_code = type(code_val) is int and code_val == 0
+
+                    has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                    has_out = isinstance(out_val, str) and bool(out_val.strip())
+                    has_code = type(code_val) is int and code_val == 0
+                    if has_cmd and has_out and has_code:
+                        has_evidence = True
+                        break
 
         if not has_evidence:
             if is_runtime:
                 missing_runtime.append(ass)
             else:
                 missing_static.append(ass)
+
+    if unknown_types:
+        detail = ', '.join(f"{aid} ('{vt}')" for aid, vt in unknown_types)
+        print(f"FAIL: Unknown verification_type for assertions: {detail}. "
+              f"Allowed: automated_test, manual_review.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate evidence requirements (required_fields)
+    import re
+    missing_fields = []
+    for req in contract.get("evidence_requirements", []):
+        artifact = req.get("artifact", "")
+        fields = req.get("required_fields", [])
+        if artifact.endswith(".json") and isinstance(fields, list):
+            for field_path in fields:
+                parts = [p for p in re.split(r'\.|\[|\]', field_path) if p]
+                curr = evidence_data
+                found = True
+                for part in parts:
+                    if isinstance(curr, dict) and part in curr:
+                        curr = curr[part]
+                    elif isinstance(curr, list) and part.isdigit() and int(part) < len(curr):
+                        curr = curr[int(part)]
+                    else:
+                        found = False
+                        break
+                # Check for non-empty string or dict/list/int/bool
+                if not found or curr is None or curr == "" or (isinstance(curr, (list, dict)) and not curr):
+                    missing_fields.append(field_path)
+
+    if missing_fields:
+        print(f"FAIL: Missing required fields in evidence.json: {', '.join(missing_fields)}", file=sys.stderr)
+        sys.exit(1)
 
     if missing_static:
         print(f"FAIL: Missing static evidence for assertions: {', '.join(a['id'] for a in missing_static)}", file=sys.stderr)

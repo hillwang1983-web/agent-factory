@@ -75,13 +75,20 @@ export class EvidenceGovernanceService {
 
 
     let assertions: any[] = [];
+    let contract: any = {};
 
     // 1. Read Contract file to get assertions
     if (fs.existsSync(contractPath)) {
       try {
-        const contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8'));
+        contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8'));
         if (contract.acceptance_assertions) {
           assertions = contract.acceptance_assertions;
+          if (contract.negative_assertions) {
+            assertions = assertions.concat(contract.negative_assertions.map((n: any) => ({
+              ...n,
+              verification_type: 'manual_review'
+            })));
+          }
         } else if (contract.acceptance_criteria) {
           assertions = contract.acceptance_criteria.map((ac: any) => ({
             id: ac.id,
@@ -146,11 +153,36 @@ export class EvidenceGovernanceService {
     for (const ass of assertions) {
       const assertionId = ass.id || ass.assertion_id;
       const verificationType = ass.verification_type || 'static';
-      const isRuntime = verificationType === 'runtime';
+      const isRuntime = ['automated_test', 'runtime', 'scripted', 'curl'].includes(verificationType);
       const mustPass = ass.must_pass !== false;
 
       // Find matching waiver
-      const waiver = aduWaivers.find(w => w.assertion_ids && w.assertion_ids.includes(assertionId));
+      let waiver = null;
+      try {
+        const gatesFile = path.join(this.getRegistryDir(), 'human-gates.json');
+        let gatesData = [];
+        if (fs.existsSync(gatesFile)) {
+          gatesData = JSON.parse(fs.readFileSync(gatesFile, 'utf-8')).gates || [];
+        }
+        waiver = aduWaivers.find(w => {
+          if (!w.assertion_ids || !w.assertion_ids.includes(assertionId) || w.status !== 'approved' || !w.gate_id || !w.approved_by || !w.reason || !w.created_at) {
+            return false;
+          }
+          const gate = gatesData.find((g: any) => g.gate_id === w.gate_id);
+          if (!gate || gate.target_id !== aduId) return false;
+
+          // P1 Waiver未绑定受影响断言
+          if (!['approved', 'resolved', 'waived'].includes(gate.status)) return false;
+          if (gate.gate_type !== 'environment_verification_required') return false;
+
+          const gateAssertions = gate.affected_assertions;
+          if (!Array.isArray(gateAssertions) || gateAssertions.length === 0) return false;
+
+          if (!w.assertion_ids.every((a: string) => gateAssertions.includes(a))) return false;
+
+          return true;
+        });
+      } catch (_) {}
 
       let status: AssertionEvidenceStatus = 'not_verified';
       const evidenceItems: AssertionEvidenceItem[] = [];
@@ -166,6 +198,49 @@ export class EvidenceGovernanceService {
       } else {
         let evidenceFound = false;
 
+        const assReqs = (contract.evidence_requirements || []).filter((r: any) => r.assertion_id === assertionId || (r.assertion_ids || []).includes(assertionId));
+
+        const is_valid_static = (ev_val: any) => {
+          if (!ev_val || typeof ev_val !== 'object') return false;
+          if (ev_val.status === 'failed' || ev_val.status === 'fail') return false;
+          if (assReqs.length > 0) return true;
+
+          const status = ev_val.status;
+          if (status !== 'passed' && status !== 'success' && status !== 'pass' && status !== 'verified') return false;
+          const hasNotes = typeof ev_val.reviewer_notes === 'string' && ev_val.reviewer_notes.trim().length > 0;
+          const hasPath = typeof ev_val.artifact_path === 'string' && ev_val.artifact_path.trim().length > 0;
+          const hasLegacyPath = typeof ev_val.path === 'string' && ev_val.path.trim().length > 0;
+          const hasSummaryPath = typeof ev_val.summary_path === 'string' && ev_val.summary_path.trim().length > 0;
+          const hasHash = typeof ev_val.hash === 'string' && ev_val.hash.trim().length > 0;
+          const hasUrl = typeof ev_val.evidence_url === 'string' && ev_val.evidence_url.trim().length > 0;
+          return hasNotes || hasPath || hasLegacyPath || hasSummaryPath || hasHash || hasUrl;
+        };
+
+        const check_required_fields = () => {
+          for (const req of assReqs) {
+            const artifact = req.artifact || '';
+            if (artifact.endsWith('.json') && Array.isArray(req.required_fields)) {
+              for (const fieldPath of req.required_fields) {
+                let parts = fieldPath.split(/[\.\[\]]/).filter(Boolean);
+                let curr = evidenceData;
+                let found = true;
+                for (const part of parts) {
+                  if (curr && typeof curr === 'object' && part in curr) {
+                    curr = curr[part];
+                  } else {
+                    found = false;
+                    break;
+                  }
+                }
+                if (!found || curr === null || curr === undefined || curr === '' || (typeof curr === 'object' && Object.keys(curr).length === 0)) {
+                  return false;
+                }
+              }
+            }
+          }
+          return true;
+        };
+
         if (!isRuntime) {
           // Static assertions: acceptance report status pass is sufficient
           if (acceptanceData && (acceptanceData.assertion_results || acceptanceData.negative_assertion_results)) {
@@ -175,40 +250,63 @@ export class EvidenceGovernanceService {
             ];
             const match = results.find((r: any) => (r.assertion_id || r.id) === assertionId);
             if (match && (match.status === 'pass' || match.status === 'waived')) {
-              evidenceFound = true;
-              evidenceItems.push({
-                type: 'run_record',
-                path: acceptancePath,
-                status: match.status === 'waived' ? 'waived' : 'verified'
-              });
+              if (check_required_fields()) {
+                evidenceFound = true;
+                evidenceItems.push({
+                  type: 'run_record',
+                  path: acceptancePath,
+                  status: match.status === 'waived' ? 'waived' : 'verified'
+                });
+              }
             }
           }
 
           // Static assertions: evidence.json match is sufficient
           if (evidenceData && evidenceData.evidence) {
-            const matches = Object.entries(evidenceData.evidence).find(([key, val]: [string, any]) => {
-              return key.toLowerCase().includes(assertionId.toLowerCase()) ||
-                     (val && val.path && val.path.includes(assertionId)) ||
-                     (val && val.status === 'verified' && key.toLowerCase().replace(/_/g, '').includes(ass.title.toLowerCase().replace(/\s/g, '')));
+            const matches = Object.entries(evidenceData.evidence).filter(([key, val]: [string, any]) => {
+              return key === assertionId || (val && typeof val === 'object' && val.assertion_id === assertionId);
             });
-            if (matches) {
-              evidenceFound = true;
-              evidenceItems.push({
-                type: 'run_record',
-                path: (matches[1] as any).path || (matches[1] as any).summary_path || evidencePath,
-                status: 'verified'
-              });
+            for (const [key, val] of matches) {
+              if (is_valid_static(val) && check_required_fields()) {
+                evidenceFound = true;
+                evidenceItems.push({
+                  type: 'run_record',
+                  path: (val as any).artifact_path || (val as any).path || evidencePath,
+                  status: 'verified'
+                });
+                break;
+              }
             }
           }
 
-          // Static assertions: evidenceData.status success is sufficient
-          if (evidenceData && evidenceData.status === 'success') {
-            evidenceFound = true;
-            evidenceItems.push({
-              type: 'run_record',
-              path: evidencePath,
-              status: 'verified'
+          if (!evidenceFound && evidenceData && evidenceData.negative_assertions) {
+            const matches = Object.entries(evidenceData.negative_assertions).filter(([key, val]: [string, any]) => {
+              return key === assertionId || (val && typeof val === 'object' && val.assertion_id === assertionId);
             });
+            for (const [key, val] of matches) {
+              if (is_valid_static(val) && check_required_fields()) {
+                evidenceFound = true;
+                evidenceItems.push({
+                  type: 'run_record',
+                  path: (val as any).artifact_path || (val as any).path || evidencePath,
+                  status: 'verified'
+                });
+                break;
+              }
+            }
+          }
+
+          // Static assertions: assertions dict fallback
+          if (!evidenceFound && evidenceData && evidenceData.assertions) {
+            const val = evidenceData.assertions[assertionId];
+            if (is_valid_static(val) && check_required_fields()) {
+              evidenceFound = true;
+              evidenceItems.push({
+                type: 'run_record',
+                path: evidencePath,
+                status: 'verified'
+              });
+            }
           }
         } else {
           // Runtime assertions: MUST have concrete runtime evidence
@@ -216,18 +314,68 @@ export class EvidenceGovernanceService {
           // 1. Check evidence.json matching entries for command, exitCode, output
           if (evidenceData && evidenceData.evidence) {
             const matches = Object.entries(evidenceData.evidence).filter(([key, val]: [string, any]) => {
-              return key.toLowerCase().includes(assertionId.toLowerCase()) ||
-                     (val && val.path && val.path.includes(assertionId)) ||
-                     (val && val.assertion_id === assertionId);
+              return key === assertionId || (val && typeof val === 'object' && val.assertion_id === assertionId);
             });
             for (const [key, val] of matches) {
               if (val && typeof val === 'object') {
                 const valAny = val as any;
                 const sub = valAny.script_result || valAny.curl_output || valAny.executed_script || valAny;
-                const hasCmd = typeof sub.command === 'string' || typeof sub.script === 'string';
-                const hasCode = sub.exitCode === 0 || sub.exit_code === 0 || sub.status === 'success';
-                const hasOut = typeof sub.output === 'string' || typeof sub.stdout === 'string';
+                const cmdVal = sub.command || sub.script;
+                const codeVal = sub.exitCode !== undefined ? sub.exitCode : sub.exit_code;
+
+                const outVal = sub.output || sub.stdout || sub.observed_output || sub.observed_result;
+                const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
+                const hasCode = typeof codeVal === 'number' && codeVal === 0;
+                const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
+
                 if (hasCmd && hasCode && hasOut) {
+                  if (assReqs.length > 0) {
+                    if (check_required_fields()) {
+                      evidenceFound = true;
+                      evidenceItems.push({
+                        type: 'run_record',
+                        path: valAny.path || evidencePath,
+                        status: 'verified'
+                      });
+                      break;
+                    }
+                  } else {
+                    evidenceFound = true;
+                    evidenceItems.push({
+                      type: 'run_record',
+                      path: valAny.path || evidencePath,
+                      status: 'verified'
+                    });
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          if (!evidenceFound && evidenceData && evidenceData.assertions) {
+            const val = evidenceData.assertions[assertionId];
+            if (val && typeof val === 'object') {
+              const valAny = val as any;
+              const cmdVal = val.command;
+              const codeVal = val.exitCode !== undefined ? val.exitCode : val.exit_code;
+
+              const outVal = valAny.observed_result || valAny.output || valAny.observed_output;
+              const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
+              const hasCode = typeof codeVal === 'number' && codeVal === 0;
+              const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
+
+              if (hasCmd && hasCode && hasOut) {
+                if (assReqs.length > 0) {
+                  if (check_required_fields()) {
+                    evidenceFound = true;
+                    evidenceItems.push({
+                      type: 'run_record',
+                      path: valAny.path || evidencePath,
+                      status: 'verified'
+                    });
+                  }
+                } else {
                   evidenceFound = true;
                   evidenceItems.push({
                     type: 'run_record',
@@ -240,24 +388,33 @@ export class EvidenceGovernanceService {
           }
 
           // 2. Check runtime_evidence_records in adu.json
-          if (aduRuntimeRecords.length > 0) {
-            const matchingRecords = aduRuntimeRecords.filter(r =>
-              r.exitCode === 0 &&
-              r.command && (
-                r.command.includes(assertionId) ||
-                (r.output && r.output.includes(assertionId)) ||
-                r.assertion_id === assertionId ||
-                r.assertionId === assertionId
-              )
-            );
-            if (matchingRecords.length > 0) {
-              evidenceFound = true;
-              for (const r of matchingRecords) {
+          if (!evidenceFound && aduRuntimeRecords.length > 0) {
+            for (const r of aduRuntimeRecords) {
+              const r_ids = r.assertion_ids;
+              let matched = false;
+              if (Array.isArray(r_ids)) {
+                matched = r_ids.includes(assertionId);
+              } else {
+                matched = (r.assertion_id || r.assertionId || "") === assertionId;
+              }
+              if (!matched) continue;
+
+              const codeVal = r.exitCode !== undefined ? r.exitCode : r.exit_code;
+              const cmdVal = r.command;
+              const outVal = r.output || r.stdout || r.observed_output || r.observed_result;
+
+              const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
+              const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
+              const hasCode = typeof codeVal === 'number' && codeVal === 0;
+
+              if (hasCmd && hasOut && hasCode) {
+                evidenceFound = true;
                 evidenceItems.push({
-                  type: 'executed_script',
-                  path: r.command,
+                  type: 'run_record',
+                  path: 'adu.json',
                   status: 'verified'
                 });
+                break;
               }
             }
           }

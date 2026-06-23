@@ -287,11 +287,14 @@ export class HumanGateService {
           adu.state = targetState;
           adu.human_gate_required = false;
 
-          // Push the runtime validation command results to compliance log or adu runs
+          // Push the runtime validation command results to compliance log or adu runs.
+          // Record the assertions this gate covers so the evidence validator can
+          // match the record to assertions by exact id (not by text guessing).
           if (!adu.runtime_evidence_records) {
             adu.runtime_evidence_records = [];
           }
           adu.runtime_evidence_records.push({
+            assertion_ids: gate.affected_assertions || [],
             command: input.command,
             exitCode: input.exitCode,
             output: input.output,
@@ -369,6 +372,8 @@ export class HumanGateService {
         risk: input.risk,
         follow_up: input.follow_up,
         operator: input.operator,
+        status: 'approved',
+        approved_by: input.operator || 'operator',
         created_at: new Date().toISOString()
       };
       waivers.push(waiver);

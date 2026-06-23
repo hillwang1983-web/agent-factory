@@ -1131,6 +1131,11 @@ def main():
                     err_msg = val_proc.stderr or val_proc.stdout or "Human gate required"
                     result["error"] = err_msg.strip()
 
+                    import re
+                    match = re.search(r"HUMAN_GATE:.*assertions:\s*(.*)", err_msg)
+                    if match:
+                        result["affected_assertions"] = [s.strip() for s in match.group(1).split(",") if s.strip()]
+
                     with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
                         if proc.stderr:
                             stderr_file.write("\n")

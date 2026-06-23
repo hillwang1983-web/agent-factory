@@ -1300,6 +1300,17 @@ export function createAgentFactoryRouter(
               severity: parsed.severity || 'info'
             });
 
+            if (parsed.affected_assertions && Array.isArray(parsed.affected_assertions)) {
+              affectedAssertions = parsed.affected_assertions;
+            } else if (parsed.payload && parsed.payload.affected_assertions && Array.isArray(parsed.payload.affected_assertions)) {
+              affectedAssertions = parsed.payload.affected_assertions;
+            } else if (parsed.error) {
+              const match = String(parsed.error).match(/HUMAN_GATE:.*assertions:\s*(.*)/);
+              if (match) {
+                affectedAssertions = match[1].split(',').map((s: string) => s.trim()).filter(Boolean);
+              }
+            }
+
             // Update current status / current agent of operation
             const updates = mapOrchestratorEvent(parsed);
             if (Object.keys(updates).length > 0) {
@@ -1319,6 +1330,7 @@ export function createAgentFactoryRouter(
     });
 
     let stderrBuf = '';
+    let affectedAssertions: string[] = [];
     child.stderr.on('data', (chunk) => {
       const str = chunk.toString();
       logger.error(`Orchestrator stderr: ${str}`);
@@ -1399,7 +1411,8 @@ export function createAgentFactoryRouter(
           title: gateType === 'write_path_expansion' ? 'Write Path Expansion Required' : 'Runtime Evidence Required',
           reason: gateType === 'write_path_expansion' ? 'Proposed modifications affect derived files. Approval required.' : 'Acceptance testing requires environment verification.',
           source_agent: nextAgent,
-          pre_gate_state: adu?.state || 'debugged'
+          pre_gate_state: adu?.state || 'debugged',
+          affected_assertions: affectedAssertions
         });
       } else if (code !== 0) {
         status = 'failed';
