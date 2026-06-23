@@ -85,6 +85,15 @@ def main():
                 print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] missing field '{field}'", file=sys.stderr)
                 return 1
 
+        # verification_type must be a known value so the evidence validator can
+        # route it to runtime vs static/manual evidence checks deterministically.
+        allowed_vtypes = {"automated_test", "manual_review"}
+        vtype = ass.get("verification_type")
+        if vtype not in allowed_vtypes:
+            print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] has unknown verification_type "
+                  f"'{vtype}' (allowed: {', '.join(sorted(allowed_vtypes))})", file=sys.stderr)
+            return 1
+
         # Check verification commands / steps
         v_cmd = ass.get("verification_command")
         m_steps = ass.get("manual_verification_steps")

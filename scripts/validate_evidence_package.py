@@ -98,15 +98,33 @@ def main():
         except Exception as e:
             print(f"WARNING: Failed to parse adu.json: {e}", file=sys.stderr)
 
+    # Map the Contract Agent's verification_type vocabulary to evidence kind.
+    # "automated_test" requires real runtime evidence; "manual_review" is a
+    # static/manual check. ("runtime"/"static" also occur via the
+    # acceptance_criteria conversion above.) Unknown types are rejected rather
+    # than silently treated as static, which would let a runtime requirement
+    # pass with weak evidence.
+    RUNTIME_TYPES = {"automated_test", "runtime"}
+    STATIC_TYPES = {"manual_review", "static"}
+
     missing_runtime = []
     missing_static = []
+    unknown_types = []
 
     for ass in assertions:
         ass_id = ass.get("id")
-        is_runtime = ass.get("verification_type") == "runtime"
+        vtype = ass.get("verification_type")
         must_pass = ass.get("must_pass", True)
 
         if not must_pass:
+            continue
+
+        if vtype in RUNTIME_TYPES:
+            is_runtime = True
+        elif vtype in STATIC_TYPES:
+            is_runtime = False
+        else:
+            unknown_types.append((ass_id, vtype))
             continue
 
         # Check if waived
@@ -176,24 +194,40 @@ def main():
                     if has_cmd and has_code and has_out:
                         has_evidence = True
 
-            # 2. Check runtime records (runtime_evidence_records in adu.json)
+            # 2. Check runtime records (runtime_evidence_records in adu.json).
+            # Require an EXACT assertion_id, a real exit code 0, and a non-empty
+            # command + output. No substring/text guessing (so an "A12" record
+            # cannot satisfy "A1"), and no empty-content records.
             if not has_evidence:
-                matching_records = []
                 for r in runtime_records:
-                    if r.get("exitCode") == 0:
-                        cmd = r.get("command") or ""
-                        out = r.get("output") or ""
-                        r_ass_id = r.get("assertion_id") or r.get("assertionId") or ""
-                        if ass_id in cmd or ass_id in out or r_ass_id == ass_id:
-                            matching_records.append(r)
-                if len(matching_records) > 0:
-                    has_evidence = True
+                    # Exact id match only: a plural `assertion_ids` list (written
+                    # by the Human Gate) by membership, or a singular
+                    # `assertion_id`. No substring/text guessing.
+                    r_ids = r.get("assertion_ids")
+                    if isinstance(r_ids, list):
+                        matched = ass_id in r_ids
+                    else:
+                        matched = (r.get("assertion_id") or r.get("assertionId") or "") == ass_id
+                    if not matched:
+                        continue
+                    cmd = str(r.get("command") or "").strip()
+                    out = str(r.get("output") or r.get("stdout") or "").strip()
+                    has_code = r.get("exitCode") == 0 or r.get("exit_code") == 0
+                    if cmd and out and has_code:
+                        has_evidence = True
+                        break
 
         if not has_evidence:
             if is_runtime:
                 missing_runtime.append(ass)
             else:
                 missing_static.append(ass)
+
+    if unknown_types:
+        detail = ', '.join(f"{aid} ('{vt}')" for aid, vt in unknown_types)
+        print(f"FAIL: Unknown verification_type for assertions: {detail}. "
+              f"Allowed: automated_test, manual_review.", file=sys.stderr)
+        sys.exit(1)
 
     if missing_static:
         print(f"FAIL: Missing static evidence for assertions: {', '.join(a['id'] for a in missing_static)}", file=sys.stderr)

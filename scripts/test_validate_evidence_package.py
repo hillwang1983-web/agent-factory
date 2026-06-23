@@ -55,12 +55,14 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def setup(tmp, adu_id, contract, evidence):
+def setup(tmp, adu_id, contract, evidence, runtime_records=None):
     repo = Path(tmp) / "repo"
     write_json(repo / ".ai-agent" / "contracts" / f"{adu_id}.json", contract)
     write_json(repo / ".ai-agent" / "evidence" / f"{adu_id}.json", evidence)
     reg = Path(tmp) / "registry"
     reg.mkdir(parents=True, exist_ok=True)
+    if runtime_records is not None:
+        write_json(reg / "adu.json", {"adus": [{"id": adu_id, "runtime_evidence_records": runtime_records}]})
     return str(repo), str(reg)
 
 
@@ -195,6 +197,123 @@ with tempfile.TemporaryDirectory() as tmp:
     repo, reg = setup(tmp, "REQ-T09", contract, evidence)
     assert_exit("T09: substring-only id match must not satisfy assertion → human_gate (20)",
                 20, "REQ-T09", repo, reg)
+
+# ── Real Contract Agent schema (automated_test / manual_review) ───────────────
+# The Contract Agent emits verification_type "automated_test" and "manual_review"
+# (see .ai-agent/prompts/contract-agent.md), NOT "runtime"/"static". These tests
+# exercise the real vocabulary.
+
+# T10 — an automated_test assertion is a RUNTIME assertion. Pseudo-static
+# evidence ({"status":"verified","path":"fake.txt"}) must NOT satisfy it.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T10",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "endpoint works", "verification_type": "automated_test", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"status": "verified", "path": "fake.txt"}}}
+    repo, reg = setup(tmp, "REQ-T10", contract, evidence)
+    assert_exit("T10: automated_test w/ pseudo-static evidence → human_gate (20)",
+                20, "REQ-T10", repo, reg)
+
+# T11 — automated_test WITH real runtime evidence passes.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T11",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "endpoint works", "verification_type": "automated_test", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"command": "make test", "exitCode": 0, "output": "PASS: suite"}}}
+    repo, reg = setup(tmp, "REQ-T11", contract, evidence)
+    assert_exit("T11: automated_test w/ real runtime evidence → pass (0)",
+                0, "REQ-T11", repo, reg)
+
+# T12 — a manual_review assertion is satisfied by a static/manual evidence entry.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T12",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "doc reviewed", "verification_type": "manual_review", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"status": "verified", "path": ".ai-agent/evidence/A1.json"}}}
+    repo, reg = setup(tmp, "REQ-T12", contract, evidence)
+    assert_exit("T12: manual_review w/ static evidence → pass (0)",
+                0, "REQ-T12", repo, reg)
+
+# T13 — an unknown verification_type must fail rather than be silently treated
+# as static (which would let a runtime requirement pass with weak evidence).
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T13",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "??", "verification_type": "totally_unknown", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A1": {"status": "verified", "path": "x"}}}
+    repo, reg = setup(tmp, "REQ-T13", contract, evidence)
+    assert_exit("T13: unknown verification_type → fail (1)",
+                1, "REQ-T13", repo, reg)
+
+# ── runtime_evidence_records path (adu.json) ──────────────────────────────────
+
+# T14 — a runtime record with an exact assertion_id but EMPTY command/output
+# must NOT satisfy the assertion.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T14",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "svc", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    records = [{"assertion_id": "A1", "command": "", "output": "", "exitCode": 0}]
+    repo, reg = setup(tmp, "REQ-T14", contract, {"status": "x"}, runtime_records=records)
+    assert_exit("T14: runtime record w/ exact id but empty command/output → human_gate (20)",
+                20, "REQ-T14", repo, reg)
+
+# T15 — a runtime record that merely mentions "A12" in its text must NOT satisfy
+# assertion "A1" (no substring / text-guess matching; exact assertion_id only).
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T15",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "svc", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    records = [{"command": "run test A12", "output": "ok A12", "exitCode": 0}]
+    repo, reg = setup(tmp, "REQ-T15", contract, {"status": "x"}, runtime_records=records)
+    assert_exit("T15: runtime record substring-matching A12 must not satisfy A1 → human_gate (20)",
+                20, "REQ-T15", repo, reg)
+
+# T16 — a valid runtime record (exact assertion_id, non-empty command/output,
+# exitCode 0) satisfies the assertion.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T16",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "svc", "verification_type": "automated_test", "must_pass": True},
+        ],
+    }
+    records = [{"assertion_id": "A1", "command": "make test", "output": "PASS", "exitCode": 0}]
+    repo, reg = setup(tmp, "REQ-T16", contract, {"status": "x"}, runtime_records=records)
+    assert_exit("T16: valid runtime record (exact id, non-empty, exit 0) → pass (0)",
+                0, "REQ-T16", repo, reg)
+
+# T17 — a runtime record written with a plural `assertion_ids` list (the shape
+# the Human Gate persists) satisfies a member assertion by exact membership.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T17",
+        "acceptance_assertions": [
+            {"id": "A5", "title": "svc", "verification_type": "runtime", "must_pass": True},
+        ],
+    }
+    records = [{"assertion_ids": ["A5", "A6"], "command": "make e2e", "output": "PASS", "exitCode": 0}]
+    repo, reg = setup(tmp, "REQ-T17", contract, {"status": "x"}, runtime_records=records)
+    assert_exit("T17: runtime record w/ plural assertion_ids (membership) → pass (0)",
+                0, "REQ-T17", repo, reg)
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
