@@ -139,13 +139,10 @@ def main():
 
         if not is_runtime:
             for key, val in evidence_dict.items():
-                if ass_id.lower() in key.lower():
-                    has_evidence = True
-                    break
-                if isinstance(val, dict) and val.get("path") and ass_id in val.get("path"):
-                    has_evidence = True
-                    break
-                if isinstance(val, dict) and val.get("status") == "verified" and ass_id in str(val):
+                # Match static/manual evidence by EXACT assertion id only (dict key
+                # or an explicit assertion_id field), never a loose substring of the
+                # key, path, or stringified value (so an "A12" entry can't satisfy "A1").
+                if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
                     has_evidence = True
                     break
 

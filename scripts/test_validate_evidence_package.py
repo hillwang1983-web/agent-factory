@@ -315,6 +315,20 @@ with tempfile.TemporaryDirectory() as tmp:
     assert_exit("T17: runtime record w/ plural assertion_ids (membership) → pass (0)",
                 0, "REQ-T17", repo, reg)
 
+# T18 — static/manual evidence is also matched by EXACT id only: an entry keyed
+# "A12" must not satisfy assertion "A1" via substring.
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T18",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "doc reviewed", "verification_type": "manual_review", "must_pass": True},
+        ],
+    }
+    evidence = {"evidence": {"A12": {"status": "verified", "path": ".ai-agent/evidence/A12.json"}}}
+    repo, reg = setup(tmp, "REQ-T18", contract, evidence)
+    assert_exit("T18: static evidence keyed A12 must not satisfy A1 → fail (1)",
+                1, "REQ-T18", repo, reg)
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
