@@ -74,8 +74,17 @@ def main():
         except Exception as e:
             print(f"WARNING: Failed to parse waivers JSON: {e}", file=sys.stderr)
 
-    # Filter waivers for this ADU
-    adu_waivers = [w for w in waivers if w.get("adu_id") == adu_id]
+    # Filter and validate waivers for this ADU
+    valid_waivers = []
+    for w in waivers:
+        if w.get("adu_id") == adu_id:
+            # P2-2: Waiver Schema and status check
+            w_status = w.get("status")
+            w_ids = w.get("assertion_ids", [])
+            w_gate = w.get("gate_id") or w.get("human_gate_id")
+            if w_status == "approved" and w_gate and w.get("approved_by") and isinstance(w_ids, list) and len(w_ids) > 0:
+                valid_waivers.append(w)
+    adu_waivers = valid_waivers
 
     # 3. Load Evidence
     evidence_data = {}
@@ -110,8 +119,18 @@ def main():
     missing_runtime = []
     missing_static = []
     unknown_types = []
+    
+    # Include both acceptance and negative assertions
+    all_assertions = list(assertions)
+    for nass in contract.get("negative_assertions", []):
+        all_assertions.append({
+            "id": nass["id"],
+            "title": nass.get("title", ""),
+            "verification_type": "manual_review", # negative assertions are typically manually reviewed / statically checked
+            "must_pass": nass.get("must_pass", True)
+        })
 
-    for ass in assertions:
+    for ass in all_assertions:
         ass_id = ass.get("id")
         vtype = ass.get("verification_type")
         must_pass = ass.get("must_pass", True)
@@ -138,18 +157,29 @@ def main():
         assertions_dict = evidence_data.get("assertions", {})
 
         if not is_runtime:
+            def is_valid_static(ev_val):
+                if not isinstance(ev_val, dict):
+                    return False
+                status = ev_val.get("status")
+                if status not in ("passed", "success", "pass"):
+                    return False
+                # P1-5: Substantial fields check
+                has_notes = isinstance(ev_val.get("reviewer_notes"), str) and bool(ev_val.get("reviewer_notes").strip())
+                has_path = isinstance(ev_val.get("artifact_path"), str) and bool(ev_val.get("artifact_path").strip())
+                has_hash = isinstance(ev_val.get("hash"), str) and bool(ev_val.get("hash").strip())
+                has_evidence_url = isinstance(ev_val.get("evidence_url"), str) and bool(ev_val.get("evidence_url").strip())
+                return has_notes or has_path or has_hash or has_evidence_url
+
             for key, val in evidence_dict.items():
-                # Match static/manual evidence by EXACT assertion id only (dict key
-                # or an explicit assertion_id field), never a loose substring of the
-                # key, path, or stringified value (so an "A12" entry can't satisfy "A1").
                 if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
-                    has_evidence = True
-                    break
+                    if is_valid_static(val):
+                        has_evidence = True
+                        break
 
             # Check inside 'assertions' dict if not found in 'evidence'
             if not has_evidence and ass_id in assertions_dict:
                 val = assertions_dict[ass_id]
-                if isinstance(val, dict) and val.get("status") in ("passed", "success", "pass"):
+                if is_valid_static(val):
                     has_evidence = True
 
             # NOTE: a self-reported top-level evidence package status
@@ -166,14 +196,15 @@ def main():
                 if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
                     if isinstance(val, dict):
                         sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
-                        cmd_val = sub.get("command") or sub.get("script") or ""
-                        out_val = sub.get("output") or sub.get("stdout") or ""
-                        # Runtime evidence requires a non-empty command, non-empty
-                        # output, and a real exit code 0. Field presence alone is not
-                        # enough, and a self-reported status is not accepted.
-                        has_cmd = bool(str(cmd_val).strip())
-                        has_code = sub.get("exitCode") == 0 or sub.get("exit_code") == 0
-                        has_out = bool(str(out_val).strip())
+                        cmd_val = sub.get("command") or sub.get("script")
+                        out_val = sub.get("output") or sub.get("stdout")
+                        code_val = sub.get("exitCode")
+                        if code_val is None:
+                            code_val = sub.get("exit_code")
+                        
+                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                        has_code = type(code_val) is int and code_val == 0
+                        has_out = isinstance(out_val, str) and bool(out_val.strip())
                         if has_cmd and has_code and has_out:
                             has_evidence = True
                             break
@@ -182,12 +213,15 @@ def main():
             if not has_evidence and ass_id in assertions_dict:
                 val = assertions_dict[ass_id]
                 if isinstance(val, dict):
-                    cmd_val = val.get("command") or ""
-                    out_val = val.get("observed_result") or val.get("output") or ""
-                    # Same rule: non-empty command + output and a real exit code 0.
-                    has_cmd = bool(str(cmd_val).strip())
-                    has_code = val.get("exitCode") == 0 or val.get("exit_code") == 0
-                    has_out = bool(str(out_val).strip())
+                    cmd_val = val.get("command")
+                    out_val = val.get("observed_result") or val.get("output")
+                    code_val = val.get("exitCode")
+                    if code_val is None:
+                        code_val = val.get("exit_code")
+                        
+                    has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                    has_code = type(code_val) is int and code_val == 0
+                    has_out = isinstance(out_val, str) and bool(out_val.strip())
                     if has_cmd and has_code and has_out:
                         has_evidence = True
 
@@ -207,10 +241,16 @@ def main():
                         matched = (r.get("assertion_id") or r.get("assertionId") or "") == ass_id
                     if not matched:
                         continue
-                    cmd = str(r.get("command") or "").strip()
-                    out = str(r.get("output") or r.get("stdout") or "").strip()
-                    has_code = r.get("exitCode") == 0 or r.get("exit_code") == 0
-                    if cmd and out and has_code:
+                    cmd_val = r.get("command")
+                    out_val = r.get("output") or r.get("stdout")
+                    code_val = r.get("exitCode")
+                    if code_val is None:
+                        code_val = r.get("exit_code")
+
+                    has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                    has_out = isinstance(out_val, str) and bool(out_val.strip())
+                    has_code = type(code_val) is int and code_val == 0
+                    if has_cmd and has_out and has_code:
                         has_evidence = True
                         break
 
@@ -224,6 +264,31 @@ def main():
         detail = ', '.join(f"{aid} ('{vt}')" for aid, vt in unknown_types)
         print(f"FAIL: Unknown verification_type for assertions: {detail}. "
               f"Allowed: automated_test, manual_review.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate evidence requirements (required_fields)
+    missing_fields = []
+    for req in contract.get("evidence_requirements", []):
+        artifact = req.get("artifact")
+        fields = req.get("required_fields", [])
+        if artifact == "evidence.json" and isinstance(fields, list):
+            for field_path in fields:
+                # Basic JSON path check e.g., "evidence.A1.reviewer_notes"
+                parts = field_path.split('.')
+                curr = evidence_data
+                found = True
+                for part in parts:
+                    if isinstance(curr, dict) and part in curr:
+                        curr = curr[part]
+                    else:
+                        found = False
+                        break
+                # Check for non-empty string or dict/list
+                if not found or curr is None or curr == "" or (isinstance(curr, (list, dict)) and not curr):
+                    missing_fields.append(field_path)
+
+    if missing_fields:
+        print(f"FAIL: Missing required fields in evidence.json: {', '.join(missing_fields)}", file=sys.stderr)
         sys.exit(1)
 
     if missing_static:

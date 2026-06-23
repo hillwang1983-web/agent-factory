@@ -61,10 +61,9 @@ def main():
         print(f"FAIL contract {adu_id}: adu_id in JSON ('{contract.get('adu_id')}') does not match expected '{adu_id}'", file=sys.stderr)
         return 1
 
-    # 3. Quality gates defaults
     quality_gates = contract.get("quality_gates", {})
-    min_assertions = quality_gates.get("minimum_assertions", 3)
-    min_neg_assertions = quality_gates.get("minimum_negative_assertions", 1)
+    min_assertions = max(1, int(quality_gates.get("minimum_assertions", 3)))
+    min_neg_assertions = max(1, int(quality_gates.get("minimum_negative_assertions", 1)))
 
     # 4. Acceptance Assertions check
     assertions = contract.get("acceptance_assertions", [])
@@ -77,13 +76,29 @@ def main():
         return 1
 
     assertion_ids = set()
+    mandatory_acceptance_count = 0
     for idx, ass in enumerate(assertions):
-        # Fields check
         req_fields = ["id", "title", "requirement", "verification_type", "expected_evidence", "must_pass"]
         for field in req_fields:
             if field not in ass:
                 print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] missing field '{field}'", file=sys.stderr)
                 return 1
+
+        must_pass = ass.get("must_pass")
+        if not isinstance(must_pass, bool):
+            print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}].must_pass must be a boolean", file=sys.stderr)
+            return 1
+        if must_pass:
+            mandatory_acceptance_count += 1
+
+        ass_id = ass.get("id")
+        if not isinstance(ass_id, str) or not ass_id.strip():
+            print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] missing or empty 'id'", file=sys.stderr)
+            return 1
+        if ass_id in assertion_ids:
+            print(f"FAIL contract {adu_id}: Duplicate assertion id '{ass_id}'", file=sys.stderr)
+            return 1
+        assertion_ids.add(ass_id)
 
         # verification_type must be a known value so the evidence validator can
         # route it to runtime vs static/manual evidence checks deterministically.
@@ -105,12 +120,12 @@ def main():
         elif isinstance(m_steps, list) and len(m_steps) > 0 and all(isinstance(s, str) and len(s.strip()) > 0 for s in m_steps):
             has_m_steps = True
 
-        if not has_v_cmd and not has_m_steps:
-            print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] must provide a non-empty 'verification_command' or 'manual_verification_steps'", file=sys.stderr)
+        if vtype == "automated_test" and not has_v_cmd:
+            print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] with 'automated_test' must provide a non-empty 'verification_command'", file=sys.stderr)
             return 1
-
-        ass_id = ass.get("id")
-        assertion_ids.add(ass_id)
+        if vtype == "manual_review" and not has_m_steps:
+            print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}] with 'manual_review' must provide non-empty 'manual_verification_steps'", file=sys.stderr)
+            return 1
 
         # Expected evidence check
         ev = ass.get("expected_evidence", [])
@@ -128,6 +143,10 @@ def main():
                     print(f"FAIL contract {adu_id}: acceptance_assertions[{idx}].expected_evidence contains vague phrase: '{phrase}'", file=sys.stderr)
                     return 1
 
+    if mandatory_acceptance_count == 0:
+        print(f"FAIL contract {adu_id}: Must have at least 1 mandatory (must_pass: true) acceptance assertion", file=sys.stderr)
+        return 1
+
     # 5. Negative Assertions check
     neg_assertions = contract.get("negative_assertions", [])
     if not isinstance(neg_assertions, list):
@@ -138,13 +157,33 @@ def main():
         print(f"FAIL contract {adu_id}: negative_assertions length ({len(neg_assertions)}) is less than minimum required ({min_neg_assertions})", file=sys.stderr)
         return 1
 
+    mandatory_negative_count = 0
     for idx, nass in enumerate(neg_assertions):
         req_fields = ["id", "title", "forbidden_change", "must_pass"]
         for field in req_fields:
             if field not in nass:
                 print(f"FAIL contract {adu_id}: negative_assertions[{idx}] missing field '{field}'", file=sys.stderr)
                 return 1
-        assertion_ids.add(nass.get("id"))
+
+        must_pass = nass.get("must_pass")
+        if not isinstance(must_pass, bool):
+            print(f"FAIL contract {adu_id}: negative_assertions[{idx}].must_pass must be a boolean", file=sys.stderr)
+            return 1
+        if must_pass:
+            mandatory_negative_count += 1
+
+        nass_id = nass.get("id")
+        if not isinstance(nass_id, str) or not nass_id.strip():
+            print(f"FAIL contract {adu_id}: negative_assertions[{idx}] missing or empty 'id'", file=sys.stderr)
+            return 1
+        if nass_id in assertion_ids:
+            print(f"FAIL contract {adu_id}: Duplicate assertion id '{nass_id}'", file=sys.stderr)
+            return 1
+        assertion_ids.add(nass_id)
+
+    if mandatory_negative_count == 0:
+        print(f"FAIL contract {adu_id}: Must have at least 1 mandatory (must_pass: true) negative assertion", file=sys.stderr)
+        return 1
 
     # 6. Evidence Requirements check
     ev_reqs = contract.get("evidence_requirements", [])

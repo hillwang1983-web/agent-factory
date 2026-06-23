@@ -1319,6 +1319,7 @@ export function createAgentFactoryRouter(
     });
 
     let stderrBuf = '';
+    let affectedAssertions: string[] = [];
     child.stderr.on('data', (chunk) => {
       const str = chunk.toString();
       logger.error(`Orchestrator stderr: ${str}`);
@@ -1328,6 +1329,10 @@ export function createAgentFactoryRouter(
         const line = stderrBuf.substring(0, lineEnd).trim();
         stderrBuf = stderrBuf.substring(lineEnd + 1);
         if (line) {
+          const match = line.match(/HUMAN_GATE:.*assertions:\s*(.*)/);
+          if (match) {
+            affectedAssertions = match[1].split(',').map((s: string) => s.trim()).filter(Boolean);
+          }
           OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: 'stderr_line',
             payload: { line },
@@ -1399,7 +1404,8 @@ export function createAgentFactoryRouter(
           title: gateType === 'write_path_expansion' ? 'Write Path Expansion Required' : 'Runtime Evidence Required',
           reason: gateType === 'write_path_expansion' ? 'Proposed modifications affect derived files. Approval required.' : 'Acceptance testing requires environment verification.',
           source_agent: nextAgent,
-          pre_gate_state: adu?.state || 'debugged'
+          pre_gate_state: adu?.state || 'debugged',
+          affected_assertions: affectedAssertions
         });
       } else if (code !== 0) {
         status = 'failed';
