@@ -177,7 +177,7 @@ export class EvidenceGovernanceService {
 
           const gateAssertions = gate.affected_assertions;
           if (!Array.isArray(gateAssertions) || gateAssertions.length === 0) return false;
-          
+
           if (!w.assertion_ids.every((a: string) => gateAssertions.includes(a))) return false;
 
           return true;
@@ -321,27 +321,25 @@ export class EvidenceGovernanceService {
                 const valAny = val as any;
                 const sub = valAny.script_result || valAny.curl_output || valAny.executed_script || valAny;
                 const cmdVal = sub.command || sub.script;
-                const outVal = sub.output || sub.stdout;
                 const codeVal = sub.exitCode !== undefined ? sub.exitCode : sub.exit_code;
 
+                const outVal = sub.output || sub.stdout || sub.observed_output || sub.observed_result;
+                const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
                 const hasCode = typeof codeVal === 'number' && codeVal === 0;
+                const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
 
-                if (assReqs.length > 0) {
-                  if (hasCode && check_required_fields()) {
-                    evidenceFound = true;
-                    evidenceItems.push({
-                      type: 'run_record',
-                      path: valAny.path || evidencePath,
-                      status: 'verified'
-                    });
-                    break;
-                  }
-                } else {
-                  const outVal = sub.output || sub.stdout || sub.observed_output || sub.observed_result;
-                  const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
-                  const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
-
-                  if (hasCmd && hasCode && hasOut) {
+                if (hasCmd && hasCode && hasOut) {
+                  if (assReqs.length > 0) {
+                    if (check_required_fields()) {
+                      evidenceFound = true;
+                      evidenceItems.push({
+                        type: 'run_record',
+                        path: valAny.path || evidencePath,
+                        status: 'verified'
+                      });
+                      break;
+                    }
+                  } else {
                     evidenceFound = true;
                     evidenceItems.push({
                       type: 'run_record',
@@ -362,23 +360,22 @@ export class EvidenceGovernanceService {
               const cmdVal = val.command;
               const codeVal = val.exitCode !== undefined ? val.exitCode : val.exit_code;
 
+              const outVal = valAny.observed_result || valAny.output || valAny.observed_output;
+              const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
               const hasCode = typeof codeVal === 'number' && codeVal === 0;
+              const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
 
-              if (assReqs.length > 0) {
-                if (hasCode && check_required_fields()) {
-                  evidenceFound = true;
-                  evidenceItems.push({
-                    type: 'run_record',
-                    path: valAny.path || evidencePath,
-                    status: 'verified'
-                  });
-                }
-              } else {
-                const outVal = valAny.observed_result || valAny.output || valAny.observed_output;
-                const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
-                const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
-
-                if (hasCmd && hasCode && hasOut) {
+              if (hasCmd && hasCode && hasOut) {
+                if (assReqs.length > 0) {
+                  if (check_required_fields()) {
+                    evidenceFound = true;
+                    evidenceItems.push({
+                      type: 'run_record',
+                      path: valAny.path || evidencePath,
+                      status: 'verified'
+                    });
+                  }
+                } else {
                   evidenceFound = true;
                   evidenceItems.push({
                     type: 'run_record',

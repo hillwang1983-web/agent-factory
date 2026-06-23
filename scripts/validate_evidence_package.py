@@ -116,7 +116,7 @@ def main():
             gate_assertions = matching_gate.get("affected_assertions", [])
             if not isinstance(gate_assertions, list) or len(gate_assertions) == 0:
                 continue
-            
+
             # Waiver assertion must belong to gate.affected_assertions
             if not all(a in gate_assertions for a in w_ids):
                 continue
@@ -276,14 +276,14 @@ def main():
 
                         has_code = type(code_val) is int and code_val == 0
 
-                        if ass_reqs:
-                            if has_code and evaluate_required_fields(ass_reqs, evidence_data):
-                                has_evidence = True
-                                break
-                        else:
-                            has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
-                            has_out = isinstance(out_val, str) and bool(out_val.strip())
-                            if has_cmd and has_code and has_out:
+                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                        has_out = isinstance(out_val, str) and bool(out_val.strip())
+                        if has_cmd and has_code and has_out:
+                            if ass_reqs:
+                                if evaluate_required_fields(ass_reqs, evidence_data):
+                                    has_evidence = True
+                                    break
+                            else:
                                 has_evidence = True
                                 break
 
@@ -299,13 +299,13 @@ def main():
 
                     has_code = type(code_val) is int and code_val == 0
 
-                    if ass_reqs:
-                        if has_code and evaluate_required_fields(ass_reqs, evidence_data):
-                            has_evidence = True
-                    else:
-                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
-                        has_out = isinstance(out_val, str) and bool(out_val.strip())
-                        if has_cmd and has_code and has_out:
+                    has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                    has_out = isinstance(out_val, str) and bool(out_val.strip())
+                    if has_cmd and has_code and has_out:
+                        if ass_reqs:
+                            if evaluate_required_fields(ass_reqs, evidence_data):
+                                has_evidence = True
+                        else:
                             has_evidence = True
 
             # 2. Check runtime records (runtime_evidence_records in adu.json).
