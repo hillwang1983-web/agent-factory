@@ -108,12 +108,15 @@ def main():
             # P1 Waiver未绑定受影响断言
             if matching_gate.get("status") not in ("approved", "resolved", "waived"):
                 continue
-            
+
             gate_type = matching_gate.get("gate_type")
             if gate_type not in ("environment_verification_required",):
                 continue
-            
+
             gate_assertions = matching_gate.get("affected_assertions", [])
+            if not isinstance(gate_assertions, list) or len(gate_assertions) == 0:
+                continue
+            
             # Waiver assertion must belong to gate.affected_assertions
             if not all(a in gate_assertions for a in w_ids):
                 continue
@@ -190,10 +193,28 @@ def main():
         has_evidence = False
         evidence_dict = evidence_data.get("evidence", {})
         assertions_dict = evidence_data.get("assertions", {})
+        ass_reqs = [r for r in contract.get("evidence_requirements", []) if r.get("assertion_id") == ass_id or ass_id in r.get("assertion_ids", [])]
+
+        def evaluate_required_fields(reqs, ev_data):
+            if not reqs:
+                return False
+            for req in reqs:
+                req_fields = req.get("required_fields", [])
+                for field_path in req_fields:
+                    parts = field_path.split(".")
+                    curr = ev_data
+                    found = True
+                    for p in parts:
+                        if isinstance(curr, dict) and p in curr:
+                            curr = curr[p]
+                        else:
+                            found = False
+                            break
+                    if not found:
+                        return False
+            return True
 
         if not is_runtime:
-            ass_reqs = [r for r in contract.get("evidence_requirements", []) if r.get("assertion_id") == ass_id or ass_id in r.get("assertion_ids", [])]
-
             def is_valid_static(ev_val):
                 if not isinstance(ev_val, dict):
                     return False
@@ -201,21 +222,7 @@ def main():
                 if status in ("failed", "fail"):
                     return False
                 if ass_reqs:
-                    for req in ass_reqs:
-                        req_fields = req.get("required_fields", [])
-                        for field_path in req_fields:
-                            parts = field_path.split(".")
-                            curr = evidence_data
-                            found = True
-                            for p in parts:
-                                if isinstance(curr, dict) and p in curr:
-                                    curr = curr[p]
-                                else:
-                                    found = False
-                                    break
-                            if not found:
-                                return False
-                    return True
+                    return evaluate_required_fields(ass_reqs, evidence_data)
                 if status not in ("passed", "success", "pass", "verified"):
                     return False
                 # P1-5: Substantial fields check
@@ -262,33 +269,44 @@ def main():
                     if isinstance(val, dict):
                         sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
                         cmd_val = sub.get("command") or sub.get("script")
-                        out_val = sub.get("output") or sub.get("stdout")
+                        out_val = sub.get("output") or sub.get("stdout") or sub.get("observed_output") or sub.get("observed_result")
                         code_val = sub.get("exitCode")
                         if code_val is None:
                             code_val = sub.get("exit_code")
 
-                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                         has_code = type(code_val) is int and code_val == 0
-                        has_out = isinstance(out_val, str) and bool(out_val.strip())
-                        if has_cmd and has_code and has_out:
-                            has_evidence = True
-                            break
+
+                        if ass_reqs:
+                            if has_code and evaluate_required_fields(ass_reqs, evidence_data):
+                                has_evidence = True
+                                break
+                        else:
+                            has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                            has_out = isinstance(out_val, str) and bool(out_val.strip())
+                            if has_cmd and has_code and has_out:
+                                has_evidence = True
+                                break
 
             # Also check 'assertions' dict for runtime execution evidence
             if not has_evidence and ass_id in assertions_dict:
                 val = assertions_dict[ass_id]
                 if isinstance(val, dict):
                     cmd_val = val.get("command")
-                    out_val = val.get("observed_result") or val.get("output")
+                    out_val = val.get("observed_result") or val.get("output") or val.get("observed_output")
                     code_val = val.get("exitCode")
                     if code_val is None:
                         code_val = val.get("exit_code")
 
-                    has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                     has_code = type(code_val) is int and code_val == 0
-                    has_out = isinstance(out_val, str) and bool(out_val.strip())
-                    if has_cmd and has_code and has_out:
-                        has_evidence = True
+
+                    if ass_reqs:
+                        if has_code and evaluate_required_fields(ass_reqs, evidence_data):
+                            has_evidence = True
+                    else:
+                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
+                        has_out = isinstance(out_val, str) and bool(out_val.strip())
+                        if has_cmd and has_code and has_out:
+                            has_evidence = True
 
             # 2. Check runtime records (runtime_evidence_records in adu.json).
             # Require an EXACT assertion_id, a real exit code 0, and a non-empty
@@ -307,10 +325,12 @@ def main():
                     if not matched:
                         continue
                     cmd_val = r.get("command")
-                    out_val = r.get("output") or r.get("stdout")
+                    out_val = r.get("output") or r.get("stdout") or r.get("observed_output") or r.get("observed_result")
                     code_val = r.get("exitCode")
                     if code_val is None:
                         code_val = r.get("exit_code")
+
+                    has_code = type(code_val) is int and code_val == 0
 
                     has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                     has_out = isinstance(out_val, str) and bool(out_val.strip())

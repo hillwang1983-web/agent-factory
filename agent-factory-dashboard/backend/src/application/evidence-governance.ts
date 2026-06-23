@@ -175,7 +175,9 @@ export class EvidenceGovernanceService {
           if (!['approved', 'resolved', 'waived'].includes(gate.status)) return false;
           if (gate.gate_type !== 'environment_verification_required') return false;
 
-          const gateAssertions = gate.affected_assertions || [];
+          const gateAssertions = gate.affected_assertions;
+          if (!Array.isArray(gateAssertions) || gateAssertions.length === 0) return false;
+          
           if (!w.assertion_ids.every((a: string) => gateAssertions.includes(a))) return false;
 
           return true;
@@ -322,8 +324,58 @@ export class EvidenceGovernanceService {
                 const outVal = sub.output || sub.stdout;
                 const codeVal = sub.exitCode !== undefined ? sub.exitCode : sub.exit_code;
 
-                const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
                 const hasCode = typeof codeVal === 'number' && codeVal === 0;
+
+                if (assReqs.length > 0) {
+                  if (hasCode && check_required_fields()) {
+                    evidenceFound = true;
+                    evidenceItems.push({
+                      type: 'run_record',
+                      path: valAny.path || evidencePath,
+                      status: 'verified'
+                    });
+                    break;
+                  }
+                } else {
+                  const outVal = sub.output || sub.stdout || sub.observed_output || sub.observed_result;
+                  const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
+                  const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
+
+                  if (hasCmd && hasCode && hasOut) {
+                    evidenceFound = true;
+                    evidenceItems.push({
+                      type: 'run_record',
+                      path: valAny.path || evidencePath,
+                      status: 'verified'
+                    });
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          if (!evidenceFound && evidenceData && evidenceData.assertions) {
+            const val = evidenceData.assertions[assertionId];
+            if (val && typeof val === 'object') {
+              const valAny = val as any;
+              const cmdVal = val.command;
+              const codeVal = val.exitCode !== undefined ? val.exitCode : val.exit_code;
+
+              const hasCode = typeof codeVal === 'number' && codeVal === 0;
+
+              if (assReqs.length > 0) {
+                if (hasCode && check_required_fields()) {
+                  evidenceFound = true;
+                  evidenceItems.push({
+                    type: 'run_record',
+                    path: valAny.path || evidencePath,
+                    status: 'verified'
+                  });
+                }
+              } else {
+                const outVal = valAny.observed_result || valAny.output || valAny.observed_output;
+                const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
                 const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
 
                 if (hasCmd && hasCode && hasOut) {
@@ -333,30 +385,7 @@ export class EvidenceGovernanceService {
                     path: valAny.path || evidencePath,
                     status: 'verified'
                   });
-                  break;
                 }
-              }
-            }
-          }
-
-          if (!evidenceFound && evidenceData && evidenceData.assertions) {
-            const val = evidenceData.assertions[assertionId];
-            if (val && typeof val === 'object') {
-              const cmdVal = val.command;
-              const outVal = val.observed_result || val.output;
-              const codeVal = val.exitCode !== undefined ? val.exitCode : val.exit_code;
-
-              const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
-              const hasCode = typeof codeVal === 'number' && codeVal === 0;
-              const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
-
-              if (hasCmd && hasCode && hasOut) {
-                evidenceFound = true;
-                evidenceItems.push({
-                  type: 'run_record',
-                  path: evidencePath,
-                  status: 'verified'
-                });
               }
             }
           }
@@ -375,7 +404,7 @@ export class EvidenceGovernanceService {
 
               const codeVal = r.exitCode !== undefined ? r.exitCode : r.exit_code;
               const cmdVal = r.command;
-              const outVal = r.output || r.stdout;
+              const outVal = r.output || r.stdout || r.observed_output || r.observed_result;
 
               const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
               const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
