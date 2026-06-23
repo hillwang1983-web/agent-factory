@@ -105,6 +105,19 @@ def main():
             if matching_gate.get("target_id") != adu_id:
                 continue
 
+            # P1 Waiver未绑定受影响断言
+            if matching_gate.get("status") not in ("approved", "resolved", "waived"):
+                continue
+            
+            gate_type = matching_gate.get("gate_type")
+            if gate_type not in ("environment_verification_required",):
+                continue
+            
+            gate_assertions = matching_gate.get("affected_assertions", [])
+            # Waiver assertion must belong to gate.affected_assertions
+            if not all(a in gate_assertions for a in w_ids):
+                continue
+
             valid_waivers.append(w)
     adu_waivers = valid_waivers
 
@@ -192,11 +205,7 @@ def main():
                         req_fields = req.get("required_fields", [])
                         for field_path in req_fields:
                             parts = field_path.split(".")
-                            if parts and parts[0] == "evidence":
-                                parts = parts[1:]
-                            if parts and parts[0] == ass_id:
-                                parts = parts[1:]
-                            curr = ev_val
+                            curr = evidence_data
                             found = True
                             for p in parts:
                                 if isinstance(curr, dict) and p in curr:

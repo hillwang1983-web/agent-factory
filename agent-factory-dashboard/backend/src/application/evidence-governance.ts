@@ -169,7 +169,16 @@ export class EvidenceGovernanceService {
             return false;
           }
           const gate = gatesData.find((g: any) => g.gate_id === w.gate_id);
-          return gate && gate.target_id === aduId;
+          if (!gate || gate.target_id !== aduId) return false;
+
+          // P1 Waiver未绑定受影响断言
+          if (!['approved', 'resolved', 'waived'].includes(gate.status)) return false;
+          if (gate.gate_type !== 'environment_verification_required') return false;
+
+          const gateAssertions = gate.affected_assertions || [];
+          if (!w.assertion_ids.every((a: string) => gateAssertions.includes(a))) return false;
+
+          return true;
         });
       } catch (_) {}
 
@@ -210,7 +219,7 @@ export class EvidenceGovernanceService {
             const artifact = req.artifact || '';
             if (artifact.endsWith('.json') && Array.isArray(req.required_fields)) {
               for (const fieldPath of req.required_fields) {
-                const parts = fieldPath.split(/[\.\[\]]/).filter(Boolean);
+                let parts = fieldPath.split(/[\.\[\]]/).filter(Boolean);
                 let curr = evidenceData;
                 let found = true;
                 for (const part of parts) {

@@ -371,7 +371,13 @@ with tempfile.TemporaryDirectory() as tmp:
         }
     ]})
     write_json(Path(reg) / "human-gates.json", {
-        "gates": [{"gate_id": "gate-1", "target_id": "REQ-T20"}]
+        "gates": [{
+            "gate_id": "gate-1",
+            "target_id": "REQ-T20",
+            "status": "approved",
+            "gate_type": "environment_verification_required",
+            "affected_assertions": ["A1"]
+        }]
     })
     assert_exit("T20: waiver with valid gate in human-gates.json → pass (0)",
                 0, "REQ-T20", repo, reg)
@@ -402,6 +408,63 @@ with tempfile.TemporaryDirectory() as tmp:
     })
     assert_exit("T21: waiver with missing gate → human_gate (20)",
                 20, "REQ-T21", repo, reg)
+
+# T22 — static evidence w/ assertions prefix required_fields passes
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T22",
+        "acceptance_assertions": [
+            {"id": "A3", "title": "Real Path", "verification_type": "manual_review", "must_pass": True},
+        ],
+        "evidence_requirements": [
+            {
+                "assertion_id": "A3",
+                "artifact": "evidence.json",
+                "required_fields": ["assertions.A3.status", "negative_assertions.N1.status"]
+            }
+        ]
+    }
+    # It passes validation of A3. The evidence should have the properties.
+    evidence = {
+        "assertions": {"A3": {"status": "verified"}},
+        "negative_assertions": {"N1": {"status": "verified"}}
+    }
+    repo, reg = setup(tmp, "REQ-T22", contract, evidence)
+    assert_exit("T22: real path with assertions prefix → pass (0)",
+                0, "REQ-T22", repo, reg)
+
+# T23 — waiver attempting to waive an assertion not affected by the gate
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T23",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "Hard to test", "verification_type": "runtime", "must_pass": True},
+        ]
+    }
+    evidence = {}
+    repo, reg = setup(tmp, "REQ-T23", contract, evidence)
+    write_json(Path(reg) / "evidence-waivers.json", {"waivers": [
+        {
+            "adu_id": "REQ-T23",
+            "assertion_ids": ["A1"], # Attempting to waive A1
+            "gate_id": "gate-1",
+            "status": "approved",
+            "approved_by": "user",
+            "reason": "OK",
+            "created_at": "now"
+        }
+    ]})
+    write_json(Path(reg) / "human-gates.json", {
+        "gates": [{
+            "gate_id": "gate-1",
+            "target_id": "REQ-T23",
+            "status": "approved",
+            "gate_type": "environment_verification_required",
+            "affected_assertions": ["A2"] # Gate only affects A2
+        }]
+    })
+    assert_exit("T23: waiver attempting to waive assertions outside gate scope → fail (20)",
+                20, "REQ-T23", repo, reg)
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
