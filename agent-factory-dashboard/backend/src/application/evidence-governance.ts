@@ -75,11 +75,12 @@ export class EvidenceGovernanceService {
 
 
     let assertions: any[] = [];
+    let contract: any = {};
 
     // 1. Read Contract file to get assertions
     if (fs.existsSync(contractPath)) {
       try {
-        const contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8'));
+        contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8'));
         if (contract.acceptance_assertions) {
           assertions = contract.acceptance_assertions;
           if (contract.negative_assertions) {
@@ -158,10 +159,10 @@ export class EvidenceGovernanceService {
       // Find matching waiver
       let waiver = null;
       try {
-        const gatesFile = path.join(this.getRegistryDir(), 'gates.json');
+        const gatesFile = path.join(this.getRegistryDir(), 'human-gates.json');
         let gatesData = [];
         if (fs.existsSync(gatesFile)) {
-          gatesData = JSON.parse(fs.readFileSync(gatesFile, 'utf-8'));
+          gatesData = JSON.parse(fs.readFileSync(gatesFile, 'utf-8')).gates || [];
         }
         waiver = aduWaivers.find(w => {
           if (!w.assertion_ids || !w.assertion_ids.includes(assertionId) || w.status !== 'approved' || !w.gate_id || !w.approved_by || !w.reason || !w.created_at) {
@@ -238,12 +239,14 @@ export class EvidenceGovernanceService {
             ];
             const match = results.find((r: any) => (r.assertion_id || r.id) === assertionId);
             if (match && (match.status === 'pass' || match.status === 'waived')) {
-              evidenceFound = true;
-              evidenceItems.push({
-                type: 'run_record',
-                path: acceptancePath,
-                status: match.status === 'waived' ? 'waived' : 'verified'
-              });
+              if (check_required_fields()) {
+                evidenceFound = true;
+                evidenceItems.push({
+                  type: 'run_record',
+                  path: acceptancePath,
+                  status: match.status === 'waived' ? 'waived' : 'verified'
+                });
+              }
             }
           }
 
@@ -282,14 +285,10 @@ export class EvidenceGovernanceService {
             }
           }
 
-          if (evidenceFound) {
-            // Already validated by check_required_fields and is_valid_static
-          } else {
-
           // Static assertions: assertions dict fallback
           if (!evidenceFound && evidenceData && evidenceData.assertions) {
             const val = evidenceData.assertions[assertionId];
-            if (is_valid_static(val)) {
+            if (is_valid_static(val) && check_required_fields()) {
               evidenceFound = true;
               evidenceItems.push({
                 type: 'run_record',

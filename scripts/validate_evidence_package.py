@@ -75,12 +75,12 @@ def main():
             print(f"WARNING: Failed to parse waivers JSON: {e}", file=sys.stderr)
 
     # Filter and validate waivers for this ADU
-    gates_file = registry_dir / "gates.json"
+    gates_file = registry_dir / "human-gates.json"
     gates_data = []
     if gates_file.exists():
         try:
             with open(gates_file, 'r', encoding='utf-8') as f:
-                gates_data = json.load(f)
+                gates_data = json.load(f).get("gates", [])
         except Exception:
             pass
 
@@ -179,10 +179,34 @@ def main():
         assertions_dict = evidence_data.get("assertions", {})
 
         if not is_runtime:
+            ass_reqs = [r for r in contract.get("evidence_requirements", []) if r.get("assertion_id") == ass_id or ass_id in r.get("assertion_ids", [])]
+
             def is_valid_static(ev_val):
                 if not isinstance(ev_val, dict):
                     return False
                 status = ev_val.get("status")
+                if status in ("failed", "fail"):
+                    return False
+                if ass_reqs:
+                    for req in ass_reqs:
+                        req_fields = req.get("required_fields", [])
+                        for field_path in req_fields:
+                            parts = field_path.split(".")
+                            if parts and parts[0] == "evidence":
+                                parts = parts[1:]
+                            if parts and parts[0] == ass_id:
+                                parts = parts[1:]
+                            curr = ev_val
+                            found = True
+                            for p in parts:
+                                if isinstance(curr, dict) and p in curr:
+                                    curr = curr[p]
+                                else:
+                                    found = False
+                                    break
+                            if not found:
+                                return False
+                    return True
                 if status not in ("passed", "success", "pass", "verified"):
                     return False
                 # P1-5: Substantial fields check

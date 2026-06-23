@@ -329,7 +329,82 @@ with tempfile.TemporaryDirectory() as tmp:
     assert_exit("T18: static evidence keyed A12 must not satisfy A1 → fail (1)",
                 1, "REQ-T18", repo, reg)
 
+# T19 — static evidence w/ custom contract required_fields passes without generic fields
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T19",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "Custom field", "verification_type": "manual_review", "must_pass": True},
+        ],
+        "evidence_requirements": [
+            {
+                "assertion_id": "A1",
+                "artifact": "evidence.json",
+                "required_fields": ["evidence.A1.observed_result"]
+            }
+        ]
+    }
+    evidence = {"evidence": {"A1": {"status": "success", "observed_result": "It works"}}}
+    repo, reg = setup(tmp, "REQ-T19", contract, evidence)
+    assert_exit("T19: custom fields override generic missing fields → pass (0)",
+                0, "REQ-T19", repo, reg)
+
+# T20 — valid waiver with matching human-gates.json passes
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T20",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "Hard to test", "verification_type": "runtime", "must_pass": True},
+        ]
+    }
+    evidence = {}
+    repo, reg = setup(tmp, "REQ-T20", contract, evidence)
+    write_json(Path(reg) / "evidence-waivers.json", {"waivers": [
+        {
+            "adu_id": "REQ-T20",
+            "assertion_ids": ["A1"],
+            "gate_id": "gate-1",
+            "status": "approved",
+            "approved_by": "user",
+            "reason": "OK",
+            "created_at": "now"
+        }
+    ]})
+    write_json(Path(reg) / "human-gates.json", {
+        "gates": [{"gate_id": "gate-1", "target_id": "REQ-T20"}]
+    })
+    assert_exit("T20: waiver with valid gate in human-gates.json → pass (0)",
+                0, "REQ-T20", repo, reg)
+
+# T21 — invalid waiver (no matching gate) fails
+with tempfile.TemporaryDirectory() as tmp:
+    contract = {
+        "adu_id": "REQ-T21",
+        "acceptance_assertions": [
+            {"id": "A1", "title": "Hard to test", "verification_type": "runtime", "must_pass": True},
+        ]
+    }
+    evidence = {}
+    repo, reg = setup(tmp, "REQ-T21", contract, evidence)
+    write_json(Path(reg) / "evidence-waivers.json", {"waivers": [
+        {
+            "adu_id": "REQ-T21",
+            "assertion_ids": ["A1"],
+            "gate_id": "gate-1",
+            "status": "approved",
+            "approved_by": "user",
+            "reason": "OK",
+            "created_at": "now"
+        }
+    ]})
+    write_json(Path(reg) / "human-gates.json", {
+        "gates": [{"gate_id": "gate-other", "target_id": "REQ-T21"}]
+    })
+    assert_exit("T21: waiver with missing gate → human_gate (20)",
+                20, "REQ-T21", repo, reg)
+
 # ── Summary ───────────────────────────────────────────────────────────────────
+
 
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
 if failed > 0:
