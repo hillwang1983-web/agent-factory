@@ -672,6 +672,7 @@ def main():
                         "agent": next_agent,
                         "state": "human_gate",
                         "action": action_str,
+                        "affected_assertions": result_json.get("affected_assertions", []) if result_json else []
                     })
                     should_break = True
 

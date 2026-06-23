@@ -1300,6 +1300,17 @@ export function createAgentFactoryRouter(
               severity: parsed.severity || 'info'
             });
 
+            if (parsed.affected_assertions && Array.isArray(parsed.affected_assertions)) {
+              affectedAssertions = parsed.affected_assertions;
+            } else if (parsed.payload && parsed.payload.affected_assertions && Array.isArray(parsed.payload.affected_assertions)) {
+              affectedAssertions = parsed.payload.affected_assertions;
+            } else if (parsed.error) {
+              const match = String(parsed.error).match(/HUMAN_GATE:.*assertions:\s*(.*)/);
+              if (match) {
+                affectedAssertions = match[1].split(',').map((s: string) => s.trim()).filter(Boolean);
+              }
+            }
+
             // Update current status / current agent of operation
             const updates = mapOrchestratorEvent(parsed);
             if (Object.keys(updates).length > 0) {
@@ -1329,10 +1340,6 @@ export function createAgentFactoryRouter(
         const line = stderrBuf.substring(0, lineEnd).trim();
         stderrBuf = stderrBuf.substring(lineEnd + 1);
         if (line) {
-          const match = line.match(/HUMAN_GATE:.*assertions:\s*(.*)/);
-          if (match) {
-            affectedAssertions = match[1].split(',').map((s: string) => s.trim()).filter(Boolean);
-          }
           OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
             type: 'stderr_line',
             payload: { line },

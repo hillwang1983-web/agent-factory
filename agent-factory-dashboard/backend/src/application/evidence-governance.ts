@@ -82,6 +82,12 @@ export class EvidenceGovernanceService {
         const contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8'));
         if (contract.acceptance_assertions) {
           assertions = contract.acceptance_assertions;
+          if (contract.negative_assertions) {
+            assertions = assertions.concat(contract.negative_assertions.map((n: any) => ({
+              ...n,
+              verification_type: 'manual_review'
+            })));
+          }
         } else if (contract.acceptance_criteria) {
           assertions = contract.acceptance_criteria.map((ac: any) => ({
             id: ac.id,
@@ -146,11 +152,25 @@ export class EvidenceGovernanceService {
     for (const ass of assertions) {
       const assertionId = ass.id || ass.assertion_id;
       const verificationType = ass.verification_type || 'static';
-      const isRuntime = verificationType === 'runtime';
+      const isRuntime = ['automated_test', 'runtime', 'scripted', 'curl'].includes(verificationType);
       const mustPass = ass.must_pass !== false;
 
       // Find matching waiver
-      const waiver = aduWaivers.find(w => w.assertion_ids && w.assertion_ids.includes(assertionId));
+      let waiver = null;
+      try {
+        const gatesFile = path.join(this.getRegistryDir(), 'gates.json');
+        let gatesData = [];
+        if (fs.existsSync(gatesFile)) {
+          gatesData = JSON.parse(fs.readFileSync(gatesFile, 'utf-8'));
+        }
+        waiver = aduWaivers.find(w => {
+          if (!w.assertion_ids || !w.assertion_ids.includes(assertionId) || w.status !== 'approved' || !w.gate_id || !w.approved_by || !w.reason || !w.created_at) {
+            return false;
+          }
+          const gate = gatesData.find((g: any) => g.gate_id === w.gate_id);
+          return gate && gate.target_id === aduId;
+        });
+      } catch (_) {}
 
       let status: AssertionEvidenceStatus = 'not_verified';
       const evidenceItems: AssertionEvidenceItem[] = [];
@@ -166,15 +186,47 @@ export class EvidenceGovernanceService {
       } else {
         let evidenceFound = false;
 
+        const assReqs = (contract.evidence_requirements || []).filter((r: any) => r.assertion_id === assertionId || (r.assertion_ids || []).includes(assertionId));
+
         const is_valid_static = (ev_val: any) => {
           if (!ev_val || typeof ev_val !== 'object') return false;
+          if (ev_val.status === 'failed' || ev_val.status === 'fail') return false;
+          if (assReqs.length > 0) return true;
+
           const status = ev_val.status;
-          if (status !== 'passed' && status !== 'success' && status !== 'pass') return false;
+          if (status !== 'passed' && status !== 'success' && status !== 'pass' && status !== 'verified') return false;
           const hasNotes = typeof ev_val.reviewer_notes === 'string' && ev_val.reviewer_notes.trim().length > 0;
           const hasPath = typeof ev_val.artifact_path === 'string' && ev_val.artifact_path.trim().length > 0;
+          const hasLegacyPath = typeof ev_val.path === 'string' && ev_val.path.trim().length > 0;
+          const hasSummaryPath = typeof ev_val.summary_path === 'string' && ev_val.summary_path.trim().length > 0;
           const hasHash = typeof ev_val.hash === 'string' && ev_val.hash.trim().length > 0;
           const hasUrl = typeof ev_val.evidence_url === 'string' && ev_val.evidence_url.trim().length > 0;
-          return hasNotes || hasPath || hasHash || hasUrl;
+          return hasNotes || hasPath || hasLegacyPath || hasSummaryPath || hasHash || hasUrl;
+        };
+
+        const check_required_fields = () => {
+          for (const req of assReqs) {
+            const artifact = req.artifact || '';
+            if (artifact.endsWith('.json') && Array.isArray(req.required_fields)) {
+              for (const fieldPath of req.required_fields) {
+                const parts = fieldPath.split(/[\.\[\]]/).filter(Boolean);
+                let curr = evidenceData;
+                let found = true;
+                for (const part of parts) {
+                  if (curr && typeof curr === 'object' && part in curr) {
+                    curr = curr[part];
+                  } else {
+                    found = false;
+                    break;
+                  }
+                }
+                if (!found || curr === null || curr === undefined || curr === '' || (typeof curr === 'object' && Object.keys(curr).length === 0)) {
+                  return false;
+                }
+              }
+            }
+          }
+          return true;
         };
 
         if (!isRuntime) {
@@ -201,17 +253,38 @@ export class EvidenceGovernanceService {
               return key === assertionId || (val && typeof val === 'object' && val.assertion_id === assertionId);
             });
             for (const [key, val] of matches) {
-              if (is_valid_static(val)) {
+              if (is_valid_static(val) && check_required_fields()) {
                 evidenceFound = true;
                 evidenceItems.push({
                   type: 'run_record',
-                  path: (val as any).artifact_path || evidencePath,
+                  path: (val as any).artifact_path || (val as any).path || evidencePath,
                   status: 'verified'
                 });
                 break;
               }
             }
           }
+
+          if (!evidenceFound && evidenceData && evidenceData.negative_assertions) {
+            const matches = Object.entries(evidenceData.negative_assertions).filter(([key, val]: [string, any]) => {
+              return key === assertionId || (val && typeof val === 'object' && val.assertion_id === assertionId);
+            });
+            for (const [key, val] of matches) {
+              if (is_valid_static(val) && check_required_fields()) {
+                evidenceFound = true;
+                evidenceItems.push({
+                  type: 'run_record',
+                  path: (val as any).artifact_path || (val as any).path || evidencePath,
+                  status: 'verified'
+                });
+                break;
+              }
+            }
+          }
+
+          if (evidenceFound) {
+            // Already validated by check_required_fields and is_valid_static
+          } else {
 
           // Static assertions: assertions dict fallback
           if (!evidenceFound && evidenceData && evidenceData.assertions) {
@@ -240,11 +313,11 @@ export class EvidenceGovernanceService {
                 const cmdVal = sub.command || sub.script;
                 const outVal = sub.output || sub.stdout;
                 const codeVal = sub.exitCode !== undefined ? sub.exitCode : sub.exit_code;
-                
+
                 const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
                 const hasCode = typeof codeVal === 'number' && codeVal === 0;
                 const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
-                
+
                 if (hasCmd && hasCode && hasOut) {
                   evidenceFound = true;
                   evidenceItems.push({
@@ -264,11 +337,11 @@ export class EvidenceGovernanceService {
               const cmdVal = val.command;
               const outVal = val.observed_result || val.output;
               const codeVal = val.exitCode !== undefined ? val.exitCode : val.exit_code;
-              
+
               const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
               const hasCode = typeof codeVal === 'number' && codeVal === 0;
               const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
-              
+
               if (hasCmd && hasCode && hasOut) {
                 evidenceFound = true;
                 evidenceItems.push({
@@ -291,11 +364,11 @@ export class EvidenceGovernanceService {
                 matched = (r.assertion_id || r.assertionId || "") === assertionId;
               }
               if (!matched) continue;
-              
+
               const codeVal = r.exitCode !== undefined ? r.exitCode : r.exit_code;
               const cmdVal = r.command;
               const outVal = r.output || r.stdout;
-              
+
               const hasCmd = typeof cmdVal === 'string' && cmdVal.trim().length > 0;
               const hasOut = typeof outVal === 'string' && outVal.trim().length > 0;
               const hasCode = typeof codeVal === 'number' && codeVal === 0;

@@ -75,15 +75,37 @@ def main():
             print(f"WARNING: Failed to parse waivers JSON: {e}", file=sys.stderr)
 
     # Filter and validate waivers for this ADU
+    gates_file = registry_dir / "gates.json"
+    gates_data = []
+    if gates_file.exists():
+        try:
+            with open(gates_file, 'r', encoding='utf-8') as f:
+                gates_data = json.load(f)
+        except Exception:
+            pass
+
     valid_waivers = []
     for w in waivers:
         if w.get("adu_id") == adu_id:
             # P2-2: Waiver Schema and status check
             w_status = w.get("status")
             w_ids = w.get("assertion_ids", [])
-            w_gate = w.get("gate_id") or w.get("human_gate_id")
-            if w_status == "approved" and w_gate and w.get("approved_by") and isinstance(w_ids, list) and len(w_ids) > 0:
-                valid_waivers.append(w)
+            w_gate_id = w.get("gate_id") or w.get("human_gate_id")
+            w_reason = w.get("reason")
+            w_time = w.get("created_at")
+            w_approved_by = w.get("approved_by")
+
+            if not (w_status == "approved" and w_gate_id and w_approved_by and w_reason and w_time and isinstance(w_ids, list) and len(w_ids) > 0):
+                continue
+
+            matching_gate = next((g for g in gates_data if g.get("gate_id") == w_gate_id), None)
+            if not matching_gate:
+                continue
+
+            if matching_gate.get("target_id") != adu_id:
+                continue
+
+            valid_waivers.append(w)
     adu_waivers = valid_waivers
 
     # 3. Load Evidence
@@ -119,7 +141,7 @@ def main():
     missing_runtime = []
     missing_static = []
     unknown_types = []
-    
+
     # Include both acceptance and negative assertions
     all_assertions = list(assertions)
     for nass in contract.get("negative_assertions", []):
@@ -161,20 +183,30 @@ def main():
                 if not isinstance(ev_val, dict):
                     return False
                 status = ev_val.get("status")
-                if status not in ("passed", "success", "pass"):
+                if status not in ("passed", "success", "pass", "verified"):
                     return False
                 # P1-5: Substantial fields check
                 has_notes = isinstance(ev_val.get("reviewer_notes"), str) and bool(ev_val.get("reviewer_notes").strip())
                 has_path = isinstance(ev_val.get("artifact_path"), str) and bool(ev_val.get("artifact_path").strip())
+                has_legacy_path = isinstance(ev_val.get("path"), str) and bool(ev_val.get("path").strip())
+                has_summary_path = isinstance(ev_val.get("summary_path"), str) and bool(ev_val.get("summary_path").strip())
                 has_hash = isinstance(ev_val.get("hash"), str) and bool(ev_val.get("hash").strip())
                 has_evidence_url = isinstance(ev_val.get("evidence_url"), str) and bool(ev_val.get("evidence_url").strip())
-                return has_notes or has_path or has_hash or has_evidence_url
+                return has_notes or has_path or has_legacy_path or has_summary_path or has_hash or has_evidence_url
 
             for key, val in evidence_dict.items():
                 if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
                     if is_valid_static(val):
                         has_evidence = True
                         break
+
+            if not has_evidence:
+                negative_assertions_dict = evidence_data.get("negative_assertions", {})
+                for key, val in negative_assertions_dict.items():
+                    if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
+                        if is_valid_static(val):
+                            has_evidence = True
+                            break
 
             # Check inside 'assertions' dict if not found in 'evidence'
             if not has_evidence and ass_id in assertions_dict:
@@ -201,7 +233,7 @@ def main():
                         code_val = sub.get("exitCode")
                         if code_val is None:
                             code_val = sub.get("exit_code")
-                        
+
                         has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                         has_code = type(code_val) is int and code_val == 0
                         has_out = isinstance(out_val, str) and bool(out_val.strip())
@@ -218,7 +250,7 @@ def main():
                     code_val = val.get("exitCode")
                     if code_val is None:
                         code_val = val.get("exit_code")
-                        
+
                     has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                     has_code = type(code_val) is int and code_val == 0
                     has_out = isinstance(out_val, str) and bool(out_val.strip())
@@ -267,23 +299,25 @@ def main():
         sys.exit(1)
 
     # Validate evidence requirements (required_fields)
+    import re
     missing_fields = []
     for req in contract.get("evidence_requirements", []):
-        artifact = req.get("artifact")
+        artifact = req.get("artifact", "")
         fields = req.get("required_fields", [])
-        if artifact == "evidence.json" and isinstance(fields, list):
+        if artifact.endswith(".json") and isinstance(fields, list):
             for field_path in fields:
-                # Basic JSON path check e.g., "evidence.A1.reviewer_notes"
-                parts = field_path.split('.')
+                parts = [p for p in re.split(r'\.|\[|\]', field_path) if p]
                 curr = evidence_data
                 found = True
                 for part in parts:
                     if isinstance(curr, dict) and part in curr:
                         curr = curr[part]
+                    elif isinstance(curr, list) and part.isdigit() and int(part) < len(curr):
+                        curr = curr[int(part)]
                     else:
                         found = False
                         break
-                # Check for non-empty string or dict/list
+                # Check for non-empty string or dict/list/int/bool
                 if not found or curr is None or curr == "" or (isinstance(curr, (list, dict)) and not curr):
                     missing_fields.append(field_path)
 

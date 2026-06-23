@@ -51,13 +51,13 @@ def make_adu(adu_id, repo_path, command_policy=None):
     return adu
 
 
-def make_contract(adu_id, verification_command=None, manual_steps=None):
+def make_contract(adu_id, verification_command=None, manual_steps=None, vtype="automated_test"):
     """Build a minimal valid contract, with customisable verification method."""
     assertion = {
         "id": "A1",
         "title": "Basic assertion",
         "requirement": "System must pass tests",
-        "verification_type": "automated_test",
+        "verification_type": vtype,
         "expected_evidence": ["test run output"],
         "must_pass": True,
     }
@@ -198,7 +198,7 @@ with tempfile.TemporaryDirectory() as tmp:
     reg = Path(tmp) / "registry"
     write_json(reg / "adu.json", {"version": 1, "adus": [make_adu(ADU_ID, repo, ALLOWLIST_POLICY)]})
     write_json(repo / ".ai-agent" / "contracts" / f"{ADU_ID}.json",
-               make_contract(ADU_ID, manual_steps=["Manually verify the service is reachable"]))
+               make_contract(ADU_ID, manual_steps=["Manually verify the service is reachable"], vtype="manual_review"))
     rc, out, err = run_validator(ADU_ID, repo, reg)
     if rc == 0:
         ok("T07: manual_verification_steps only → policy check not applied → pass")

@@ -372,6 +372,8 @@ export class HumanGateService {
         risk: input.risk,
         follow_up: input.follow_up,
         operator: input.operator,
+        status: 'approved',
+        approved_by: input.operator || 'operator',
         created_at: new Date().toISOString()
       };
       waivers.push(waiver);
