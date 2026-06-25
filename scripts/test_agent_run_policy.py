@@ -214,7 +214,8 @@ sys.path.append("{str(scripts_dir)}")
 from agent_run_policy import AgentRunPolicy, execute_controlled_process
 policy = AgentRunPolicy(3, 10, 1, 10000, 1000)
 cmd = [sys.executable, "{str(mock_hermes_path)}", "infinite_output", "{str(target_file)}"]
-execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+sys.exit(res.returncode)
 """
         wrapper_path = workspace / "temp_wrapper.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
@@ -238,7 +239,8 @@ sys.path.append("{str(scripts_dir)}")
 from agent_run_policy import AgentRunPolicy, execute_controlled_process
 policy = AgentRunPolicy(6, 1, 1, 10000, 1000)
 cmd = [sys.executable, "{str(mock_hermes_path)}", "silent_success", "{str(target_file)}"]
-execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+sys.exit(res.returncode)
 """
         wrapper_path = workspace / "temp_wrapper.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
@@ -261,7 +263,8 @@ sys.path.append("{str(scripts_dir)}")
 from agent_run_policy import AgentRunPolicy, execute_controlled_process
 policy = AgentRunPolicy(10, 2, 1, 10000, 1000)
 cmd = [sys.executable, "{str(mock_hermes_path)}", "progress_then_stall", "{str(target_file)}"]
-execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+sys.exit(res.returncode)
 """
         wrapper_path = workspace / "temp_wrapper.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
@@ -286,7 +289,8 @@ sys.path.append("{str(scripts_dir)}")
 from agent_run_policy import AgentRunPolicy, execute_controlled_process
 policy = AgentRunPolicy(3, 10, 1, 10000, 1000)
 cmd = [sys.executable, "{str(mock_hermes_path)}", "no_exit", "{str(target_file)}"]
-execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
+sys.exit(res.returncode)
 """
         wrapper_path = workspace / "temp_wrapper.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
@@ -349,7 +353,8 @@ sys.path.append("{str(scripts_dir)}")
 from agent_run_policy import AgentRunPolicy, execute_controlled_process
 policy = AgentRunPolicy(3, 10, 1, 10000, 1000)
 cmd = [sys.executable, "{str(mock_hermes_path)}", "completion_invalid_version", "{str(target_file)}", "{str(completion_file)}"]
-execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
+res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
+sys.exit(res.returncode)
 """
         wrapper_path = workspace / "temp_wrapper.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
@@ -373,7 +378,8 @@ sys.path.append("{str(scripts_dir)}")
 from agent_run_policy import AgentRunPolicy, execute_controlled_process
 policy = AgentRunPolicy(3, 10, 1, 10000, 1000)
 cmd = [sys.executable, "{str(mock_hermes_path)}", "completion_missing_fields", "{str(target_file)}", "{str(completion_file)}"]
-execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
+res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
+sys.exit(res.returncode)
 """
         wrapper_path = workspace / "temp_wrapper.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")

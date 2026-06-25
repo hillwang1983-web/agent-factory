@@ -158,19 +158,27 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     stdout_buf = []
     stderr_buf = []
 
-    def read_stream(stream, buf):
+    def read_stream(stream_buffer, buf):
+        import codecs
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         try:
             while True:
-                chunk = stream.read(4096)
-                if not chunk:
+                chunk_bytes = stream_buffer.read1(4096)
+                if not chunk_bytes:
                     break
-                buf.append(chunk)
+                chunk_text = decoder.decode(chunk_bytes)
+                if chunk_text:
+                    buf.append(chunk_text)
+            # Flush final decoder state
+            final_text = decoder.decode(b"", final=True)
+            if final_text:
+                buf.append(final_text)
         except Exception as e:
             import sys
             print(f"Exception in read_stream: {e}", file=sys.stderr)
 
-    t_out = threading.Thread(target=read_stream, args=(proc.stdout, stdout_buf), daemon=True)
-    t_err = threading.Thread(target=read_stream, args=(proc.stderr, stderr_buf), daemon=True)
+    t_out = threading.Thread(target=read_stream, args=(proc.stdout.buffer, stdout_buf), daemon=True)
+    t_err = threading.Thread(target=read_stream, args=(proc.stderr.buffer, stderr_buf), daemon=True)
     t_out.start()
     t_err.start()
 
