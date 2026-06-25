@@ -37,11 +37,13 @@ async function runTests() {
     ? `--project ${aduRecord.project_id} --repo-root ${aduRecord.repo_path || workspaceRoot}`
     : '';
 
-  // Ensure reviews & acceptance directories exist
+  // Ensure reviews, acceptance & contracts directories exist
   const reviewsDir = path.join(workspaceRoot, '.ai-agent', 'reviews');
   const acceptanceDir = path.join(workspaceRoot, '.ai-agent', 'acceptance');
+  const contractsDir = path.join(workspaceRoot, '.ai-agent', 'contracts');
   fs.mkdirSync(reviewsDir, { recursive: true });
   fs.mkdirSync(acceptanceDir, { recursive: true });
+  fs.mkdirSync(contractsDir, { recursive: true });
 
   const codeReviewJsonPath = path.join(reviewsDir, `${aduId}-code-review.json`);
   const codeReviewMdPath = path.join(reviewsDir, `${aduId}-code-review.md`);
@@ -58,7 +60,55 @@ async function runTests() {
   let contractBackup = fs.existsSync(contractJsonPath) ? fs.readFileSync(contractJsonPath, 'utf-8') : null;
   let contractNotesBackup = fs.existsSync(contractNotesPath) ? fs.readFileSync(contractNotesPath, 'utf-8') : null;
 
+  const mockContractValid = {
+    version: 2,
+    adu_id: aduId,
+    source_documents: {
+      analysis: ".ai-agent/analysis/REQ-MVP-004.md",
+      design: ".ai-agent/designs/REQ-MVP-004-detailed-design.md"
+    },
+    scope: {
+      in_scope: ["test behavior"],
+      out_of_scope: [],
+      allowed_write_paths: [".ai-agent/context-packs/"]
+    },
+    acceptance_assertions: [
+      {
+        id: "A1",
+        title: "Must pass assertion",
+        requirement: "Check must pass requirement",
+        verification_type: "automated_test",
+        verification_command: "npm run test",
+        expected_evidence: ["Test output"],
+        must_pass: true
+      }
+    ],
+    negative_assertions: [
+      {
+        id: "N1",
+        title: "Must pass negative",
+        forbidden_change: "Forbidden path",
+        must_pass: true
+      }
+    ],
+    evidence_requirements: [
+      {
+        id: "E1",
+        assertion_id: "A1",
+        artifact: ".ai-agent/evidence/REQ-MVP-004.json",
+        required_fields: ["assertions.A1.status"]
+      }
+    ],
+    quality_gates: {
+      minimum_assertions: 1,
+      minimum_negative_assertions: 1
+    }
+  };
+
   try {
+    // Write valid contract first to ensure it is present for early test cases
+    fs.writeFileSync(contractJsonPath, JSON.stringify(mockContractValid, null, 2), 'utf-8');
+
     // 1. Temporarily replace hermes_bin with mock-hermes
     const mockHermesPath = path.join(workspaceRoot, 'agent-factory-dashboard', 'backend', 'tools', 'mock-hermes.js');
     runCommand(`chmod +x ${mockHermesPath}`, workspaceRoot);
@@ -302,6 +352,8 @@ async function runTests() {
 
     // Set state back to "debugged"
     const aduData4 = JSON.parse(fs.readFileSync(registryAduPath, 'utf-8'));
+    // Filter to only the test ADU so other ADUs don't block next agent recommendation
+    aduData4.adus = aduData4.adus.filter(a => a.id === aduId);
     const aduIdx4 = aduData4.adus.findIndex(a => a.id === aduId);
     aduData4.adus[aduIdx4].state = 'debugged';
     fs.writeFileSync(registryAduPath, JSON.stringify(aduData4, null, 2), 'utf-8');
@@ -491,50 +543,6 @@ async function runTests() {
     console.log('\n--- Test Case 9: Empty acceptance pass rejected ---');
 
     // Write valid contract first to define must_pass assertions
-    const mockContractValid = {
-      version: 2,
-      adu_id: aduId,
-      source_documents: {
-        analysis: ".ai-agent/analysis/REQ-MVP-004.md",
-        design: ".ai-agent/designs/REQ-MVP-004-detailed-design.md"
-      },
-      scope: {
-        in_scope: ["test behavior"],
-        out_of_scope: [],
-        allowed_write_paths: [".ai-agent/context-packs/"]
-      },
-      acceptance_assertions: [
-        {
-          id: "A1",
-          title: "Must pass assertion",
-          requirement: "Check must pass requirement",
-          verification_type: "automated_test",
-          verification_command: "npm run test",
-          expected_evidence: ["Test output"],
-          must_pass: true
-        }
-      ],
-      negative_assertions: [
-        {
-          id: "N1",
-          title: "Must pass negative",
-          forbidden_change: "Forbidden path",
-          must_pass: true
-        }
-      ],
-      evidence_requirements: [
-        {
-          id: "E1",
-          assertion_id: "A1",
-          artifact: ".ai-agent/evidence/REQ-MVP-004.json",
-          required_fields: ["assertions.A1.status"]
-        }
-      ],
-      quality_gates: {
-        minimum_assertions: 1,
-        minimum_negative_assertions: 1
-      }
-    };
     fs.writeFileSync(contractJsonPath, JSON.stringify(mockContractValid, null, 2), 'utf-8');
 
     // Write empty acceptance pass (missing assertions coverage)

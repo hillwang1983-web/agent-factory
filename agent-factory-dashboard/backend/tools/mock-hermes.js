@@ -22,12 +22,16 @@ function emitResult(result) {
 }
 
 function touchDeclaredFiles(files) {
+  const logFile = "/root/agent-factory/mock-hermes-debug.log";
+  fs.appendFileSync(logFile, `DEBUG touchDeclaredFiles: process.cwd() = ${process.cwd()}\n`);
   for (const relativePath of files) {
     const absolutePath = path.resolve(process.cwd(), relativePath);
-    if (!fs.existsSync(absolutePath)) continue;
+    const exists = fs.existsSync(absolutePath);
+    fs.appendFileSync(logFile, `DEBUG absolutePath = ${absolutePath}, exists = ${exists}\n`);
+    if (!exists) continue;
     const content = fs.readFileSync(absolutePath);
     fs.writeFileSync(absolutePath, content);
-    const modifiedAt = new Date(Date.now() + 1000);
+    const modifiedAt = new Date(Date.now() + 60000);
     fs.utimesSync(absolutePath, modifiedAt, modifiedAt);
   }
 }
