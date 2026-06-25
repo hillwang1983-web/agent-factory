@@ -99,10 +99,16 @@ def validate_code_review(report, adu_id, run_dir=None, json_mode=False):
             return fail("code-review", adu_id, "findings_empty", "fail review must have at least one finding", json_mode=json_mode)
 
         for idx, f in enumerate(findings):
-            req_fields = ["severity", "title", "detail", "required_fix"]
+            req_fields = ["severity", "title", "detail"]
             for field in req_fields:
                 if field not in f:
                     return fail("code-review", adu_id, "finding_missing_fields", f"findings[{idx}] missing field '{field}'", json_mode=json_mode)
+
+            severity = str(f.get("severity") or "").upper()
+            if severity in ("P0", "P1", "P2") and "required_fix" not in f:
+                return fail("code-review", adu_id, "finding_missing_fields", f"findings[{idx}] missing field 'required_fix'", json_mode=json_mode)
+            if severity not in ("P0", "P1", "P2") and not (f.get("required_fix") or f.get("recommendation")):
+                return fail("code-review", adu_id, "finding_missing_fields", f"findings[{idx}] missing field 'required_fix' or 'recommendation'", json_mode=json_mode)
     else:
         return fail("code-review", adu_id, "invalid_status", f"invalid review_status '{status}'", json_mode=json_mode)
 

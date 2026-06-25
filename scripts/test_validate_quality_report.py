@@ -290,6 +290,34 @@ with tempfile.TemporaryDirectory() as tmp:
     assert_pass("T14: well-formed fail code-review → exit 0", "REQ-T14", "code-review",
                 repo_root=repo, extra_env={"AGENT_FACTORY_REGISTRY_DIR": reg})
 
+# T14b — fail review may include advisory P3 findings with recommendation
+with tempfile.TemporaryDirectory() as tmp:
+    report = minimal_code_review("REQ-T14B", status="fail")
+    report["findings"].append({
+        "id": "CR-2",
+        "severity": "P3",
+        "file": "src/style.js",
+        "line": 12,
+        "title": "Style note",
+        "detail": "Non-blocking cleanup suggestion.",
+        "recommendation": "Consider moving helper near related code.",
+    })
+    repo = make_repo(tmp, "REQ-T14B", "code-review", report)
+    reg = make_registry(tmp, "REQ-T14B", repo)
+    assert_pass("T14b: fail code-review allows P3 recommendation-only finding → exit 0",
+                "REQ-T14B", "code-review", repo_root=repo,
+                extra_env={"AGENT_FACTORY_REGISTRY_DIR": reg})
+
+# T14c — fail review still rejects missing required_fix for P1/P2 findings
+with tempfile.TemporaryDirectory() as tmp:
+    report = minimal_code_review("REQ-T14C", status="fail")
+    report["findings"][0].pop("required_fix")
+    repo = make_repo(tmp, "REQ-T14C", "code-review", report)
+    reg = make_registry(tmp, "REQ-T14C", repo)
+    assert_fail("T14c: fail code-review requires required_fix for P1/P2 finding → fail",
+                "REQ-T14C", "code-review", repo_root=repo,
+                extra_env={"AGENT_FACTORY_REGISTRY_DIR": reg})
+
 # T15 — acceptance pass may include a waived assertion only when covered by an approved environment waiver
 with tempfile.TemporaryDirectory() as tmp:
     report = minimal_acceptance_review("REQ-T15", status="pass")
