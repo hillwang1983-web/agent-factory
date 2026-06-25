@@ -70,6 +70,8 @@ def read_completion_result(completion_path):
     result = payload.get("result")
     if not isinstance(result, dict):
         return None
+    result = dict(result)
+    result.setdefault("result", payload["status"])
 
     if payload["status"] == "success":
         if result.get("result") != "success":
@@ -296,19 +298,29 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
                     except Exception:
                         pass
             else:
-                # For completion_signal, wait for natural exit
+                # For completion_signal, the Agent has explicitly handed off a
+                # valid result envelope. Terminate promptly so a hanging model
+                # wrapper cannot burn tokens or stall the workflow.
                 try:
-                    proc.poll()
-                    proc.wait(timeout=3.0)
-                except subprocess.TimeoutExpired:
+                    os.killpg(pgid, signal.SIGTERM)
+                except Exception:
+                    pass
+                wait_start = time.time()
+                stopped = False
+                while time.time() - wait_start < policy.termination_grace_seconds:
+                    if proc.poll() is not None:
+                        stopped = True
+                        break
+                    time.sleep(0.2)
+                if not stopped:
                     try:
-                        os.killpg(pgid, signal.SIGTERM)
+                        os.killpg(pgid, signal.SIGKILL)
                     except Exception:
                         pass
-                    try:
-                        proc.wait(timeout=2.0)
-                    except Exception:
-                        pass
+                try:
+                    proc.wait(timeout=2.0)
+                except Exception:
+                    pass
         except Exception:
             pass
         
@@ -325,8 +337,8 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
             exit_code = 1
 
     # Wait for the reader threads to finish reading remaining output
-    t_out.join(timeout=2.0)
-    t_err.join(timeout=2.0)
+    t_out.join(timeout=5.0)
+    t_err.join(timeout=5.0)
 
     final_stdout = "".join(stdout_buf)
     final_stderr = "".join(stderr_buf)

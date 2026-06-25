@@ -176,6 +176,28 @@ elif scenario == "write_business_json_then_completion":
     tmp.replace(completion_file)
     time.sleep(100)
     sys.exit(0)
+
+elif scenario == "completion_success_without_inner_result":
+    completion_file = pathlib.Path(sys.argv[3])
+    output_file.write_text("review artifact", encoding="utf-8")
+    envelope = {
+        "version": 1,
+        "status": "success",
+        "result": {
+            "review_status": "fail",
+            "next_state": "code_rework",
+            "changed_files": [str(output_file)],
+            "artifacts": [str(output_file)],
+            "commands_run": ["npm run build --prefix webui"],
+            "risks": ["Code review failed and developer must rework."],
+            "next_agent": "developer"
+        }
+    }
+    tmp = completion_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(envelope), encoding="utf-8")
+    tmp.replace(completion_file)
+    time.sleep(100)
+    sys.exit(0)
 """
     mock_hermes_path.write_text(mock_hermes_code, encoding="utf-8")
 
@@ -455,6 +477,31 @@ sys.exit(res.returncode)
         except OSError:
             pid_alive = False
         assert not pid_alive, f"Expected child PID {result.pid} to be dead and reaped, but it is still alive!"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        # Test Case 11: Completion status is authoritative when inner result.result is omitted
+        print("Testing Case 11: Completion success without inner result field...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "completion_success_without_inner_result", str(target_file), str(completion_file)]
+        result = execute_controlled_process(
+            cmd,
+            workspace,
+            None,
+            AgentRunPolicy(20, 10, 1, 10000, 1000),
+            [str(target_file)],
+            completion_file=str(completion_file)
+        )
+        assert result.returncode == 0, f"Expected 0 exit on completion, got {result.returncode}"
+        assert result.completion_status == "valid", f"Expected completion_status valid, got {result.completion_status}"
+        assert result.completion_result is not None
+        assert result.completion_result["result"] == "success"
+        assert result.completion_result["review_status"] == "fail"
+        assert result.completion_result["next_state"] == "code_rework"
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
