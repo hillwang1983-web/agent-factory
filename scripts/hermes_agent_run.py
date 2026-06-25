@@ -456,6 +456,75 @@ def parse_json_block(block):
         except json.JSONDecodeError:
             return None
 
+def _hermes_profile_from_args(hermes_args):
+    for index, arg in enumerate(hermes_args):
+        if arg == "--profile" and index + 1 < len(hermes_args):
+            profile = str(hermes_args[index + 1]).strip()
+            return profile or None
+    return None
+
+
+def _find_and_parse_hermes_diagnostic(session_id, profile=None):
+    active_profile_path = Path.home() / ".hermes" / "active_profile"
+    resolved_profile = profile
+    if not resolved_profile and active_profile_path.exists():
+        try:
+            resolved_profile = active_profile_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    resolved_profile = resolved_profile or "default"
+
+    sessions_dir = Path.home() / ".hermes" / "profiles" / resolved_profile / "sessions"
+    if not sessions_dir.exists():
+        return None
+
+    candidates = list(sessions_dir.glob(f"request_dump_{session_id}_*.json"))
+    if not candidates:
+        return None
+
+    # Get the latest file by modification time
+    latest_file = max(candidates, key=lambda p: p.stat().st_mtime)
+    try:
+        with open(latest_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def extract_provider_error(diag, agent_model_cfg):
+    if not diag:
+        return None
+
+    error_info = diag.get("error", {})
+    if not error_info:
+        return None
+
+    status_code = error_info.get("status_code")
+    error_type = error_info.get("type", "")
+    message = error_info.get("message", "")
+
+    provider = agent_model_cfg.get("provider", "unknown")
+    model = agent_model_cfg.get("model", "unknown")
+
+    if status_code == 401 or "AuthenticationError" in error_type:
+        error_code = "PROVIDER_AUTHENTICATION_FAILED"
+    elif status_code == 429:
+        error_code = "PROVIDER_RATE_LIMITED"
+    elif status_code and status_code >= 500:
+        error_code = "PROVIDER_UNAVAILABLE"
+    else:
+        return None
+
+    return {
+        "result": "failed",
+        "error_code": error_code,
+        "error": f"Provider: {provider}\nModel: {model}\nHTTP status: {status_code}\nReason: {error_type}\nMessage: {message}",
+        "provider": provider,
+        "model": model,
+        "status_code": status_code,
+        "message": message,
+        "retryable": status_code in (429, 500, 502, 503, 504)
+    }
+
 
 def build_unstructured_result(stdout, stderr):
     stdout_text = stdout or ""
@@ -574,11 +643,17 @@ def validate_agent_file_declarations(agent_name, result, repo_root, run_started_
                 continue
 
         # Role-based write policy: only developer/buildfix-debugger may modify production source.
+        # testwriter may write to .ai-agent/ and tests/.
         # All other agents are restricted to .ai-agent/ paths.
         if agent_name not in ALLOWED_WRITE_AGENTS and agent_name != "evidence":
-            if not normalized.startswith(".ai-agent/"):
-                errors.append(f"illegal_write_path_escape: agent {agent_name} attempted to write outside .ai-agent/: {normalized}")
-                continue
+            if agent_name == "testwriter":
+                if not (normalized.startswith(".ai-agent/") or normalized.startswith("tests/")):
+                    errors.append(f"illegal_write_path_escape: agent {agent_name} attempted to write outside .ai-agent/ or tests/: {normalized}")
+                    continue
+            else:
+                if not normalized.startswith(".ai-agent/"):
+                    errors.append(f"illegal_write_path_escape: agent {agent_name} attempted to write outside .ai-agent/: {normalized}")
+                    continue
 
         file_path = (repo_root / normalized).resolve()
         try:
@@ -859,6 +934,7 @@ def main():
             raise SystemExit("Error: --adu or --epic is required")
         adu_data = load_json(REGISTRY / "adu.json")
         adu = find_adu(adu_data, args.adu)
+        adu.setdefault("artifacts", [])
 
     projects_path = REGISTRY / "projects.json"
     project_repo_path = ROOT
@@ -993,6 +1069,7 @@ def main():
     env = os.environ.copy()
     session_id = f"oneshot_{timestamp}_{adu['id']}_{args.agent}"
     env["HERMES_SESSION_ID"] = session_id
+    env["PYTHONUNBUFFERED"] = "1"
 
     default_cwd_raw = agents.get("default_cwd", "${PROJECT_REPO_ROOT}")
     cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
@@ -1025,16 +1102,46 @@ def main():
         adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
         run_result = "failed"
     elif result is None:
-        adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
-        run_result = "unstructured"
-        result = build_unstructured_result(proc.stdout, proc.stderr)
-        if proc.completion_status in ("invalid", "missing"):
-            result["error_code"] = (
-                "invalid_completion_envelope"
-                if proc.completion_status == "invalid"
-                else "missing_completion_envelope"
+        is_empty_output = not proc.stdout.strip() and not proc.stderr.strip()
+        provider_error_result = None
+
+        if is_empty_output and proc.completion_status in ("invalid", "missing"):
+            hermes_profile = _hermes_profile_from_args(agent_cfg.get("hermes_args", []))
+            diag = _find_and_parse_hermes_diagnostic(session_id, hermes_profile)
+            if diag:
+                provider_error_result = extract_provider_error(diag, agent_model_cfg)
+            else:
+                provider_error_result = {
+                    "result": "failed",
+                    "error_code": "EMPTY_HERMES_RESPONSE",
+                    "error": "Hermes exited successfully but produced empty output and no diagnostic dump."
+                }
+
+        if provider_error_result:
+            result = provider_error_result
+            run_result = result["result"]
+            error_lines = [
+                "[Agent Factory Provider Error]",
+                f"error_code: {result.get('error_code', 'PROVIDER_ERROR')}",
+                str(result.get("error", "Provider request failed.")),
+            ]
+            existing_stderr = (run_dir / "stderr.md").read_text(encoding="utf-8")
+            separator = "\n" if existing_stderr and not existing_stderr.endswith("\n") else ""
+            (run_dir / "stderr.md").write_text(
+                f"{existing_stderr}{separator}{chr(10).join(error_lines)}\n",
+                encoding="utf-8",
             )
-            result["stdout_candidate"] = extract_json_result(proc.stdout)
+        else:
+            adu["retry_count"] = int(adu.get("retry_count", 0)) + 1
+            run_result = "unstructured"
+            result = build_unstructured_result(proc.stdout, proc.stderr)
+            if proc.completion_status in ("invalid", "missing"):
+                result["error_code"] = (
+                    "invalid_completion_envelope"
+                    if proc.completion_status == "invalid"
+                    else "missing_completion_envelope"
+                )
+                result["stdout_candidate"] = extract_json_result(proc.stdout)
     else:
         run_result = result.get("result") or result.get("status") or "unknown"
         next_state = result.get("next_state")

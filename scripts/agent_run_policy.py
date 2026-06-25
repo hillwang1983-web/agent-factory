@@ -1,6 +1,7 @@
 import json
 import pathlib
 import subprocess
+import threading
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
@@ -157,15 +158,27 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     stdout_buf = []
     stderr_buf = []
 
-    # Make stdout/stderr non-blocking
-    for stream in (proc.stdout, proc.stderr):
-        if stream:
-            fd = stream.fileno()
-            fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-            fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    def read_stream(stream, buf):
+        try:
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    break
+                buf.append(chunk)
+        except Exception as e:
+            import sys
+            print(f"Exception in read_stream: {e}", file=sys.stderr)
+
+    t_out = threading.Thread(target=read_stream, args=(proc.stdout, stdout_buf), daemon=True)
+    t_err = threading.Thread(target=read_stream, args=(proc.stderr, stderr_buf), daemon=True)
+    t_out.start()
+    t_err.start()
 
     termination_reason = None
     exit_code = None
+
+    last_stdout_len = 0
+    last_stderr_len = 0
 
     while True:
         now = time.time()
@@ -192,41 +205,40 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
         # 3. Read output
         has_new_output = False
         
-        try:
-            out = proc.stdout.read()
-            if out:
-                stdout_buf.append(out)
-                lines = out.splitlines()
-                has_substantive = False
-                for line in lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if "HTTP/1.1 200" in stripped or "completions" in stripped or "POST /chat" in stripped:
-                        continue
-                    has_substantive = True
-                if has_substantive:
-                    has_new_output = True
-        except Exception:
-            pass
+        current_stdout_buf = list(stdout_buf)
+        current_stderr_buf = list(stderr_buf)
+        current_stdout_len = sum(len(x) for x in current_stdout_buf)
+        current_stderr_len = sum(len(x) for x in current_stderr_buf)
 
-        try:
-            err = proc.stderr.read()
-            if err:
-                stderr_buf.append(err)
-                lines = err.splitlines()
-                has_substantive = False
-                for line in lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if "HTTP/1.1 200" in stripped or "completions" in stripped or "POST /chat" in stripped:
-                        continue
-                    has_substantive = True
-                if has_substantive:
-                    has_new_output = True
-        except Exception:
-            pass
+        if current_stdout_len > last_stdout_len:
+            new_data = "".join(current_stdout_buf)[last_stdout_len:]
+            lines = new_data.splitlines()
+            has_substantive = False
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if "HTTP/1.1 200" in stripped or "completions" in stripped or "POST /chat" in stripped:
+                    continue
+                has_substantive = True
+            if has_substantive:
+                has_new_output = True
+            last_stdout_len = current_stdout_len
+
+        if current_stderr_len > last_stderr_len:
+            new_data = "".join(current_stderr_buf)[last_stderr_len:]
+            lines = new_data.splitlines()
+            has_substantive = False
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if "HTTP/1.1 200" in stripped or "completions" in stripped or "POST /chat" in stripped:
+                    continue
+                has_substantive = True
+            if has_substantive:
+                has_new_output = True
+            last_stderr_len = current_stderr_len
 
         # 4. Check target file mtime changes
         current_mtime = get_max_mtime()
@@ -250,34 +262,47 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
             pgid = os.getpgid(proc.pid)
             if termination_reason != "completion_signal":
                 print(f"Watchdog triggered: {termination_reason}. Killing process group {pgid}", file=sys.stderr)
-            os.killpg(pgid, signal.SIGTERM)
+                os.killpg(pgid, signal.SIGTERM)
+                
+                # Wait grace period
+                wait_start = time.time()
+                killed = False
+                while time.time() - wait_start < policy.termination_grace_seconds:
+                    if proc.poll() is not None:
+                        killed = True
+                        break
+                    time.sleep(0.2)
+                
+                if not killed:
+                    try:
+                        os.killpg(pgid, signal.SIGKILL)
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        proc.wait(timeout=1.0)
+                    except Exception:
+                        pass
+            else:
+                # For completion_signal, wait for natural exit
+                try:
+                    proc.poll()
+                    proc.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(pgid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        pass
         except Exception:
             pass
-        
-        # Wait grace period
-        wait_start = time.time()
-        killed = False
-        while time.time() - wait_start < policy.termination_grace_seconds:
-            if proc.poll() is not None:
-                killed = True
-                break
-            time.sleep(0.2)
-        
-        if not killed:
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGKILL)
-            except Exception:
-                pass
-            try:
-                proc.wait(timeout=2.0)
-            except Exception:
-                pass
-        else:
-            try:
-                proc.wait(timeout=1.0)
-            except Exception:
-                pass
         
         if termination_reason != "completion_signal":
             err_code = "AGENT_RUN_TIMEOUT" if termination_reason == "max_duration_exceeded" else "AGENT_NO_PROGRESS"
@@ -289,17 +314,11 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
                 "next_state": None
             }
             print(f"__AGENT_RUN_OUTCOME__:{json.dumps(result_json)}")
-            sys.exit(1)
+            exit_code = 1
 
-    # Read remaining output
-    try:
-        out = proc.stdout.read()
-        if out: stdout_buf.append(out)
-    except Exception: pass
-    try:
-        err = proc.stderr.read()
-        if err: stderr_buf.append(err)
-    except Exception: pass
+    # Wait for the reader threads to finish reading remaining output
+    t_out.join(timeout=2.0)
+    t_err.join(timeout=2.0)
 
     final_stdout = "".join(stdout_buf)
     final_stderr = "".join(stderr_buf)
