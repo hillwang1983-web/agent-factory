@@ -1351,7 +1351,12 @@ def main():
                     f".ai-agent/contracts/{target_id}-notes.md"
                 ])
             elif args.agent == "rework-planner":
-                snapshot_paths.append(f".ai-agent/rework/{target_id}-rework-plan.json")
+                snapshot_paths.extend([
+                    f".ai-agent/rework/{target_id}-rework-plan.json",
+                    f".ai-agent/rework/{target_id}-rework-plan.md"
+                ])
+            elif args.agent == "buildfix-debugger":
+                snapshot_paths.append(f".ai-agent/runs/{target_id}-validation-summary.md")
             elif args.agent == "code-reviewer":
                 snapshot_paths.extend([
                     f".ai-agent/reviews/{target_id}-code-review.json",
@@ -1429,7 +1434,7 @@ def main():
             with open(run_dir / "file-delta.json", "w", encoding="utf-8") as f:
                 json.dump(delta, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            sys.stderr.write(f"Failed to write file snapshots: {e}\n")
+            raise RuntimeError(f"Failed to write file snapshots: {e}")
 
         try:
             run_dir_rel = str(run_dir.relative_to(project_repo_path)).replace("\\", "/")
@@ -1467,13 +1472,29 @@ def main():
                 provider_error = extract_provider_error(diag, agent_model_cfg)
             if not provider_error:
                 combined_output = f"{proc.stdout}\n{proc.stderr}"
-                if "401" in combined_output or "authentication" in combined_output.lower() or "unauthorized" in combined_output.lower() or "api key" in combined_output.lower():
+                if (
+                    "AuthenticationError" in combined_output
+                    or "invalid_api_key" in combined_output.lower()
+                    or "Incorrect API key provided" in combined_output
+                    or "API_KEY_INVALID" in combined_output
+                    or "HTTP 401 Unauthorized" in combined_output
+                    or "status_code: 401" in combined_output.lower()
+                    or "status code 401" in combined_output.lower()
+                ):
                     provider_error = {
                         "result": "failed",
                         "error_code": "PROVIDER_AUTHENTICATION_FAILED",
                         "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
                     }
-                elif "429" in combined_output or "rate limit" in combined_output.lower() or "too many requests" in combined_output.lower():
+                elif (
+                    "RateLimitError" in combined_output
+                    or "RESOURCE_EXHAUSTED" in combined_output
+                    or "Resource has been exhausted" in combined_output
+                    or "rate limit exceeded" in combined_output.lower()
+                    or "HTTP 429 Too Many Requests" in combined_output
+                    or "status_code: 429" in combined_output.lower()
+                    or "status code 429" in combined_output.lower()
+                ):
                     provider_error = {
                         "result": "failed",
                         "error_code": "PROVIDER_RATE_LIMITED",
@@ -1520,13 +1541,29 @@ def main():
                 provider_error_result = extract_provider_error(diag, agent_model_cfg)
             if not provider_error_result:
                 combined_output = f"{proc.stdout}\n{proc.stderr}"
-                if "401" in combined_output or "authentication" in combined_output.lower() or "unauthorized" in combined_output.lower() or "api key" in combined_output.lower():
+                if (
+                    "AuthenticationError" in combined_output
+                    or "invalid_api_key" in combined_output.lower()
+                    or "Incorrect API key provided" in combined_output
+                    or "API_KEY_INVALID" in combined_output
+                    or "HTTP 401 Unauthorized" in combined_output
+                    or "status_code: 401" in combined_output.lower()
+                    or "status code 401" in combined_output.lower()
+                ):
                     provider_error_result = {
                         "result": "failed",
                         "error_code": "PROVIDER_AUTHENTICATION_FAILED",
                         "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
                     }
-                elif "429" in combined_output or "rate limit" in combined_output.lower() or "too many requests" in combined_output.lower():
+                elif (
+                    "RateLimitError" in combined_output
+                    or "RESOURCE_EXHAUSTED" in combined_output
+                    or "Resource has been exhausted" in combined_output
+                    or "rate limit exceeded" in combined_output.lower()
+                    or "HTTP 429 Too Many Requests" in combined_output
+                    or "status_code: 429" in combined_output.lower()
+                    or "status code 429" in combined_output.lower()
+                ):
                     provider_error_result = {
                         "result": "failed",
                         "error_code": "PROVIDER_RATE_LIMITED",
@@ -1847,15 +1884,16 @@ def main():
     import hashlib
     delta_sha = ""
     delta_file = run_dir / "file-delta.json"
-    if delta_file.is_file():
-        h = hashlib.sha256()
-        try:
-            with open(delta_file, "rb") as f:
-                for chunk in iter(lambda: f.read(65536), b""):
-                    h.update(chunk)
-            delta_sha = h.hexdigest()
-        except Exception as e:
-            raise RuntimeError(f"Failed to calculate file-delta.json SHA-256 hash: {e}")
+    if not delta_file.is_file():
+        raise RuntimeError("file-delta.json is missing or not a file. Integrity check failed.")
+    h = hashlib.sha256()
+    try:
+        with open(delta_file, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        delta_sha = h.hexdigest()
+    except Exception as e:
+        raise RuntimeError(f"Failed to calculate file-delta.json SHA-256 hash: {e}")
 
     run_record = {
         "timestamp": timestamp,
