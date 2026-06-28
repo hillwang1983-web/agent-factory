@@ -332,6 +332,10 @@ def main():
     if args.mode in ("start", "continue", "step"):
         acquire_lock(args.adu, args.mode, project_id, repo_root=repo_path)
 
+    final_status = "completed"
+    final_state = None
+    error_msg = None
+
     try:
         if args.mode == "pause":
             with registry_lock(REGISTRY):
@@ -428,6 +432,7 @@ def main():
                 if not adu:
                     break
                 ensure_adu_fields(adu)
+                final_state = adu.get("state")
 
                 if adu.get("paused") or adu.get("state") == "paused":
                     broadcast_event("agent_factory_orchestrator_event", {"adu": args.adu, "action": "paused"})
@@ -649,6 +654,8 @@ def main():
                     # Force state in memory and update files if needed
                     adu["state"] = "human_gate"
                     adu["human_gate_required"] = True
+                    final_status = "waiting_human"
+                    final_state = "human_gate"
                     parsed_result = result_json.get("parsed_result", {}) if result_json else {}
                     gate_type = None
                     if result_json:
@@ -697,6 +704,8 @@ def main():
                             "operation_id": args.operation_id,
                         })
                         had_failure = True
+                        final_status = "failed"
+                        final_state = adu.get("state")
                         should_break = True
 
                 if not should_break:
@@ -789,7 +798,20 @@ def main():
 
             # Sleep a bit to avoid tight loop
             time.sleep(0.5)
+    except Exception as e:
+        had_failure = True
+        final_status = "failed"
+        error_msg = str(e)
+        raise e
     finally:
+        if args.operation_id:
+            broadcast_event("agent_factory_orchestrator_event", {
+                "event": "operation_finished",
+                "operation_id": args.operation_id,
+                "status": "waiting_human" if (not had_failure and final_status == "waiting_human") else ("completed" if not had_failure else "failed"),
+                "final_state": final_state if final_state is not None else (adu.get("state") if ('adu' in locals() and adu is not None) else None),
+                "error": error_msg
+            })
         if args.mode in ("start", "continue", "step"):
             release_lock(args.adu, project_id, repo_root=repo_path, owner_token=_LOCK_OWNER_TOKEN)
         if had_failure:

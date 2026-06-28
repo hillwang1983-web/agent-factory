@@ -585,7 +585,7 @@ sys.exit(res.returncode)
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
-        cmd = [sys.executable, str(mock_hermes_path), "silent", str(target_file), str(completion_file)]
+        cmd = [sys.executable, str(mock_hermes_path), "progress_then_stall", str(target_file), str(completion_file)]
         result = execute_controlled_process(
             cmd,
             workspace,

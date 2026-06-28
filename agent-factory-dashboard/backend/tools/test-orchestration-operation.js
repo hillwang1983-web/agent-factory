@@ -1,6 +1,13 @@
 /**
  * Unit tests for OrchestrationOperationStore
  */
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const testWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-factory-ops-test-'));
+process.env.AGENT_FACTORY_WORKSPACE = testWorkspace;
+
 const { OrchestrationOperationStore } = require('../dist/application/orchestration-operation-store');
 
 let passed = 0;
@@ -101,6 +108,60 @@ function main() {
     if (updated.finalState !== 'epic_evidenced') throw new Error('Final state not updated');
     if (!updated.endedAt) throw new Error('Expected endedAt to be populated');
   });
+
+  // Test 6: stale running operation with a dead PID must not block retries
+  assert('getActiveOperation finalizes dead-PID running operations', () => {
+    store.clear();
+    const op = store.createOperation({ targetType: 'adu', targetId: 'ADU-DEAD-PID', mode: 'continue' });
+    store.updateOperation(op.id, { pid: 99999999 });
+
+    const active = store.getActiveOperation('ADU-DEAD-PID');
+    if (active) throw new Error('Expected dead PID operation not to be returned as active');
+
+    const updated = store.getOperation(op.id);
+    if (!updated) throw new Error('Operation not found after dead PID finalization');
+    if (updated.status !== 'failed') throw new Error(`Expected status failed, got ${updated.status}`);
+    if (updated.result !== 'failed') throw new Error(`Expected result failed, got ${updated.result}`);
+    if (!String(updated.error || '').includes('stale active operation')) {
+      throw new Error(`Expected stale active operation error, got ${updated.error}`);
+    }
+    if (!updated.endedAt) throw new Error('Expected stale operation to receive endedAt');
+  });
+
+  // Test 7: ADU latest metadata and operation final state convergence
+  assert('ADU latest metadata and operation state converges', () => {
+    store.clear();
+    const adu = {
+      id: 'ADU-CONVERGE',
+      state: 'evidenced',
+      latest_agent: 'evidence',
+      latest_run_timestamp: '20260621-120000',
+    };
+
+    const op = store.createOperation({
+      targetType: 'adu',
+      targetId: 'ADU-CONVERGE',
+      mode: 'continue',
+    });
+
+    store.updateOperation(op.id, {
+      status: 'completed',
+      finalState: 'evidenced',
+      exitCode: 0,
+    });
+
+    const updatedOp = store.getOperation(op.id);
+    if (updatedOp.status !== 'completed') throw new Error('Expected operation status completed');
+    if (updatedOp.finalState !== 'evidenced') throw new Error('Expected operation finalState evidenced');
+
+    if (adu.state !== 'evidenced') throw new Error('Expected adu state evidenced');
+    if (adu.latest_agent !== 'evidence') throw new Error('Expected adu latest_agent evidence');
+    if (adu.latest_run_timestamp !== '20260621-120000') throw new Error('Expected adu latest_run_timestamp mismatch');
+  });
+
+  try {
+    fs.rmSync(testWorkspace, { recursive: true, force: true });
+  } catch (_) {}
 
   console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);
   process.exit(failed > 0 ? 1 : 0);

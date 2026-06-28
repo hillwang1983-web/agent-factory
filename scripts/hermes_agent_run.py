@@ -1730,7 +1730,13 @@ def main():
 
                     # Update state only if not canceled/paused in the registry
                     if fresh_adu.get("state") not in ("canceled", "paused") and not fresh_adu.get("paused"):
-                        fresh_adu["state"] = adu["state"]
+                        if run_result in ("success", "human_gate") or adu["state"] == "human_gate":
+                            fresh_adu["state"] = adu["state"]
+
+                    fresh_adu["latest_agent"] = args.agent
+                    fresh_adu["latest_run_timestamp"] = run_record["timestamp"]
+                    fresh_adu["last_result"] = run_record["result"]
+                    fresh_adu["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
                     save_json_direct(REGISTRY / "adu.json", fresh_adu_data)
 

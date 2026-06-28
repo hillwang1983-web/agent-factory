@@ -14,6 +14,19 @@ function toCompatibility(op: OrchestrationOperation): OrchestrationOperation {
   return op;
 }
 
+function isPidAlive(pid: unknown): boolean {
+  if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e && typeof e === 'object' && e.code === 'EPERM';
+  }
+}
+
 export class OrchestrationOperationStore {
   private static instance: OrchestrationOperationStore;
 
@@ -35,13 +48,49 @@ export class OrchestrationOperationStore {
     const dir = this.getRegistryDir();
     const file = path.join(dir, 'operations.json');
     if (!fs.existsSync(file)) return [];
+
+    let content: string;
     try {
-      const content = fs.readFileSync(file, 'utf-8');
-      const parsed = JSON.parse(content);
-      return parsed.operations || [];
-    } catch (e) {
-      return [];
+      content = fs.readFileSync(file, 'utf-8');
+    } catch (e: any) {
+      throw new Error(`Failed to read operations registry file at ${file}: ${e.message}`);
     }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e: any) {
+      throw new Error(`Failed to parse operations registry file at ${file}: ${e.message}`);
+    }
+
+    const ops = parsed.operations || [];
+
+    // Proactively clean up stale operations where the process has died
+    let changed = false;
+    const now = new Date().toISOString();
+    for (const op of ops) {
+      if (
+        ['queued', 'spawning', 'running'].includes(op.status) &&
+        op.spawn?.pid !== undefined &&
+        !isPidAlive(op.spawn.pid)
+      ) {
+        op.status = 'failed';
+        op.result = 'failed';
+        op.error = `stale active operation: process PID ${op.spawn.pid} is no longer alive`;
+        op.finished_at = now;
+        op.endedAt = now;
+        op.exitCode = 1;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      try {
+        fs.writeFileSync(file, JSON.stringify({ version: 1, operations: ops }, null, 2) + '\n', 'utf-8');
+      } catch (_) {}
+    }
+
+    return ops;
   }
 
   private writeOperations(ops: OrchestrationOperation[]) {
@@ -55,13 +104,22 @@ export class OrchestrationOperationStore {
     const dir = this.getRegistryDir();
     const file = path.join(dir, 'events.json');
     if (!fs.existsSync(file)) return [];
+
+    let content: string;
     try {
-      const content = fs.readFileSync(file, 'utf-8');
-      const parsed = JSON.parse(content);
-      return parsed.events || [];
-    } catch (e) {
-      return [];
+      content = fs.readFileSync(file, 'utf-8');
+    } catch (e: any) {
+      throw new Error(`Failed to read events registry file at ${file}: ${e.message}`);
     }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e: any) {
+      throw new Error(`Failed to parse events registry file at ${file}: ${e.message}`);
+    }
+
+    return parsed.events || [];
   }
 
   private writeEvents(evts: OrchestrationOperationEvent[]) {
@@ -224,6 +282,30 @@ export class OrchestrationOperationStore {
 
   getActiveOperation(targetId: string): OrchestrationOperation | null {
     const ops = this.readOperations();
+    let changed = false;
+    const now = new Date().toISOString();
+
+    for (const op of ops) {
+      if (
+        op.target_id === targetId &&
+        ['queued', 'spawning', 'running'].includes(op.status) &&
+        op.spawn?.pid !== undefined &&
+        !isPidAlive(op.spawn.pid)
+      ) {
+        op.status = 'failed';
+        op.result = 'failed';
+        op.error = `stale active operation: process PID ${op.spawn.pid} is no longer alive`;
+        op.finished_at = now;
+        op.endedAt = now;
+        op.exitCode = 1;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.writeOperations(ops);
+    }
+
     const active = ops.find(o =>
       o.target_id === targetId &&
       ['queued', 'spawning', 'running', 'waiting_human'].includes(o.status)
