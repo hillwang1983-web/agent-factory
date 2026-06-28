@@ -1400,20 +1400,6 @@ export function createAgentFactoryRouter(
       if (code === 20 || finalState === 'human_gate') {
         status = 'waiting_human';
         result = 'human_gate';
-
-        // Open Human Gate
-        const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
-        const humanGateService = HumanGateService.getInstance();
-        await humanGateService.openGate({
-          scope: 'adu',
-          target_id: aduId,
-          gate_type: (gateType as any) || 'environment_verification_required',
-          title: gateType === 'write_path_expansion' ? 'Write Path Expansion Required' : 'Runtime Evidence Required',
-          reason: gateType === 'write_path_expansion' ? 'Proposed modifications affect derived files. Approval required.' : 'Acceptance testing requires environment verification.',
-          source_agent: nextAgent,
-          pre_gate_state: adu?.state || 'debugged',
-          affected_assertions: affectedAssertions
-        });
       } else if (code !== 0) {
         status = 'failed';
         result = 'failed';
@@ -1599,6 +1585,11 @@ export function createAgentFactoryRouter(
           target_id: aduId,
         });
       }
+      void (async () => {
+        try {
+          await spawnOrchestrator(aduId, 'continue');
+        } catch (_) {}
+      })();
       res.status(201).json(override);
     } catch (err: any) {
       const status = err.status || 500;
@@ -1646,6 +1637,11 @@ export function createAgentFactoryRouter(
         reasonType,
         toState: result.state,
       });
+      void (async () => {
+        try {
+          await spawnOrchestrator(aduId, 'continue');
+        } catch (_) {}
+      })();
       res.json({ success: true, ...result });
     } catch (err: unknown) {
       if ((err as any).notFound) { res.status(404).json({ success: false, error: (err as Error).message }); return; }
@@ -1684,6 +1680,11 @@ export function createAgentFactoryRouter(
         disposition,
         toState: result.state,
       });
+      void (async () => {
+        try {
+          await spawnOrchestrator(aduId, 'continue');
+        } catch (_) {}
+      })();
       res.json({ success: true, ...result });
     } catch (err: unknown) {
       if ((err as any).notFound) { res.status(404).json({ success: false, error: (err as Error).message }); return; }
@@ -3261,6 +3262,7 @@ export function createAgentFactoryRouter(
 
     const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
     try {
+      const gate = await HumanGateService.getInstance().getGate(gateId);
       await HumanGateService.getInstance().approveWaiver(gateId, {
         assertion_ids,
         waiver_type,
@@ -3269,6 +3271,13 @@ export function createAgentFactoryRouter(
         follow_up,
         operator: operator || 'local-operator'
       });
+      if (gate && gate.target_id) {
+        void (async () => {
+          try {
+            await spawnOrchestrator(gate.target_id, 'continue');
+          } catch (_) {}
+        })();
+      }
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -3292,7 +3301,15 @@ export function createAgentFactoryRouter(
       return;
     }
     const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
+    const gate = await HumanGateService.getInstance().getGate(gateId);
     await HumanGateService.getInstance().requestRework(gateId, { targetAgent, instruction });
+    if (gate && gate.target_id) {
+      void (async () => {
+        try {
+          await spawnOrchestrator(gate.target_id, 'continue');
+        } catch (_) {}
+      })();
+    }
     res.json({ success: true });
   }));
 
@@ -3326,7 +3343,15 @@ export function createAgentFactoryRouter(
       return;
     }
     const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
+    const gate = await HumanGateService.getInstance().getGate(gateId);
     await HumanGateService.getInstance().approveGate(gateId, comment);
+    if (gate && gate.target_id) {
+      void (async () => {
+        try {
+          await spawnOrchestrator(gate.target_id, 'continue');
+        } catch (_) {}
+      })();
+    }
     res.json({ success: true });
   }));
 
