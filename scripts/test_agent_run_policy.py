@@ -266,7 +266,7 @@ cmd = [sys.executable, "{str(mock_hermes_path)}", "infinite_output", "{str(targe
 res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
 sys.exit(res.returncode)
 """
-        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path = workspace / f"temp_wrapper_{os.getpid()}.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
@@ -291,7 +291,7 @@ cmd = [sys.executable, "{str(mock_hermes_path)}", "silent_success", "{str(target
 res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
 sys.exit(res.returncode)
 """
-        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path = workspace / f"temp_wrapper_{os.getpid()}.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
@@ -315,7 +315,7 @@ cmd = [sys.executable, "{str(mock_hermes_path)}", "progress_then_stall", "{str(t
 res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
 sys.exit(res.returncode)
 """
-        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path = workspace / f"temp_wrapper_{os.getpid()}.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
@@ -341,7 +341,7 @@ cmd = [sys.executable, "{str(mock_hermes_path)}", "no_exit", "{str(target_file)}
 res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"])
 sys.exit(res.returncode)
 """
-        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path = workspace / f"temp_wrapper_{os.getpid()}.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
@@ -405,7 +405,7 @@ cmd = [sys.executable, "{str(mock_hermes_path)}", "completion_invalid_version", 
 res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
 sys.exit(res.returncode)
 """
-        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path = workspace / f"temp_wrapper_{os.getpid()}.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
@@ -430,7 +430,7 @@ cmd = [sys.executable, "{str(mock_hermes_path)}", "completion_missing_fields", "
 res = execute_controlled_process(cmd, pathlib.Path("{str(workspace)}"), None, policy, ["{str(target_file)}"], completion_file="{str(completion_file)}")
 sys.exit(res.returncode)
 """
-        wrapper_path = workspace / "temp_wrapper.py"
+        wrapper_path = workspace / f"temp_wrapper_{os.getpid()}.py"
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
@@ -605,7 +605,7 @@ sys.exit(res.returncode)
             workspace / "temp_outcome_1.json",
             workspace / "temp_outcome_2.json",
             workspace / "temp_outcome_4.json",
-            workspace / "temp_wrapper.py",
+            workspace / f"temp_wrapper_{os.getpid()}.py",
             workspace / "temp_completion.json",
         ):
             if temp_path.exists():
