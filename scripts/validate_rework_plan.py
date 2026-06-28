@@ -24,8 +24,16 @@ def validate_raw_path(path_str):
     if len(p) >= 2 and p[0].isalpha() and p[1] == ":":
         raise ValueError(f"Path '{path_str}' must not be an absolute path.")
 
+    # Allow a single trailing slash, but reject trailing double slashes
+    if p.endswith("/") and not p.endswith("//"):
+        p_for_parts = p[:-1]
+    elif p.endswith("//"):
+        raise ValueError(f"Path '{path_str}' must not end with multiple slashes.")
+    else:
+        p_for_parts = p
+
     # 4. Traversal components and empty/dot components
-    parts = p.split("/")
+    parts = p_for_parts.split("/")
     if ".." in parts:
         raise ValueError(f"Path '{path_str}' must not contain path traversal components ('..').")
     if "." in parts:
@@ -89,14 +97,15 @@ def main():
 
     # source validation
     source = plan.get("source")
-    if not isinstance(source, str) or not source.strip():
-        print(f"FAIL: Rework plan 'source' field is missing or empty.", file=sys.stderr)
+    valid_sources = {"code-review", "buildfix", "acceptance-review"}
+    if source not in valid_sources:
+        print(f"FAIL: Rework plan 'source' field '{source}' is invalid. Must be one of {valid_sources}.", file=sys.stderr)
         sys.exit(1)
 
     # return_to validation
     return_to = plan.get("return_to")
-    if not isinstance(return_to, str) or not return_to.strip():
-        print(f"FAIL: Rework plan 'return_to' field is missing or empty.", file=sys.stderr)
+    if return_to != "developer":
+        print(f"FAIL: Rework plan 'return_to' field '{return_to}' is invalid. Must be 'developer'.", file=sys.stderr)
         sys.exit(1)
 
     must_fix = plan.get("must_fix_now")
@@ -130,6 +139,12 @@ def main():
             if not isinstance(val, str) or not val.strip():
                 print(f"FAIL: must_fix_now item at index {idx} has missing or empty field '{field}'.", file=sys.stderr)
                 sys.exit(1)
+
+        severity = item.get("severity")
+        valid_severities = {"P0", "P1", "P2", "P3"}
+        if severity not in valid_severities:
+            print(f"FAIL: must_fix_now item at index {idx} has invalid severity '{severity}'. Must be one of {valid_severities}.", file=sys.stderr)
+            sys.exit(1)
 
         affected = item.get("affected_paths")
         if not isinstance(affected, list):

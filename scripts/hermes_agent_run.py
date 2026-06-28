@@ -1489,7 +1489,8 @@ def main():
                         str(acceptance_path),
                         str(v_path),
                         runtime_records,
-                        source_run_timestamp=source_timestamp
+                        source_run_timestamp=source_timestamp,
+                        source_agent=source_agent
                     )
                     evidence_path.parent.mkdir(parents=True, exist_ok=True)
                     temp_path = evidence_path.with_suffix(".json.tmp")
