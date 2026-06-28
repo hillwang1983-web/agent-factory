@@ -1276,6 +1276,11 @@ def main():
 
     completion_file = run_dir / "completion.json"
     run_started_ns = time.time_ns()
+
+    import run_file_snapshot
+    allowed_write_paths = adu.get("allowed_write_paths") or ["."]
+    snapshot_before = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
+
     proc = agent_run_policy.execute_controlled_process(
         cmd,
         cwd_path,
@@ -1284,6 +1289,19 @@ def main():
         target_files=target_files,
         completion_file=completion_file
     )
+
+    snapshot_after = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
+    delta = run_file_snapshot.diff_snapshots(snapshot_before, snapshot_after)
+
+    try:
+        with open(run_dir / "file-snapshot-before.json", "w", encoding="utf-8") as f:
+            json.dump(snapshot_before, f, ensure_ascii=False, indent=2)
+        with open(run_dir / "file-snapshot-after.json", "w", encoding="utf-8") as f:
+            json.dump(snapshot_after, f, ensure_ascii=False, indent=2)
+        with open(run_dir / "file-delta.json", "w", encoding="utf-8") as f:
+            json.dump(delta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        sys.stderr.write(f"Failed to write file snapshots: {e}\n")
 
     (run_dir / "stdout.md").write_text(proc.stdout, encoding="utf-8")
     (run_dir / "stderr.md").write_text(proc.stderr, encoding="utf-8")
