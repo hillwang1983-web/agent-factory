@@ -386,7 +386,8 @@ export class OperatorOverrideService {
       if (
         adu.state !== snapshot.aduState ||
         run.result !== snapshot.runResult ||
-        run.operator_override_id !== snapshot.runOperatorOverrideId
+        run.operator_override_id !== snapshot.runOperatorOverrideId ||
+        run.file_delta_sha256 !== snapshot.fileDeltaSha256
       ) {
         throw Object.assign(
           new Error('ADU or run changed during validation; retry the override'),

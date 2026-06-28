@@ -435,20 +435,23 @@ async function main() {
     const file_delta_sha256 = crypto.createHash('sha256').update(deltaContent).digest('hex');
 
     // Write run record
-    fs.writeFileSync(path.join(registry, 'runs.json'), JSON.stringify({ version: 1, runs: [{
+    const runRecord = {
       timestamp: '20260621-102439', adu_id: aduId, agent: 'developer',
       returncode: 1, result: options.runResult || 'failed', run_dir: runDir,
-      file_delta_sha256,
       parsed_result: {
         result: options.runResult || 'failed',
         error_code: options.errorCode || 'declared_changes_unverified',
         error: 'mtime mismatch'
       },
       token_usage: { inputTokens: 5000, outputTokens: 300, totalTokens: 5300 },
-    }]}));
+    };
+    if (!options.noHash) {
+      runRecord.file_delta_sha256 = file_delta_sha256;
+    }
+    fs.writeFileSync(path.join(registry, 'runs.json'), JSON.stringify({ version: 1, runs: [runRecord] }));
 
     // Write file-delta.json
-    fs.writeFileSync(path.join(fullRunDir, 'file-delta.json'), deltaContent);
+    fs.writeFileSync(path.join(fullRunDir, 'file-delta.json'), options.tamperedDisk ? 'tampered content' : deltaContent);
 
     return { tmp, aduId };
   }
@@ -500,6 +503,54 @@ async function main() {
       });
     } finally { teardown(tmp); }
   }, (e) => e.status === 400);
+
+  await assertThrows('amend with missing file delta hash returns 422', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace({ noHash: true });
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: 'x'.repeat(10)
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 422 && e.message.includes('Missing file delta SHA-256 hash'));
+
+  await assertThrows('amend with disk tampered file-delta.json returns 409', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace({ tamperedDisk: true });
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: 'x'.repeat(10)
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 409 && e.message.includes('SHA-256 mismatch'));
+
+  await assertThrows('amend with registry hash changed between phases returns 409', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace();
+    const svc = new OperatorOverrideService(tmp);
+    let readCount = 0;
+    const originalReadJson = svc.readJson;
+    svc.readJson = function(filePath, defaults) {
+      const data = originalReadJson.call(svc, filePath, defaults);
+      if (filePath.endsWith('runs.json')) {
+        readCount++;
+        if (readCount === 2) {
+          data.runs[0].file_delta_sha256 = 'different-hash';
+        }
+      }
+      return data;
+    };
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: 'x'.repeat(10)
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 409 && e.message.includes('changed during validation'));
 
   await assert('successful amend updates ADU, updates run changed_files and status to success', async () => {
     const { tmp, aduId } = makeDeveloperWorkspace();

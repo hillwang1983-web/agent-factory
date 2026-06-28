@@ -1309,40 +1309,66 @@ def main():
     except ValueError:
         pass
 
-    adu_id = adu.get("id")
-    if adu_id:
-        if args.agent == "requirement-analyst":
+    target_id = adu.get("id")
+    if target_id:
+        if is_epic_run:
+            if args.agent == "system-flow-designer":
+                snapshot_paths.extend([
+                    f".ai-agent/epics/{target_id}/system-flow.md",
+                    f".ai-agent/epics/{target_id}/system-flow.json"
+                ])
+            elif args.agent == "adu-splitter":
+                snapshot_paths.extend([
+                    f".ai-agent/epics/{target_id}/split-plan.md",
+                    f".ai-agent/epics/{target_id}/split-plan.json"
+                ])
+            elif args.agent == "epic-acceptance-reviewer":
+                snapshot_paths.extend([
+                    f".ai-agent/epics/{target_id}/epic-acceptance.json",
+                    f".ai-agent/epics/{target_id}/epic-acceptance.md"
+                ])
+        elif args.agent == "project-profiler":
             snapshot_paths.extend([
-                f".ai-agent/analysis/{adu_id}-analysis-review.json",
-                f".ai-agent/analysis/{adu_id}-analysis-review.md"
+                ".agent-factory/project-profile.json",
+                ".agent-factory/knowledge/project-summary.md",
+                ".agent-factory/knowledge/module-map.md",
+                ".agent-factory/knowledge/test-strategy.md",
+                ".agent-factory/knowledge/risk-map.md"
             ])
-        elif args.agent == "detail-designer":
-            snapshot_paths.extend([
-                f".ai-agent/designs/{adu_id}-design-review.json",
-                f".ai-agent/designs/{adu_id}-design-review.md"
-            ])
-        elif args.agent == "contract":
-            snapshot_paths.extend([
-                f".ai-agent/contracts/{adu_id}.json",
-                f".ai-agent/contracts/{adu_id}-notes.md"
-            ])
-        elif args.agent == "code-reviewer":
-            snapshot_paths.extend([
-                f".ai-agent/reviews/{adu_id}-code-review.json",
-                f".ai-agent/reviews/{adu_id}-code-review.md"
-            ])
-        elif args.agent == "acceptance-reviewer":
-            snapshot_paths.extend([
-                f".ai-agent/acceptance/{adu_id}-acceptance-review.json",
-                f".ai-agent/acceptance/{adu_id}-acceptance-review.md"
-            ])
-        elif args.agent == "evidence":
-            snapshot_paths.extend([
-                f".ai-agent/evidence/{adu_id}.json",
-                f".ai-agent/evidence/{adu_id}-notes.md"
-            ])
-        elif args.agent == "testwriter":
-            snapshot_paths.append("tests")
+        else:
+            if args.agent == "requirement-analyst":
+                snapshot_paths.append(f".ai-agent/analysis/{target_id}.md")
+            elif args.agent == "detail-designer":
+                snapshot_paths.extend([
+                    f".ai-agent/designs/{target_id}-detailed-design.md",
+                    f".ai-agent/designs/{target_id}-interfaces.json"
+                ])
+            elif args.agent == "context-pack":
+                snapshot_paths.append(f".ai-agent/context-packs/{target_id}.md")
+            elif args.agent == "contract":
+                snapshot_paths.extend([
+                    f".ai-agent/contracts/{target_id}.json",
+                    f".ai-agent/contracts/{target_id}-notes.md"
+                ])
+            elif args.agent == "rework-planner":
+                snapshot_paths.append(f".ai-agent/rework/{target_id}-rework-plan.json")
+            elif args.agent == "code-reviewer":
+                snapshot_paths.extend([
+                    f".ai-agent/reviews/{target_id}-code-review.json",
+                    f".ai-agent/reviews/{target_id}-code-review.md"
+                ])
+            elif args.agent == "acceptance-reviewer":
+                snapshot_paths.extend([
+                    f".ai-agent/acceptance/{target_id}-acceptance-review.json",
+                    f".ai-agent/acceptance/{target_id}-acceptance-review.md"
+                ])
+            elif args.agent == "evidence":
+                snapshot_paths.extend([
+                    f".ai-agent/evidence/{target_id}.json",
+                    f".ai-agent/evidence/{target_id}-notes.md"
+                ])
+            elif args.agent == "testwriter":
+                snapshot_paths.append(f"tests/ai-agent-mvp/{target_id}-validation.md")
 
     # Clean and filter absolute/traversal paths
     snapshot_paths = [
@@ -1434,12 +1460,25 @@ def main():
                     break
 
         provider_error = None
-        is_empty_output = not proc.stdout.strip() and not proc.stderr.strip()
-        if is_empty_output and proc.completion_status in ("invalid", "missing"):
+        if proc.completion_status in ("invalid", "missing"):
             hermes_profile = _hermes_profile_from_args(agent_cfg.get("hermes_args", []))
             diag = _find_and_parse_hermes_diagnostic(session_id, hermes_profile)
             if diag:
                 provider_error = extract_provider_error(diag, agent_model_cfg)
+            if not provider_error:
+                combined_output = f"{proc.stdout}\n{proc.stderr}"
+                if "401" in combined_output or "authentication" in combined_output.lower() or "unauthorized" in combined_output.lower() or "api key" in combined_output.lower():
+                    provider_error = {
+                        "result": "failed",
+                        "error_code": "PROVIDER_AUTHENTICATION_FAILED",
+                        "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
+                    }
+                elif "429" in combined_output or "rate limit" in combined_output.lower() or "too many requests" in combined_output.lower():
+                    provider_error = {
+                        "result": "failed",
+                        "error_code": "PROVIDER_RATE_LIMITED",
+                        "error": f"Provider rate limited detected in output: {combined_output[:500]}"
+                    }
 
         has_provider_block = False
         if provider_error:
@@ -1474,17 +1513,32 @@ def main():
         is_empty_output = not proc.stdout.strip() and not proc.stderr.strip()
         provider_error_result = None
 
-        if is_empty_output and proc.completion_status in ("invalid", "missing"):
+        if proc.completion_status in ("invalid", "missing"):
             hermes_profile = _hermes_profile_from_args(agent_cfg.get("hermes_args", []))
             diag = _find_and_parse_hermes_diagnostic(session_id, hermes_profile)
             if diag:
                 provider_error_result = extract_provider_error(diag, agent_model_cfg)
-            else:
-                provider_error_result = {
-                    "result": "failed",
-                    "error_code": "EMPTY_HERMES_RESPONSE",
-                    "error": "Hermes exited successfully but produced empty output and no diagnostic dump."
-                }
+            if not provider_error_result:
+                combined_output = f"{proc.stdout}\n{proc.stderr}"
+                if "401" in combined_output or "authentication" in combined_output.lower() or "unauthorized" in combined_output.lower() or "api key" in combined_output.lower():
+                    provider_error_result = {
+                        "result": "failed",
+                        "error_code": "PROVIDER_AUTHENTICATION_FAILED",
+                        "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
+                    }
+                elif "429" in combined_output or "rate limit" in combined_output.lower() or "too many requests" in combined_output.lower():
+                    provider_error_result = {
+                        "result": "failed",
+                        "error_code": "PROVIDER_RATE_LIMITED",
+                        "error": f"Provider rate limited detected in output: {combined_output[:500]}"
+                    }
+
+        if not provider_error_result and is_empty_output and proc.completion_status in ("invalid", "missing"):
+            provider_error_result = {
+                "result": "failed",
+                "error_code": "EMPTY_HERMES_RESPONSE",
+                "error": "Hermes exited successfully but produced empty output and no diagnostic dump."
+            }
 
         if provider_error_result:
             result = provider_error_result
@@ -1800,8 +1854,8 @@ def main():
                 for chunk in iter(lambda: f.read(65536), b""):
                     h.update(chunk)
             delta_sha = h.hexdigest()
-        except Exception:
-            pass
+        except Exception as e:
+            raise RuntimeError(f"Failed to calculate file-delta.json SHA-256 hash: {e}")
 
     run_record = {
         "timestamp": timestamp,
