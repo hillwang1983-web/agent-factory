@@ -15,6 +15,25 @@ def sha256_file(path: Path) -> str:
     except Exception:
         return ""
 
+def is_safe_and_inside(path: Path, root: Path) -> bool:
+    try:
+        resolved_path = path.resolve()
+        resolved_root = root.resolve()
+        # Containment check: resolved_path must start with resolved_root
+        if not str(resolved_path).startswith(str(resolved_root)):
+            return False
+
+        # Check if the path or any of its parents up to repo_root is a symlink
+        curr = path
+        while curr != root and curr != curr.parent:
+            if curr.is_symlink():
+                return False
+            curr = curr.parent
+
+        return True
+    except Exception:
+        return False
+
 def expand_allowed_files(repo_root: Path, allowed_paths: list[str]) -> list[tuple[str, Path]]:
     results = []
     for allowed in allowed_paths:
@@ -25,14 +44,38 @@ def expand_allowed_files(repo_root: Path, allowed_paths: list[str]) -> list[tupl
         if ".." in parts or allowed.startswith("/"):
             # Reject absolute paths and path traversal to prevent escape
             continue
-        
+
         full_path = repo_root / allowed
+
+        # Check if it is a symlink
+        if full_path.is_symlink():
+            continue
+
+        # Root containment check
+        if not is_safe_and_inside(full_path, repo_root):
+            continue
+
         if full_path.is_file():
             results.append((allowed, full_path))
         elif full_path.is_dir():
-            for root, dirs, files in os.walk(full_path):
+            for root, dirs, files in os.walk(full_path, followlinks=False):
+                # Ensure no directories in the traversal are symlinks
+                skip_subdir = False
+                curr_dir = Path(root)
+                while curr_dir != full_path and curr_dir != curr_dir.parent:
+                    if curr_dir.is_symlink():
+                        skip_subdir = True
+                        break
+                    curr_dir = curr_dir.parent
+                if skip_subdir:
+                    continue
+
                 for file in files:
                     file_path = Path(root) / file
+                    if file_path.is_symlink():
+                        continue
+                    if not is_safe_and_inside(file_path, repo_root):
+                        continue
                     try:
                         relative = str(file_path.relative_to(repo_root)).replace("\\", "/")
                         results.append((relative, file_path))

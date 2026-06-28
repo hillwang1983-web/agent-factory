@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import {
   ALLOWED_TERMINAL_STATE_BY_AGENT,
   OperatorOverride,
@@ -301,6 +302,16 @@ export class OperatorOverrideService {
         if (runDir) {
           const deltaPath = path.join(runDir, 'file-delta.json');
           if (fs.existsSync(deltaPath)) {
+            if (run.file_delta_sha256) {
+              const fileBuffer = fs.readFileSync(deltaPath);
+              const hashSum = crypto.createHash('sha256');
+              hashSum.update(fileBuffer);
+              const actualSha = hashSum.digest('hex');
+              if (actualSha !== run.file_delta_sha256) {
+                throw Object.assign(new Error('Inconsistent file delta snapshot (SHA-256 mismatch)'), { status: 409 });
+              }
+            }
+
             try {
               const deltaData = JSON.parse(fs.readFileSync(deltaPath, 'utf-8'));
               const created = deltaData.created || [];

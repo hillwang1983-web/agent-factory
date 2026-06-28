@@ -4,6 +4,8 @@ const path = require('path');
 const root = path.resolve(__dirname, '../../..');
 const checks = [
   ['completion', 'python3', ['scripts/test_agent_run_policy.py']],
+  ['snapshot', 'python3', ['scripts/test_run_file_snapshot.py']],
+  ['retry', 'python3', ['scripts/test_runner_retry.py']],
   ['flow', 'python3', ['scripts/test_phase2_flow_integrity.py']],
   ['monitor', 'node', ['agent-factory-dashboard/backend/tools/test-monitor-human-gate.js']],
   ['operation', 'node', ['agent-factory-dashboard/backend/tools/test-orchestration-operation.js']],

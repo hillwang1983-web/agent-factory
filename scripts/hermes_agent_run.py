@@ -862,14 +862,11 @@ def validate_agent_file_declarations(agent_name, result, repo_root, run_started_
                     errors.append(f"illegal_write_path_escape: agent {agent_name} attempted to write outside .ai-agent/: {normalized}")
                     continue
 
-        file_path = (repo_root / normalized).resolve()
+        file_path = (repo_root / normalized)
         try:
-            file_path.relative_to(repo_root.resolve())
+            file_path.resolve().relative_to(repo_root.resolve())
         except ValueError:
             errors.append(f"changed file escapes repository: {normalized}")
-            continue
-        if not file_path.is_file():
-            errors.append(f"declared changed file does not exist: {normalized}")
             continue
 
         if delta is not None:
@@ -877,7 +874,18 @@ def validate_agent_file_declarations(agent_name, result, repo_root, run_started_
             if normalized not in actual_changes:
                 errors.append(f"declared changed file was not modified during this run: {normalized}")
                 continue
-        else:
+            if normalized in delta.get("deleted", []):
+                if file_path.is_file():
+                    errors.append(f"declared deleted file still exists: {normalized}")
+                    continue
+                valid_changed_files.append(normalized)
+                continue
+
+        if not file_path.is_file():
+            errors.append(f"declared changed file does not exist: {normalized}")
+            continue
+
+        if delta is None:
             if file_path.stat().st_mtime_ns < run_started_ns:
                 errors.append(f"declared changed file was not modified during this run: {normalized}")
                 continue
@@ -1294,7 +1302,23 @@ def main():
 
     import run_file_snapshot
     allowed_write_paths = adu.get("allowed_write_paths") or ["."]
+    snapshot_paths = list(allowed_write_paths)
+    if args.agent == "evidence":
+        snapshot_paths.append(".ai-agent/evidence")
+    elif args.agent == "testwriter":
+        snapshot_paths.extend([".ai-agent", "tests"])
+    else:
+        snapshot_paths.append(".ai-agent")
+
+    # Clean and filter absolute/traversal paths
+    snapshot_paths = [
+        p for p in snapshot_paths
+        if p and not p.startswith("/") and ".." not in p.split("/")
+    ]
+
     delta = None
+    run_started_ns = time.time_ns()
+    snapshot_before = run_file_snapshot.snapshot_allowed_files(project_repo_path, snapshot_paths)
 
     max_attempts = policy.no_progress_max_attempts
     if max_attempts < 1:
@@ -1306,7 +1330,6 @@ def main():
         attempt_env["HERMES_SESSION_ID"] = session_id
 
         completion_file = run_dir / f"completion_att{attempt}.json"
-        run_started_ns = time.time_ns()
 
         attempt_prompt = prompt.replace("completion.json", f"completion_att{attempt}.json")
         (run_dir / "prompt.md").write_text(attempt_prompt, encoding="utf-8")
@@ -1318,8 +1341,6 @@ def main():
         except ValueError:
             pass
 
-        snapshot_before = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
-
         proc = agent_run_policy.execute_controlled_process(
             attempt_cmd,
             cwd_path,
@@ -1329,7 +1350,7 @@ def main():
             completion_file=completion_file
         )
 
-        snapshot_after = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
+        snapshot_after = run_file_snapshot.snapshot_allowed_files(project_repo_path, snapshot_paths)
         delta = run_file_snapshot.diff_snapshots(snapshot_before, snapshot_after)
 
         stdout_path = run_dir / f"stdout_att{attempt}.md" if attempt > 1 else run_dir / "stdout.md"
@@ -1350,10 +1371,19 @@ def main():
         except Exception as e:
             sys.stderr.write(f"Failed to write file snapshots: {e}\n")
 
+        has_delta = False
+        if delta:
+            all_changed = set(delta.get("created", [])) | set(delta.get("modified", [])) | set(delta.get("deleted", []))
+            for path in all_changed:
+                if not any(path.startswith(prefix) for prefix in RUNTIME_MANAGED_PREFIXES):
+                    has_delta = True
+                    break
+
         retryable = (
             proc.termination_reason == "no_progress_timeout"
             and proc.completion_status == "missing"
             and not proc.target_files_changed
+            and not has_delta
             and attempt < max_attempts
         )
         if not retryable:
@@ -1692,6 +1722,19 @@ def main():
         verification_results_path_for_record,
     )
 
+    import hashlib
+    delta_sha = ""
+    delta_file = run_dir / "file-delta.json"
+    if delta_file.is_file():
+        h = hashlib.sha256()
+        try:
+            with open(delta_file, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            delta_sha = h.hexdigest()
+        except Exception:
+            pass
+
     run_record = {
         "timestamp": timestamp,
         "adu_id": None if is_epic_run else adu["id"],
@@ -1703,6 +1746,7 @@ def main():
         "effective_returncode": effective_rc,
         "result": run_result,
         "run_dir": str(run_dir.relative_to(project_repo_path)),
+        "file_delta_sha256": delta_sha,
         "parsed_result": result,
         "verification_results_path": verification_results_path_for_record,
         "termination_reason": proc.termination_reason or "process_exit",

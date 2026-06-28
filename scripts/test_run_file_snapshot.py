@@ -1,7 +1,9 @@
+#!/usr/bin/env module
 #!/usr/bin/env python3
 import sys
 import tempfile
 import json
+import os
 from pathlib import Path
 
 # Add scripts directory to path to locate snapshot functions
@@ -70,12 +72,37 @@ def test_expand_allowed_files_finds_nested_files():
         rel_paths = {rel for rel, p in expanded}
         assert rel_paths == {"src/main.c", "src/nested/helper.h", "webui/index.js"}, f"got {rel_paths}"
 
+def test_snapshot_rejects_symlinks():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo_root = Path(tmp_dir)
+        (repo_root / "src").mkdir()
+        (repo_root / "src" / "main.c").write_text("main", encoding="utf-8")
+
+        # Symlink pointing to external path
+        with tempfile.TemporaryDirectory() as ext_dir:
+            ext_path = Path(ext_dir)
+            (ext_path / "secret.txt").write_text("secret info", encoding="utf-8")
+
+            # create symlink inside repo
+            sym_path = repo_root / "src" / "ext_link"
+            try:
+                sym_path.symlink_to(ext_path)
+            except Exception:
+                # Windows might need admin rights for symlink, fallback in test
+                return
+
+            expanded = run_file_snapshot.expand_allowed_files(repo_root, ["src/"])
+            rel_paths = {rel for rel, p in expanded}
+            # Should NOT contain secret.txt or any path inside ext_link
+            assert "src/ext_link/secret.txt" not in rel_paths, "Should not follow symlink to external files"
+
 def main():
     print("── File Snapshot Tests ──\n")
     assert_test("diff detects created/modified/deleted files", test_diff_detects_created_modified_deleted_files)
     assert_test("unchanged file is not reported", test_unchanged_file_is_not_reported)
     assert_test("snapshot rejects path escape", test_snapshot_rejects_path_escape)
     assert_test("expand allowed files finds nested files", test_expand_allowed_files_finds_nested_files)
+    assert_test("snapshot rejects external symlinks", test_snapshot_rejects_symlinks)
 
     print(f"\n── Results: {passed} passed, {failed} failed ──")
     sys.exit(0 if failed == 0 else 1)

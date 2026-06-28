@@ -139,6 +139,7 @@ export interface AgentFactoryRun {
   effective_returncode?: number;
   result: string;
   run_dir: string;
+  file_delta_sha256?: string;
   parsed_result: {
     result?: string;
     next_state?: string;

@@ -4,6 +4,8 @@ const path = require('path');
 const root = path.resolve(__dirname, '../../..');
 const tests = [
   ['python3', ['scripts/test_agent_run_policy.py']],
+  ['python3', ['scripts/test_run_file_snapshot.py']],
+  ['python3', ['scripts/test_runner_retry.py']],
   ['python3', ['scripts/test_command_policy.py']],
   ['python3', ['scripts/test_code_review_fact_gate.py']],
   ['python3', ['scripts/test_trusted_verification_policy.py']],
