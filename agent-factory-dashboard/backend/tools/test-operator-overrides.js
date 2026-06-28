@@ -409,6 +409,111 @@ async function main() {
     }
   }, (e) => e.status === 422);
 
+  function makeDeveloperWorkspace(options = {}) {
+    const tmp = fs.mkdtempSync('/tmp/override-developer-');
+    const registry = path.join(tmp, '.ai-agent', 'registry');
+    fs.mkdirSync(registry, { recursive: true });
+    const aduId = 'ADU-DEV';
+    fs.writeFileSync(path.join(registry, 'adu.json'), JSON.stringify({ version: 1, adus: [{
+      id: aduId, title: 'Test Developer', goal: 'Test', state: 'designed',
+      repo_path: tmp,
+      retry_count: 0, max_retries: 3, risk: 'low', target_level: 'mvp',
+      allowed_read_paths: ['webui/'], allowed_write_paths: ['webui/'], required_commands: [],
+      required_evidence: [], artifacts: [], language: 'zh',
+    }]}));
+    const runDir = '.ai-agent/runs/run-developer';
+    const fullRunDir = path.join(tmp, runDir);
+    fs.mkdirSync(fullRunDir, { recursive: true });
+
+    // Write run record
+    fs.writeFileSync(path.join(registry, 'runs.json'), JSON.stringify({ version: 1, runs: [{
+      timestamp: '20260621-102439', adu_id: aduId, agent: 'developer',
+      returncode: 1, result: options.runResult || 'failed', run_dir: runDir,
+      parsed_result: {
+        result: options.runResult || 'failed',
+        error_code: options.errorCode || 'declared_changes_unverified',
+        error: 'mtime mismatch'
+      },
+      token_usage: { inputTokens: 5000, outputTokens: 300, totalTokens: 5300 },
+    }]}));
+
+    // Write file-delta.json
+    fs.writeFileSync(path.join(fullRunDir, 'file-delta.json'), JSON.stringify({
+      created: ['webui/server/index.js'],
+      modified: ['webui/client/app.js'],
+      deleted: []
+    }));
+
+    return { tmp, aduId };
+  }
+
+  await assertThrows('amend with file not in delta returns 422', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace();
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/not-in-delta.js'],
+        comment: 'x'.repeat(10)
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 422);
+
+  await assertThrows('amend run with other error returns 409', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace({ errorCode: 'something_else' });
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: 'x'.repeat(10)
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 409);
+
+  await assertThrows('amend already successful run returns 409', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace({ runResult: 'success' });
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: 'x'.repeat(10)
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 409);
+
+  await assertThrows('amend without comment returns 400', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace();
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: ''
+      });
+    } finally { teardown(tmp); }
+  }, (e) => e.status === 400);
+
+  await assert('successful amend updates ADU, updates run changed_files and status to success', async () => {
+    const { tmp, aduId } = makeDeveloperWorkspace();
+    const svc = new OperatorOverrideService(tmp);
+    try {
+      const r = await svc.applyOverride(aduId, '20260621-102439', {
+        operation: 'amend_file_declaration',
+        changed_files: ['webui/server/index.js'],
+        comment: 'comment text'
+      });
+      if (r.operation !== 'amend_file_declaration') throw new Error('operation mismatch');
+      if (r.to_state !== 'implemented') throw new Error('to_state should be implemented');
+      const adus = JSON.parse(fs.readFileSync(path.join(tmp, '.ai-agent', 'registry', 'adu.json'), 'utf-8'));
+      if (adus.adus[0].state !== 'implemented') throw new Error('ADU state should be implemented');
+      const runs = JSON.parse(fs.readFileSync(path.join(tmp, '.ai-agent', 'registry', 'runs.json'), 'utf-8'));
+      if (runs.runs[0].result !== 'success') throw new Error('run result should be success');
+      if (runs.runs[0].changed_files[0] !== 'webui/server/index.js') throw new Error('run changed_files should be updated');
+    } finally { teardown(tmp); }
+  });
+
   console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);
   process.exit(failed > 0 ? 1 : 0);
 }

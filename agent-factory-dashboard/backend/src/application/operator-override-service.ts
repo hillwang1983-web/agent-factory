@@ -9,6 +9,8 @@ import {
 } from '../domain/operator-override';
 import { RegistryLock } from '../infrastructure/registry-lock';
 
+import { OperatorOverrideOperation, AmendFileDeclarationInput } from '../domain/operator-override';
+
 export interface ApplyOverrideInput {
   operation: 'accept_validator_result';
   to_result: 'success';
@@ -16,6 +18,8 @@ export interface ApplyOverrideInput {
   reason_code: OperatorOverrideReason;
   comment: string;
 }
+
+export type OverrideInput = ApplyOverrideInput | AmendFileDeclarationInput;
 
 interface OverrideSnapshot {
   aduState: string;
@@ -69,24 +73,34 @@ export class OperatorOverrideService {
     overridesData: any,
     aduId: string,
     runTimestamp: string,
+    operation: string,
   ): OperatorOverride | undefined {
     return (overridesData.overrides || []).find(
       (item: OperatorOverride) =>
         item.adu_id === aduId &&
         item.run_timestamp === runTimestamp &&
-        item.operation === 'accept_validator_result',
+        item.operation === operation,
     );
   }
 
-  private validateRequest(input: ApplyOverrideInput): void {
-    if (input.operation !== 'accept_validator_result' || input.to_result !== 'success') {
+  private validateRequest(input: any): void {
+    if (input.operation !== 'accept_validator_result' && input.operation !== 'amend_file_declaration') {
       throw Object.assign(new Error('Unsupported override operation'), { status: 400 });
     }
     if (!input.comment || input.comment.length < 10 || input.comment.length > 4000) {
       throw Object.assign(new Error('Comment must be 10-4000 characters'), { status: 400 });
     }
-    if (!OPERATOR_OVERRIDE_REASONS.includes(input.reason_code)) {
-      throw Object.assign(new Error(`Invalid reason_code: ${input.reason_code}`), { status: 400 });
+    if (input.operation === 'accept_validator_result') {
+      if (input.to_result !== 'success') {
+        throw Object.assign(new Error('to_result must be success'), { status: 400 });
+      }
+      if (!OPERATOR_OVERRIDE_REASONS.includes(input.reason_code)) {
+        throw Object.assign(new Error(`Invalid reason_code: ${input.reason_code}`), { status: 400 });
+      }
+    } else if (input.operation === 'amend_file_declaration') {
+      if (!Array.isArray(input.changed_files) || input.changed_files.length === 0) {
+        throw Object.assign(new Error('changed_files must be a non-empty array'), { status: 400 });
+      }
     }
   }
 
@@ -239,7 +253,7 @@ export class OperatorOverrideService {
   async applyOverride(
     aduId: string,
     runTimestamp: string,
-    input: ApplyOverrideInput,
+    input: OverrideInput,
   ): Promise<OperatorOverride> {
     if (!/^[A-Za-z0-9_.-]+$/.test(aduId)) {
       throw Object.assign(new Error('Invalid aduId format'), { status: 400 });
@@ -262,21 +276,60 @@ export class OperatorOverrideService {
       if (!run) throw Object.assign(new Error(`Run ${runTimestamp} not found`), { status: 404 });
 
       const overridesData = this.readJson(paths.overridesPath, { version: 1, overrides: [] });
-      const existing = this.findExistingOverride(overridesData, aduId, runTimestamp);
+      const existing = this.findExistingOverride(overridesData, aduId, runTimestamp, input.operation);
       if (existing) return { existing };
       if (run.result === 'success') {
         throw Object.assign(new Error('Run already succeeded'), { status: 409 });
       }
 
-      const expectedState = ALLOWED_TERMINAL_STATE_BY_AGENT[run.agent || ''];
-      if (!expectedState) {
-        throw Object.assign(new Error(`Agent ${run.agent || ''} does not support override`), { status: 400 });
-      }
-      if (input.to_state !== expectedState) {
-        throw Object.assign(
-          new Error(`to_state must be ${expectedState} for agent ${run.agent}, got ${input.to_state}`),
-          { status: 400 },
-        );
+      if (input.operation === 'amend_file_declaration') {
+        if (run.agent !== 'developer') {
+          throw Object.assign(new Error('Amend file declaration only allowed for developer agent'), { status: 409 });
+        }
+        if (run.result !== 'failed') {
+          throw Object.assign(new Error('Amend file declaration only allowed for failed runs'), { status: 409 });
+        }
+        const errCode = run.parsed_result?.error_code;
+        if (errCode !== 'declared_changes_unverified') {
+          throw Object.assign(new Error(`Amend file declaration only allowed for declared_changes_unverified error, got: ${errCode || 'none'}`), { status: 409 });
+        }
+
+        // Validate files against file-delta.json
+        const repoRoot = path.resolve(adu.repo_path || this.workspaceRoot);
+        const runDir = run.run_dir ? path.resolve(repoRoot, run.run_dir) : '';
+        let actualDelta: Set<string> = new Set();
+        if (runDir) {
+          const deltaPath = path.join(runDir, 'file-delta.json');
+          if (fs.existsSync(deltaPath)) {
+            try {
+              const deltaData = JSON.parse(fs.readFileSync(deltaPath, 'utf-8'));
+              const created = deltaData.created || [];
+              const modified = deltaData.modified || [];
+              const deleted = deltaData.deleted || [];
+              actualDelta = new Set([...created, ...modified, ...deleted]);
+            } catch (e) {}
+          }
+        }
+
+        for (const file of input.changed_files) {
+          if (!actualDelta.has(file)) {
+            throw Object.assign(new Error(`Requested file is not in actual delta: ${file}`), { status: 422 });
+          }
+          if (!isAllowedByAdu(file, adu.allowed_write_paths || [])) {
+            throw Object.assign(new Error(`File ${file} is not allowed by ADU write paths`), { status: 422 });
+          }
+        }
+      } else {
+        const expectedState = ALLOWED_TERMINAL_STATE_BY_AGENT[run.agent || ''];
+        if (!expectedState) {
+          throw Object.assign(new Error(`Agent ${run.agent || ''} does not support override`), { status: 400 });
+        }
+        if (input.to_state !== expectedState) {
+          throw Object.assign(
+            new Error(`to_state must be ${expectedState} for agent ${run.agent}, got ${input.to_state}`),
+            { status: 400 },
+          );
+        }
       }
 
       const repoRoot = path.resolve(adu.repo_path || this.workspaceRoot);
@@ -294,14 +347,18 @@ export class OperatorOverrideService {
 
     if ('existing' in phaseOne && phaseOne.existing) return phaseOne.existing;
     const snapshot = phaseOne.snapshot as OverrideSnapshot;
-    const validator = await this.validateSnapshot(aduId, snapshot, paths);
+
+    let validator: ValidatorResult | undefined;
+    if (input.operation === 'accept_validator_result') {
+      validator = await this.validateSnapshot(aduId, snapshot, paths);
+    }
 
     return RegistryLock.runLocked(() => {
       const aduData = this.readJson(paths.aduJsonPath);
       const runsData = this.readJson(paths.runsJsonPath, { version: 1, runs: [] });
       const overridesData = this.readJson(paths.overridesPath, { version: 1, overrides: [] });
 
-      const existing = this.findExistingOverride(overridesData, aduId, runTimestamp);
+      const existing = this.findExistingOverride(overridesData, aduId, runTimestamp, input.operation);
       if (existing) return existing;
 
       const adu = (aduData.adus || []).find((item: any) => item.id === aduId);
@@ -324,39 +381,76 @@ export class OperatorOverrideService {
 
       const overrideId = `override-${aduId}-${Date.now()}`;
       const now = new Date().toISOString();
-      const overrideRecord: OperatorOverride = {
-        override_id: overrideId,
-        adu_id: aduId,
-        run_timestamp: runTimestamp,
-        operation: 'accept_validator_result',
-        from_result: run.result || 'failed',
-        to_result: 'success',
-        from_state: adu.state || '',
-        to_state: input.to_state,
-        reason_code: input.reason_code,
-        comment: input.comment,
-        validator: {
-          command: validator.command,
-          exit_code: validator.exitCode,
-          output: validator.output.substring(0, 20000),
-        },
-        actor: 'operator',
-        created_at: now,
-      };
 
-      run.original_result = run.result;
-      run.original_effective_returncode = run.effective_returncode;
-      run.original_parsed_result = run.parsed_result;
-      run.operator_override_id = overrideId;
-      run.effective_returncode = 0;
-      run.result = 'success';
-      if (!run.parsed_result || typeof run.parsed_result !== 'object') run.parsed_result = {};
-      run.parsed_result.operator_override = {
-        override_id: overrideId,
-        original_result: run.original_result,
-        applied_at: now,
-      };
-      adu.state = input.to_state;
+      let overrideRecord: OperatorOverride;
+      if (input.operation === 'amend_file_declaration') {
+        overrideRecord = {
+          override_id: overrideId,
+          adu_id: aduId,
+          run_timestamp: runTimestamp,
+          operation: 'amend_file_declaration',
+          from_result: run.result || 'failed',
+          to_result: 'success',
+          from_state: adu.state || '',
+          to_state: 'implemented',
+          comment: input.comment,
+          amended_changed_files: input.changed_files,
+          actor: 'operator',
+          created_at: now,
+        };
+
+        run.original_result = run.result;
+        run.original_effective_returncode = run.effective_returncode;
+        run.original_parsed_result = run.parsed_result;
+        run.operator_override_id = overrideId;
+        run.effective_returncode = 0;
+        run.result = 'success';
+        run.changed_files = input.changed_files;
+        if (!run.parsed_result || typeof run.parsed_result !== 'object') run.parsed_result = {};
+        run.parsed_result.changed_files = input.changed_files;
+        run.parsed_result.result = 'success';
+        run.parsed_result.operator_override = {
+          override_id: overrideId,
+          original_result: run.original_result,
+          applied_at: now,
+        };
+        adu.state = 'implemented';
+      } else {
+        overrideRecord = {
+          override_id: overrideId,
+          adu_id: aduId,
+          run_timestamp: runTimestamp,
+          operation: 'accept_validator_result',
+          from_result: run.result || 'failed',
+          to_result: 'success',
+          from_state: adu.state || '',
+          to_state: input.to_state,
+          reason_code: input.reason_code,
+          comment: input.comment,
+          validator: {
+            command: validator!.command,
+            exit_code: validator!.exitCode,
+            output: validator!.output.substring(0, 20000),
+          },
+          actor: 'operator',
+          created_at: now,
+        };
+
+        run.original_result = run.result;
+        run.original_effective_returncode = run.effective_returncode;
+        run.original_parsed_result = run.parsed_result;
+        run.operator_override_id = overrideId;
+        run.effective_returncode = 0;
+        run.result = 'success';
+        if (!run.parsed_result || typeof run.parsed_result !== 'object') run.parsed_result = {};
+        run.parsed_result.operator_override = {
+          override_id: overrideId,
+          original_result: run.original_result,
+          applied_at: now,
+        };
+        adu.state = input.to_state;
+      }
+
       if (!Array.isArray(overridesData.overrides)) overridesData.overrides = [];
       overridesData.overrides.push(overrideRecord);
 
@@ -372,4 +466,23 @@ export class OperatorOverrideService {
     const data = this.readJson(overridesPath, { version: 1, overrides: [] });
     return (data.overrides || []).filter((item: OperatorOverride) => item.adu_id === aduId);
   }
+}
+
+function isAllowedByAdu(file: string, allowedPaths: string[]): boolean {
+  const normalized = normalizePath(file);
+  for (const allowed of allowedPaths || []) {
+    const allowedNorm = normalizePath(allowed);
+    if (allowedNorm.endsWith('/')) {
+      if (normalized.startsWith(allowedNorm)) return true;
+    } else {
+      if (normalized === allowedNorm) return true;
+    }
+  }
+  return false;
+}
+
+function normalizePath(p: string): string {
+  let res = p.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (res.startsWith('/')) res = res.substring(1);
+  return res;
 }

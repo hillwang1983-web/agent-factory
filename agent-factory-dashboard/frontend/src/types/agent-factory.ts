@@ -501,22 +501,23 @@ export interface AgentFactoryOperatorOverride {
   override_id: string;
   adu_id: string;
   run_timestamp: string;
-  operation: 'accept_validator_result';
+  operation: 'accept_validator_result' | 'amend_file_declaration';
   from_result: string;
   to_result: 'success';
   from_state: string;
   to_state: string;
-  reason_code:
+  reason_code?:
     | 'agent_declaration_mismatch'
     | 'validator_false_negative'
     | 'environment_verified'
     | 'manual_evidence_accepted';
   comment: string;
-  validator: {
+  validator?: {
     command: string;
-    exit_code: 0;
+    exit_code: number;
     output: string;
   };
+  amended_changed_files?: string[];
   actor: string;
   created_at: string;
 }

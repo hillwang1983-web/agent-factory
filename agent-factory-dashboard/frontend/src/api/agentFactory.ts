@@ -717,10 +717,7 @@ export const agentFactoryApi = {
   },
 
   // ── Operator Override ──
-  async applyRunOverride(aduId: string, runTimestamp: string, input: {
-    operation: 'accept_validator_result'; to_result: 'success'; to_state: string;
-    reason_code: string; comment: string;
-  }): Promise<any> {
+  async applyRunOverride(aduId: string, runTimestamp: string, input: any): Promise<any> {
     const res = await fetch(`${API_URL}/api/agent-factory/adus/${aduId}/runs/${runTimestamp}/override`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
     });
