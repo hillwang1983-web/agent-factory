@@ -27,7 +27,7 @@ def run_tests():
     scripts_dir = workspace / "scripts"
 
     # We will write a temp mock_hermes.py
-    mock_hermes_path = scripts_dir / "temp_mock_hermes.py"
+    mock_hermes_path = scripts_dir / f"temp_mock_hermes_{os.getpid()}.py"
     mock_hermes_code = """import sys
 import time
 import pathlib
