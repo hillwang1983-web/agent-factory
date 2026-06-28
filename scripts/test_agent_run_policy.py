@@ -442,7 +442,10 @@ sys.exit(res.returncode)
         wrapper_path.write_text(wrapper_code, encoding="utf-8")
 
         p = subprocess.run([sys.executable, str(wrapper_path)], capture_output=True, text=True)
-        assert p.returncode == 1, f"Expected timeout exit code 1 due to missing fields, got {p.returncode}"
+        if p.returncode != 1:
+            print("p.stdout:", p.stdout)
+            print("p.stderr:", p.stderr)
+        assert p.returncode == 1, f"Expected timeout exit code 1 due to missing fields, got {p.returncode}. Stderr: {p.stderr}"
         wrapper_path.unlink()
         if completion_file.exists(): completion_file.unlink()
 
