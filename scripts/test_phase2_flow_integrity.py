@@ -287,6 +287,133 @@ except Exception as exc:
     fail("T08: contract watchdog targets use standard contract artifact paths", str(exc))
 
 
+# T09: completion protocol runs must still produce readable log summaries.
+try:
+    result = {
+        "result": "human_gate",
+        "next_state": "human_gate",
+        "next_agent": "human",
+        "changed_files": [".ai-agent/reviews/ADU-X-code-review.json"],
+        "artifacts": [".ai-agent/reviews/ADU-X-code-review.json"],
+        "commands_run": ["npm run build --prefix webui"],
+        "risks": [],
+        "gate_type": "command_policy_exception",
+        "error": "Verification command requires operator approval.",
+    }
+    stdout_summary = run_mod.build_agent_stdout_summary("code-reviewer", result, "completion_signal")
+    stderr_summary = run_mod.build_agent_stderr_summary(
+        result,
+        ".ai-agent/runs/run-code-reviewer/verification-results.json",
+    )
+    if (
+        "Agent Completion Summary" in stdout_summary
+        and "code-reviewer" in stdout_summary
+        and "command_policy_exception" in stderr_summary
+        and "verification-results.json" in stderr_summary
+    ):
+        ok("T09: completion protocol runs produce readable stdout/stderr summaries")
+    else:
+        fail("T09: completion protocol runs produce readable stdout/stderr summaries")
+except Exception as exc:
+    fail("T09: completion protocol runs produce readable stdout/stderr summaries", str(exc))
+
+
+# T10: successful completion with verification artifacts must not write diagnostic text to stderr.
+try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        run_dir = Path(tmp_dir)
+        (run_dir / "stdout.md").write_text("Hermes activity log\n", encoding="utf-8")
+        (run_dir / "stderr.md").write_text("", encoding="utf-8")
+        result = {
+            "result": "success",
+            "next_state": "code_rework",
+            "next_agent": "developer",
+            "changed_files": [".ai-agent/reviews/ADU-X-code-review.json"],
+            "artifacts": [".ai-agent/reviews/ADU-X-code-review.json"],
+            "commands_run": ["npm run build --prefix webui"],
+            "risks": [],
+        }
+        run_mod.write_log_summaries_if_empty(
+            run_dir,
+            "code-reviewer",
+            result,
+            "completion_signal",
+            ".ai-agent/runs/run-code-reviewer/verification-results.json",
+        )
+        if (run_dir / "stderr.md").read_text(encoding="utf-8") == "":
+            ok("T10: successful completion does not write diagnostics to stderr")
+        else:
+            fail("T10: successful completion does not write diagnostics to stderr")
+except Exception as exc:
+    fail("T10: successful completion does not write diagnostics to stderr", str(exc))
+
+
+# T11: rework plan with out-of-allowlist cleanup opens human gate
+try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        repo = Path(tmp_dir)
+        rework_dir = repo / ".ai-agent" / "rework"
+        rework_dir.mkdir(parents=True)
+        (rework_dir / "REQ-FLOW-006-rework-plan.json").write_text(
+            json.dumps({
+                "version": 1,
+                "adu_id": "REQ-FLOW-006",
+                "source": "code-review",
+                "must_fix_now": [{
+                    "finding_id": "CR-1",
+                    "severity": "P1",
+                    "developer_action": "Revert lib/app unauthorized changes.",
+                    "verification_command": "git diff --name-only HEAD -- lib/app/"
+                }],
+                "additional_write_paths": ["src/core.c"],
+                "return_to": "developer",
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        result = {
+            "result": "success",
+            "next_state": "rework_planned",
+            "artifacts": [".ai-agent/rework/REQ-FLOW-006-rework-plan.json"],
+            "changed_files": [".ai-agent/rework/REQ-FLOW-006-rework-plan.json"],
+            "next_agent": "developer",
+        }
+        gate = run_mod.evaluate_rework_plan_gate(
+            {"id": "REQ-FLOW-006", "allowed_write_paths": ["webui/"]},
+            result,
+            repo,
+        )
+        # Negative check: src/core.c is outside webui/
+        assert gate is not None, "Gate should be opened"
+        assert gate.get("result") == "human_gate"
+        assert gate.get("gate_type") == "rework_requires_operator_cleanup"
+        assert gate.get("blocked_write_paths") == ["src/core.c"]
+        assert gate.get("next_agent") == "human"
+
+        # Positive check: webui/server/index.js is inside webui/
+        (rework_dir / "REQ-FLOW-006-rework-plan.json").write_text(
+            json.dumps({
+                "version": 1,
+                "adu_id": "REQ-FLOW-006",
+                "source": "code-review",
+                "must_fix_now": [],
+                "additional_write_paths": ["webui/server/index.js"],
+                "return_to": "developer",
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        gate_ok = run_mod.evaluate_rework_plan_gate(
+            {"id": "REQ-FLOW-006", "allowed_write_paths": ["webui/"]},
+            result,
+            repo,
+        )
+        assert gate_ok is None, f"Expected None gate but got {gate_ok}"
+
+        ok("T11: rework plan with out-of-allowlist cleanup opens human gate")
+except Exception as exc:
+    fail("T11: rework plan with out-of-allowlist cleanup opens human gate", str(exc))
+
+
+
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")
 if failed:
     raise SystemExit(1)

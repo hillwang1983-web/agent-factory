@@ -550,6 +550,86 @@ def build_unstructured_result(stdout, stderr):
     }
 
 
+def _format_list_for_log(values, max_items=20):
+    if not isinstance(values, list) or not values:
+        return "  (none)"
+    lines = []
+    for item in values[:max_items]:
+        if isinstance(item, (dict, list)):
+            text = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        else:
+            text = str(item)
+        lines.append(f"  - {text}")
+    if len(values) > max_items:
+        lines.append(f"  ... {len(values) - max_items} more")
+    return "\n".join(lines)
+
+
+def build_agent_stdout_summary(agent_name, result, termination_reason=None):
+    result = result if isinstance(result, dict) else {}
+    lines = [
+        "# Agent Completion Summary",
+        "",
+        f"- agent: {agent_name}",
+        f"- result: {result.get('result') or result.get('status') or 'unknown'}",
+        f"- next_state: {result.get('next_state')}",
+        f"- next_agent: {result.get('next_agent')}",
+        f"- termination_reason: {termination_reason or 'process_exit'}",
+        "",
+        "## changed_files",
+        _format_list_for_log(result.get("changed_files", [])),
+        "",
+        "## artifacts",
+        _format_list_for_log(result.get("artifacts", [])),
+        "",
+        "## commands_run",
+        _format_list_for_log(result.get("commands_run", [])),
+        "",
+        "## risks",
+        _format_list_for_log(result.get("risks", [])),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def build_agent_stderr_summary(result, verification_results_path=None):
+    result = result if isinstance(result, dict) else {}
+    lines = [
+        "# Agent Diagnostic Summary",
+        "",
+        f"- result: {result.get('result') or result.get('status') or 'unknown'}",
+    ]
+    for key in ("error_code", "gate_type", "error"):
+        if result.get(key):
+            lines.append(f"- {key}: {result.get(key)}")
+    if verification_results_path:
+        lines.append(f"- verification_results_path: {verification_results_path}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_log_summaries_if_empty(run_dir, agent_name, result, termination_reason=None, verification_results_path=None):
+    stdout_path = run_dir / "stdout.md"
+    stderr_path = run_dir / "stderr.md"
+    result_kind = result.get("result") if isinstance(result, dict) else None
+
+    if stdout_path.exists() and not stdout_path.read_text(encoding="utf-8").strip():
+        stdout_path.write_text(
+            build_agent_stdout_summary(agent_name, result, termination_reason),
+            encoding="utf-8",
+        )
+
+    should_write_stderr = bool(
+        result_kind not in (None, "success")
+        or (isinstance(result, dict) and (result.get("error") or result.get("gate_type")))
+    )
+    if should_write_stderr and stderr_path.exists() and not stderr_path.read_text(encoding="utf-8").strip():
+        stderr_path.write_text(
+            build_agent_stderr_summary(result, verification_results_path),
+            encoding="utf-8",
+        )
+
+
 def normalize_repo_relative_path(value):
     if not isinstance(value, str):
         return None
@@ -575,6 +655,77 @@ def extend_unique(target_list, values):
             target_list.append(value)
             existing.add(value)
     return target_list
+
+
+def is_path_allowed_by_allowlist(path_value, allowed_paths):
+    normalized = normalize_repo_relative_path(path_value)
+    if not normalized:
+        return False
+    for allowed in allowed_paths or []:
+        allowed_normalized = normalize_repo_relative_path(allowed)
+        if not allowed_normalized:
+            continue
+        if allowed_normalized.endswith("/"):
+            if normalized.startswith(allowed_normalized):
+                return True
+        elif normalized == allowed_normalized:
+            return True
+    return False
+
+
+def evaluate_rework_plan_gate(adu, result, project_repo_path):
+    if not isinstance(result, dict) or result.get("result") != "success":
+        return None
+    if result.get("next_state") != "rework_planned":
+        return None
+
+    artifacts = result.get("artifacts", [])
+    changed_files = result.get("changed_files", [])
+    candidates = []
+    for raw_path in artifacts + changed_files:
+        normalized = normalize_repo_relative_path(raw_path)
+        if normalized and normalized.endswith("-rework-plan.json"):
+            candidates.append(project_repo_path / normalized)
+    candidates.append(project_repo_path / ".ai-agent" / "rework" / f"{adu.get('id')}-rework-plan.json")
+
+    rework_plan = None
+    for plan_path in candidates:
+        if plan_path.is_file():
+            try:
+                rework_plan = load_json(plan_path)
+                break
+            except Exception:
+                continue
+    if not isinstance(rework_plan, dict):
+        return None
+
+    requested_paths = rework_plan.get("additional_write_paths", [])
+    if not isinstance(requested_paths, list):
+        requested_paths = []
+
+    blocked_paths = []
+    for path_value in requested_paths:
+        normalized = normalize_repo_relative_path(path_value)
+        if normalized and not is_path_allowed_by_allowlist(normalized, adu.get("allowed_write_paths") or []):
+            blocked_paths.append(normalized)
+
+    if not blocked_paths:
+        return None
+
+    return {
+        "result": "human_gate",
+        "next_state": "human_gate",
+        "next_agent": "human",
+        "gate_type": "rework_requires_operator_cleanup",
+        "blocked_write_paths": blocked_paths,
+        "changed_files": result.get("changed_files", []),
+        "artifacts": result.get("artifacts", []),
+        "commands_run": result.get("commands_run", []),
+        "risks": [
+            "Rework plan requires cleanup or modification outside allowed_write_paths. "
+            "Route to operator/human gate instead of developer to avoid contradictory permissions."
+        ],
+    }
 
 
 RUNTIME_MANAGED_PREFIXES = (
@@ -1070,6 +1221,7 @@ def main():
     session_id = f"oneshot_{timestamp}_{adu['id']}_{args.agent}"
     env["HERMES_SESSION_ID"] = session_id
     env["PYTHONUNBUFFERED"] = "1"
+    env["HERMES_ONESHOT_NO_REDIRECT"] = "1"
 
     default_cwd_raw = agents.get("default_cwd", "${PROJECT_REPO_ROOT}")
     cwd_path = resolve_agent_cwd(default_cwd_raw, ROOT, project_repo_path)
@@ -1167,6 +1319,11 @@ def main():
                     stderr_file.write("\n")
             else:
                 result["file_declarations"] = file_decls
+
+            rework_gate = evaluate_rework_plan_gate(adu, result, project_repo_path)
+            if rework_gate:
+                run_result = "human_gate"
+                result.update(rework_gate)
 
         if run_result == "success" and args.agent in ("buildfix-debugger", "code-reviewer", "acceptance-reviewer"):
             trusted_cmd = [
@@ -1371,6 +1528,15 @@ def main():
         verification_results_path = str((run_dir / "verification-results.json").relative_to(project_repo_path))
     except ValueError:
         verification_results_path = str(run_dir / "verification-results.json")
+    verification_results_path_for_record = verification_results_path if (run_dir / "verification-results.json").exists() else None
+
+    write_log_summaries_if_empty(
+        run_dir,
+        args.agent,
+        result,
+        proc.termination_reason or "process_exit",
+        verification_results_path_for_record,
+    )
 
     run_record = {
         "timestamp": timestamp,
@@ -1384,7 +1550,7 @@ def main():
         "result": run_result,
         "run_dir": str(run_dir.relative_to(project_repo_path)),
         "parsed_result": result,
-        "verification_results_path": verification_results_path if (run_dir / "verification-results.json").exists() else None,
+        "verification_results_path": verification_results_path_for_record,
         "termination_reason": proc.termination_reason or "process_exit",
         "completion_signal_used": proc.completion_result is not None,
         "token_usage": {
