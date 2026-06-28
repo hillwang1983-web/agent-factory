@@ -1738,6 +1738,16 @@ def main():
                     fresh_adu["last_result"] = run_record["result"]
                     fresh_adu["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
+                    try:
+                        from token_ledger import aggregate_adu_tokens
+                        _runs_data = load_json(REGISTRY / "runs.json") if (REGISTRY / "runs.json").exists() else {"runs": []}
+                        _budget_data = load_json(REGISTRY / "token-budget.json") if (REGISTRY / "token-budget.json").exists() else {}
+                        fresh_adu["token_summary"] = aggregate_adu_tokens(
+                            _runs_data.get("runs", []), adu["id"], _budget_data
+                        )
+                    except Exception:
+                        pass
+
                     save_json_direct(REGISTRY / "adu.json", fresh_adu_data)
 
     print(json.dumps(run_record, ensure_ascii=False, indent=2))

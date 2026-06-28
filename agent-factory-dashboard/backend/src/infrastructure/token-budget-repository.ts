@@ -31,10 +31,11 @@ export class TokenBudgetRepository {
 
   async checkBudget(agentName: string, usage: { input?: number; output?: number }): Promise<{ warning: boolean; block: boolean; details?: string }> {
     const budget = await this.readBudget();
+    const defaultBudget = budget.default || {};
     const agentBudget = (budget.agents || {})[agentName] || {};
-    const inputLimit = agentBudget.inputTokenLimit ?? Infinity;
-    const outputLimit = agentBudget.outputTokenLimit ?? Infinity;
-    const warnRatio = agentBudget.warnRatio ?? 0.9;
+    const inputLimit = agentBudget.inputTokenLimit ?? defaultBudget.inputTokenLimit ?? Infinity;
+    const outputLimit = agentBudget.outputTokenLimit ?? defaultBudget.outputTokenLimit ?? Infinity;
+    const warnRatio = agentBudget.warnAtRatio ?? agentBudget.warnRatio ?? defaultBudget.warnAtRatio ?? defaultBudget.warnRatio ?? 0.8;
     let warning = false;
     let block = false;
     let details = '';

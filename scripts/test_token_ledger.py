@@ -110,6 +110,16 @@ def test_total_tokens():
     assert s["totalTokens"] == 330  # 110 + 220
 
 
+def test_snake_case_keys_and_warnings():
+    r = [run("dev", 100, 10, "success"), run("reviewer", 4500, 100, "success")]
+    budget = {"default": {"inputTokenLimit": 5000, "warnAtRatio": 0.8, "outputTokenLimit": 10000}}
+    s = aggregate_adu_tokens(r, "ADU-TEST", budget_limits=budget)
+    assert s["total_input_tokens"] == 4600
+    assert s["total_output_tokens"] == 110
+    assert s["total_tokens"] == 4710
+    assert s["warnings_triggered"] is True
+
+
 def main():
     print("── Token Ledger Tests ──\n")
     assert_test("single run accumulates correctly", test_accumulates_single_run)
@@ -121,6 +131,7 @@ def main():
     assert_test("warning status from budget ratio", test_budget_status_warning)
     assert_test("exceeded status from budget limit", test_budget_status_exceeded)
     assert_test("totalTokens is correct sum", test_total_tokens)
+    assert_test("snake_case keys and warnings_triggered", test_snake_case_keys_and_warnings)
     print(f"\n── Results: {passed} passed, {failed} failed ──")
     sys.exit(0 if failed == 0 else 1)
 
