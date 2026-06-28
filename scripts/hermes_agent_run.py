@@ -1472,7 +1472,7 @@ def main():
                 combined_output = f"{proc.stdout}\n{proc.stderr}"
                 provider_signatures = [
                     "openai", "anthropic", "google-generativeai", "google.api_core",
-                    "urllib3", "requests", "httpx", "api.openai.com", "api.anthropic.com",
+                    "api.openai.com", "api.anthropic.com",
                     "generativelanguage.googleapis.com", "groq", "openrouter", "deepseek",
                     "gemini", "claude"
                 ]
@@ -1549,7 +1549,7 @@ def main():
                 combined_output = f"{proc.stdout}\n{proc.stderr}"
                 provider_signatures = [
                     "openai", "anthropic", "google-generativeai", "google.api_core",
-                    "urllib3", "requests", "httpx", "api.openai.com", "api.anthropic.com",
+                    "api.openai.com", "api.anthropic.com",
                     "generativelanguage.googleapis.com", "groq", "openrouter", "deepseek",
                     "gemini", "claude"
                 ]

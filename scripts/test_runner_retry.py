@@ -461,5 +461,58 @@ class TestRunnerRetry(unittest.TestCase):
                 # SHOULD retry because normal business text does not match precise provider signatures!
                 self.assertEqual(mock_execute.call_count, 2)
 
+    def test_retry_on_business_http_client_401_output(self):
+        if "hermes_agent_run" in sys.modules:
+            import importlib
+            run_mod = importlib.reload(sys.modules["hermes_agent_run"])
+        else:
+            import hermes_agent_run as run_mod
+
+        # Mock policy allowing 2 attempts
+        mock_policy = MagicMock()
+        mock_policy.no_progress_max_attempts = 2
+        mock_policy.retry_backoff_seconds = 0.01
+        mock_policy.max_duration_seconds = 10
+        mock_policy.no_progress_timeout_seconds = 5
+        mock_policy.termination_grace_seconds = 1
+        mock_policy.max_prompt_bytes = 1000
+        mock_policy.max_estimated_input_tokens = 1000
+
+        with patch("hermes_agent_run.agent_run_policy.load_policy", return_value=mock_policy):
+            res1 = MockControlledProcessResult(
+                stdout="Python requests client received HTTP 401 Unauthorized as expected",
+                stderr="All ok",
+                returncode=1,
+                completion_result=None,
+                completion_status="missing",
+                termination_reason="no_progress_timeout",
+                pid=133,
+                target_files_changed=False
+            )
+
+            res2 = MockControlledProcessResult(
+                stdout="Done",
+                stderr="",
+                returncode=0,
+                completion_result={"result": "success", "next_state": "implemented", "changed_files": []},
+                completion_status="valid",
+                termination_reason="process_exit",
+                pid=134,
+                target_files_changed=False
+            )
+
+            with patch("hermes_agent_run.agent_run_policy.execute_controlled_process") as mock_execute:
+                mock_execute.side_effect = [res1, res2]
+                with patch("hermes_agent_run._find_and_parse_hermes_diagnostic", return_value=None):
+                    test_args = ["hermes_agent_run.py", "--adu", "REQ-RETRY-001", "--agent", "developer"]
+                    with patch.object(sys, "argv", test_args):
+                        try:
+                            run_mod.main()
+                        except SystemExit:
+                            pass
+
+                # SHOULD retry because requests library is not in LLM provider signatures list!
+                self.assertEqual(mock_execute.call_count, 2)
+
 if __name__ == "__main__":
     unittest.main()
