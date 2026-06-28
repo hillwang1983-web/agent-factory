@@ -191,12 +191,11 @@ def main():
 
         # Check if evidence exists
         has_evidence = False
-        evidence_dict = evidence_data.get("evidence", {})
         assertions_dict = evidence_data.get("assertions", {})
         negative_assertions_dict = evidence_data.get("negative_assertions", {})
 
-        static_lookup = {**evidence_dict, **assertions_dict, **negative_assertions_dict}
-        runtime_lookup = {**evidence_dict, **assertions_dict}
+        static_lookup = {**assertions_dict, **negative_assertions_dict}
+        runtime_lookup = assertions_dict
 
         ass_reqs = [r for r in contract.get("evidence_requirements", []) if r.get("assertion_id") == ass_id or ass_id in r.get("assertion_ids", [])]
 

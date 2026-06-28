@@ -107,7 +107,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "config file present", "verification_type": "static", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"status": "verified", "path": ".ai-agent/evidence/A1.json"}}}
+    evidence = {"assertions": {"A1": {"status": "verified", "path": ".ai-agent/evidence/A1.json"}}}
     repo, reg = setup(tmp, "REQ-T03", contract, evidence)
     assert_exit("T03: static assertion w/ real per-assertion evidence → pass (0)",
                 0, "REQ-T03", repo, reg)
@@ -121,7 +121,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"command": "curl http://localhost:3000", "exitCode": 0, "output": "200 OK"}}}
+    evidence = {"assertions": {"A1": {"command": "curl http://localhost:3000", "exitCode": 0, "output": "200 OK"}}}
     repo, reg = setup(tmp, "REQ-T04", contract, evidence)
     assert_exit("T04: runtime assertion w/ real runtime evidence → pass (0)",
                 0, "REQ-T04", repo, reg)
@@ -136,7 +136,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"command": "curl http://localhost", "status": "success", "output": "200 OK"}}}
+    evidence = {"assertions": {"A1": {"command": "curl http://localhost", "status": "success", "output": "200 OK"}}}
     repo, reg = setup(tmp, "REQ-T05", contract, evidence)
     assert_exit("T05: runtime evidence w/ status:success but no exitCode → human_gate (20)",
                 20, "REQ-T05", repo, reg)
@@ -164,7 +164,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"command": "", "exitCode": 0, "output": ""}}}
+    evidence = {"assertions": {"A1": {"command": "", "exitCode": 0, "output": ""}}}
     repo, reg = setup(tmp, "REQ-T07", contract, evidence)
     assert_exit("T07: runtime evidence w/ empty command/output → human_gate (20)",
                 20, "REQ-T07", repo, reg)
@@ -178,7 +178,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "service responds", "verification_type": "runtime", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"command": "curl http://localhost", "exitCode": 0, "output": ""}}}
+    evidence = {"assertions": {"A1": {"command": "curl http://localhost", "exitCode": 0, "output": ""}}}
     repo, reg = setup(tmp, "REQ-T08", contract, evidence)
     assert_exit("T08: runtime evidence w/ empty output → human_gate (20)",
                 20, "REQ-T08", repo, reg)
@@ -193,7 +193,7 @@ with tempfile.TemporaryDirectory() as tmp:
         ],
     }
     # "A12" contains "A1" as a substring; with exact matching it must not count as A1.
-    evidence = {"evidence": {"A12": {"command": "curl http://localhost", "exitCode": 0, "output": "200 OK"}}}
+    evidence = {"assertions": {"A12": {"command": "curl http://localhost", "exitCode": 0, "output": "200 OK"}}}
     repo, reg = setup(tmp, "REQ-T09", contract, evidence)
     assert_exit("T09: substring-only id match must not satisfy assertion → human_gate (20)",
                 20, "REQ-T09", repo, reg)
@@ -212,7 +212,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "endpoint works", "verification_type": "automated_test", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"status": "verified", "path": "fake.txt"}}}
+    evidence = {"assertions": {"A1": {"status": "verified", "path": "fake.txt"}}}
     repo, reg = setup(tmp, "REQ-T10", contract, evidence)
     assert_exit("T10: automated_test w/ pseudo-static evidence → human_gate (20)",
                 20, "REQ-T10", repo, reg)
@@ -225,7 +225,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "endpoint works", "verification_type": "automated_test", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"command": "make test", "exitCode": 0, "output": "PASS: suite"}}}
+    evidence = {"assertions": {"A1": {"command": "make test", "exitCode": 0, "output": "PASS: suite"}}}
     repo, reg = setup(tmp, "REQ-T11", contract, evidence)
     assert_exit("T11: automated_test w/ real runtime evidence → pass (0)",
                 0, "REQ-T11", repo, reg)
@@ -238,7 +238,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "doc reviewed", "verification_type": "manual_review", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"status": "verified", "path": ".ai-agent/evidence/A1.json"}}}
+    evidence = {"assertions": {"A1": {"status": "verified", "path": ".ai-agent/evidence/A1.json"}}}
     repo, reg = setup(tmp, "REQ-T12", contract, evidence)
     assert_exit("T12: manual_review w/ static evidence → pass (0)",
                 0, "REQ-T12", repo, reg)
@@ -252,7 +252,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "??", "verification_type": "totally_unknown", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A1": {"status": "verified", "path": "x"}}}
+    evidence = {"assertions": {"A1": {"status": "verified", "path": "x"}}}
     repo, reg = setup(tmp, "REQ-T13", contract, evidence)
     assert_exit("T13: unknown verification_type → fail (1)",
                 1, "REQ-T13", repo, reg)
@@ -324,7 +324,7 @@ with tempfile.TemporaryDirectory() as tmp:
             {"id": "A1", "title": "doc reviewed", "verification_type": "manual_review", "must_pass": True},
         ],
     }
-    evidence = {"evidence": {"A12": {"status": "verified", "path": ".ai-agent/evidence/A12.json"}}}
+    evidence = {"assertions": {"A12": {"status": "verified", "path": ".ai-agent/evidence/A12.json"}}}
     repo, reg = setup(tmp, "REQ-T18", contract, evidence)
     assert_exit("T18: static evidence keyed A12 must not satisfy A1 → fail (1)",
                 1, "REQ-T18", repo, reg)
@@ -340,11 +340,11 @@ with tempfile.TemporaryDirectory() as tmp:
             {
                 "assertion_id": "A1",
                 "artifact": "evidence.json",
-                "required_fields": ["evidence.A1.observed_result"]
+                "required_fields": ["assertions.A1.observed_result"]
             }
         ]
     }
-    evidence = {"evidence": {"A1": {"status": "success", "observed_result": "It works"}}}
+    evidence = {"assertions": {"A1": {"status": "success", "observed_result": "It works"}}}
     repo, reg = setup(tmp, "REQ-T19", contract, evidence)
     assert_exit("T19: custom fields override generic missing fields → pass (0)",
                 0, "REQ-T19", repo, reg)
