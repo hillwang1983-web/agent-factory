@@ -104,7 +104,7 @@ def compile_runtime_assertion(review, command, execution, runtime_records, asser
         "observed_result": "No successful runtime execution result found in verification results or runtime records."
     }
 
-def compile_manual_assertion(review):
+def compile_manual_assertion(review, acceptance_status):
     if not isinstance(review, dict) or not review:
         return {
             "status": "pending_manual_review",
@@ -115,6 +115,11 @@ def compile_manual_assertion(review):
         status = "pass"
     elif status in ("failed", "fail"):
         status = "fail"
+
+    top_ok = acceptance_status in ("passed", "success", "pass", "verified")
+    if not top_ok:
+        status = "fail" if acceptance_status in ("failed", "fail") else "pending_manual_review"
+
     return {
         "status": status,
         "observed_result": review.get("observed_result") or review.get("reviewer_notes") or review.get("summary") or "Manual review completed."
@@ -149,7 +154,7 @@ def compile_evidence(contract, acceptance_report, verification_results, runtime_
                 review, command, execution, runtime_records, assertion_id, acceptance_status
             )
         else:
-            assertions[assertion_id] = compile_manual_assertion(review)
+            assertions[assertion_id] = compile_manual_assertion(review, acceptance_status)
 
     # Compile negative assertions
     negative_assertions = {}
@@ -169,14 +174,18 @@ def compile_evidence(contract, acceptance_report, verification_results, runtime_
             continue
 
         status = review.get("status")
-        if status in ("passed", "success", "pass", "verified"):
+        top_ok = acceptance_status in ("passed", "success", "pass", "verified")
+        if top_ok and status in ("passed", "success", "pass", "verified"):
             status = "pass"
+        elif status in ("failed", "fail") or acceptance_status in ("failed", "fail"):
+            status = "fail"
         else:
             status = "pending_manual_review"
 
         observed = review.get("observed_result") or review.get("reviewer_notes") or ""
         if not observed.strip():
-            status = "pending_manual_review"
+            if status != "fail":
+                status = "pending_manual_review"
             observed = "No manual review description found in acceptance report."
 
         negative_assertions[n_id] = {

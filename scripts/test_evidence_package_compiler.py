@@ -182,5 +182,20 @@ class TestEvidencePackageCompiler(unittest.TestCase):
         )
         self.assertEqual(package["assertions"]["A1"]["status"], "pending_environment_verification")
 
+    def test_top_level_acceptance_failure_affects_manual_and_negative_assertions(self):
+        self.acceptance_report["acceptance_status"] = "fail"
+        package = compiler.compile_evidence(
+            self.contract, self.acceptance_report, self.verification_results, self.runtime_records
+        )
+        self.assertEqual(package["assertions"]["A2"]["status"], "fail")
+        self.assertEqual(package["negative_assertions"]["N1"]["status"], "fail")
+
+    def test_explicit_negative_assertion_failure_keeps_fail(self):
+        self.acceptance_report["negative_assertion_results"][0]["status"] = "failed"
+        package = compiler.compile_evidence(
+            self.contract, self.acceptance_report, self.verification_results, self.runtime_records
+        )
+        self.assertEqual(package["negative_assertions"]["N1"]["status"], "fail")
+
 if __name__ == "__main__":
     unittest.main()

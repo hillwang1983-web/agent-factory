@@ -363,7 +363,8 @@ try:
                     "finding_id": "CR-1",
                     "severity": "P1",
                     "developer_action": "Revert lib/app unauthorized changes.",
-                    "verification_command": "git diff --name-only HEAD -- lib/app/"
+                    "verification_command": "git diff --name-only HEAD -- lib/app/",
+                    "affected_paths": ["lib/app"]
                 }],
                 "additional_write_paths": ["src/core.c"],
                 "return_to": "developer",
@@ -408,7 +409,7 @@ try:
         )
         assert gate_ok is None, f"Expected None gate but got {gate_ok}"
 
-        # Heuristic check: additional_write_paths is empty, but developer_action mentions src/core.c
+        # Schema validation check: affected_paths is empty list
         (rework_dir / "REQ-FLOW-006-rework-plan.json").write_text(
             json.dumps({
                 "version": 1,
@@ -418,7 +419,8 @@ try:
                     "finding_id": "CR-1",
                     "severity": "P1",
                     "developer_action": "Fix logic in src/core.c",
-                    "verification_command": "git diff"
+                    "verification_command": "git diff",
+                    "affected_paths": []
                 }],
                 "additional_write_paths": [],
                 "return_to": "developer",
@@ -430,8 +432,9 @@ try:
             result,
             repo,
         )
-        assert gate_heur is not None, "Gate should be opened via heuristic scan"
-        assert gate_heur.get("blocked_write_paths") == ["src/core.c"]
+        assert gate_heur is not None, "Gate should be opened for validation failure"
+        assert gate_heur.get("result") == "failed"
+        assert gate_heur.get("error_code") == "rework_plan_invalid"
 
         ok("T11: rework plan with out-of-allowlist cleanup opens human gate")
 except Exception as exc:

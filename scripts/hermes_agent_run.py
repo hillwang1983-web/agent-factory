@@ -688,69 +688,53 @@ def evaluate_rework_plan_gate(adu, result, project_repo_path):
             candidates.append(project_repo_path / normalized)
     candidates.append(project_repo_path / ".ai-agent" / "rework" / f"{adu.get('id')}-rework-plan.json")
 
-    rework_plan = None
-    for plan_path in candidates:
-        if plan_path.is_file():
-            try:
-                rework_plan = load_json(plan_path)
-                break
-            except Exception:
-                continue
-    if not isinstance(rework_plan, dict):
-        return None
+    plan_path = None
+    for p in candidates:
+        if p.is_file():
+            plan_path = p
+            break
+    if not plan_path:
+        return {
+            "result": "failed",
+            "error_code": "rework_plan_missing",
+            "error": "Rework plan JSON file not found."
+        }
 
-    requested_paths = []
-    raw_additional = rework_plan.get("additional_write_paths", [])
-    if isinstance(raw_additional, list):
-        requested_paths.extend(raw_additional)
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "validate_rework_plan.py"),
+        "--plan-path", str(plan_path),
+        "--allowed-paths", ",".join(adu.get("allowed_write_paths") or [])
+    ]
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    if proc.returncode != 0:
+        if proc.returncode == 20:
+            blocked = []
+            import re
+            m = re.search(r"blocked paths:\s*(.*)", proc.stderr or proc.stdout or "")
+            if m:
+                blocked = [p.strip() for p in m.group(1).split(",") if p.strip()]
+            return {
+                "result": "human_gate",
+                "next_state": "human_gate",
+                "next_agent": "human",
+                "gate_type": "rework_requires_operator_cleanup",
+                "blocked_write_paths": blocked,
+                "changed_files": result.get("changed_files", []),
+                "artifacts": result.get("artifacts", []),
+                "commands_run": result.get("commands_run", []),
+                "risks": [
+                    (proc.stderr or proc.stdout or "Rework plan requires cleanup outside allowed_write_paths.").strip()
+                ]
+            }
+        else:
+            return {
+                "result": "failed",
+                "error_code": "rework_plan_invalid",
+                "error": (proc.stderr or proc.stdout or "Rework plan validation failed.").strip()
+            }
 
-    must_fix = rework_plan.get("must_fix_now", [])
-    if isinstance(must_fix, list):
-        for item in must_fix:
-            if isinstance(item, dict):
-                raw_affected = item.get("affected_paths", [])
-                if isinstance(raw_affected, list):
-                    requested_paths.extend(raw_affected)
-
-    # Heuristic fallback scanning for path-like strings in must_fix_now items
-    if isinstance(must_fix, list):
-        for item in must_fix:
-            if isinstance(item, dict):
-                for field in ("developer_action", "verification_command"):
-                    val = item.get(field)
-                    if isinstance(val, str):
-                        words = re.split(r'[\s\'"`,\(\)]', val)
-                        for w in words:
-                            w = w.strip().strip("/").strip(".")
-                            if not w:
-                                continue
-                            if "/" in w and not any(w.startswith(p) for p in ("--", "git/", "scripts/", "python3/")):
-                                if not any(w.endswith(ext) for ext in (".py", ".sh")):
-                                    requested_paths.append(w)
-
-    blocked_paths = []
-    for path_value in requested_paths:
-        normalized = normalize_repo_relative_path(path_value)
-        if normalized and not is_path_allowed_by_allowlist(normalized, adu.get("allowed_write_paths") or []):
-            blocked_paths.append(normalized)
-
-    if not blocked_paths:
-        return None
-
-    return {
-        "result": "human_gate",
-        "next_state": "human_gate",
-        "next_agent": "human",
-        "gate_type": "rework_requires_operator_cleanup",
-        "blocked_write_paths": blocked_paths,
-        "changed_files": result.get("changed_files", []),
-        "artifacts": result.get("artifacts", []),
-        "commands_run": result.get("commands_run", []),
-        "risks": [
-            "Rework plan requires cleanup or modification outside allowed_write_paths. "
-            "Route to operator/human gate instead of developer to avoid contradictory permissions."
-        ],
-    }
+    return None
 
 
 def find_latest_verification_results_path(adu_id, project_repo_path):
@@ -760,7 +744,14 @@ def find_latest_verification_results_path(adu_id, project_repo_path):
     try:
         with open(runs_file, "r", encoding="utf-8") as f:
             runs_data = json.load(f)
-        for run in reversed(runs_data.get("runs", [])):
+        runs = runs_data.get("runs", [])
+        # Sort explicitly by timestamp descending
+        runs_sorted = sorted(
+            [r for r in runs if r.get("timestamp")],
+            key=lambda r: r["timestamp"],
+            reverse=True
+        )
+        for run in runs_sorted:
             if run.get("adu_id") == adu_id and run.get("result") == "success":
                 if run.get("agent") in ("acceptance-reviewer", "buildfix-debugger"):
                     v_path = run.get("verification_results_path")
