@@ -228,20 +228,77 @@ def validate_declared_changes(result, project_repo_path: Path, run_started_ns: i
 
 
 def get_agent_target_files(agent, adu, project_repo_path: Path):
-    adu_id = adu["id"]
-    if agent == "requirement-analyst":
-        return [str(project_repo_path / ".ai-agent" / "analysis" / f"{adu_id}.md")]
-    if agent == "system-flow-designer":
-        return [str(project_repo_path / ".ai-agent" / "epics" / adu_id / "system-flow.json")]
-    if agent == "adu-splitter":
-        return [str(project_repo_path / ".ai-agent" / "epics" / adu_id / "split-plan.json")]
-    if agent == "detail-designer":
-        return [str(project_repo_path / ".ai-agent" / "designs" / f"{adu_id}-detailed-design.md")]
-    if agent == "contract":
+    target_id = adu["id"]
+    is_epic_run = adu.get("is_epic_run", False)
+
+    files = []
+    if is_epic_run:
+        if agent == "system-flow-designer":
+            files.extend([
+                "system-flow.md",
+                "system-flow.json"
+            ])
+            return [
+                str(project_repo_path / ".ai-agent" / "epics" / target_id / "system-flow.md"),
+                str(project_repo_path / ".ai-agent" / "epics" / target_id / "system-flow.json"),
+            ]
+        elif agent == "adu-splitter":
+            return [
+                str(project_repo_path / ".ai-agent" / "epics" / target_id / "split-plan.md"),
+                str(project_repo_path / ".ai-agent" / "epics" / target_id / "split-plan.json"),
+            ]
+        elif agent == "epic-acceptance-reviewer":
+            return [
+                str(project_repo_path / ".ai-agent" / "epics" / target_id / "epic-acceptance.json"),
+                str(project_repo_path / ".ai-agent" / "epics" / target_id / "epic-acceptance.md"),
+            ]
+    elif agent == "project-profiler":
         return [
-            str(project_repo_path / ".ai-agent" / "contracts" / f"{adu_id}.json"),
-            str(project_repo_path / ".ai-agent" / "contracts" / f"{adu_id}-notes.md"),
+            str(project_repo_path / ".agent-factory" / "project-profile.json"),
+            str(project_repo_path / ".agent-factory" / "knowledge" / "project-summary.md"),
+            str(project_repo_path / ".agent-factory" / "knowledge" / "module-map.md"),
+            str(project_repo_path / ".agent-factory" / "knowledge" / "test-strategy.md"),
+            str(project_repo_path / ".agent-factory" / "knowledge" / "risk-map.md"),
         ]
+    else:
+        if agent == "requirement-analyst":
+            return [str(project_repo_path / ".ai-agent" / "analysis" / f"{target_id}.md")]
+        elif agent == "detail-designer":
+            return [
+                str(project_repo_path / ".ai-agent" / "designs" / f"{target_id}-detailed-design.md"),
+                str(project_repo_path / ".ai-agent" / "designs" / f"{target_id}-interfaces.json"),
+            ]
+        elif agent == "context-pack":
+            return [str(project_repo_path / ".ai-agent" / "context-packs" / f"{target_id}.md")]
+        elif agent == "contract":
+            return [
+                str(project_repo_path / ".ai-agent" / "contracts" / f"{target_id}.json"),
+                str(project_repo_path / ".ai-agent" / "contracts" / f"{target_id}-notes.md"),
+            ]
+        elif agent == "rework-planner":
+            return [
+                str(project_repo_path / ".ai-agent" / "rework" / f"{target_id}-rework-plan.json"),
+                str(project_repo_path / ".ai-agent" / "rework" / f"{target_id}-rework-plan.md"),
+            ]
+        elif agent == "buildfix-debugger":
+            return [str(project_repo_path / ".ai-agent" / "runs" / f"{target_id}-validation-summary.md")]
+        elif agent == "code-reviewer":
+            return [
+                str(project_repo_path / ".ai-agent" / "reviews" / f"{target_id}-code-review.json"),
+                str(project_repo_path / ".ai-agent" / "reviews" / f"{target_id}-code-review.md"),
+            ]
+        elif agent == "acceptance-reviewer":
+            return [
+                str(project_repo_path / ".ai-agent" / "acceptance" / f"{target_id}-acceptance-review.json"),
+                str(project_repo_path / ".ai-agent" / "acceptance" / f"{target_id}-acceptance-review.md"),
+            ]
+        elif agent == "evidence":
+            return [
+                str(project_repo_path / ".ai-agent" / "evidence" / f"{target_id}.json"),
+                str(project_repo_path / ".ai-agent" / "evidence" / f"{target_id}-notes.md"),
+            ]
+        elif agent == "testwriter":
+            return [str(project_repo_path / "tests" / "ai-agent-mvp" / f"{target_id}-validation.md")]
     return []
 
 
@@ -1309,71 +1366,12 @@ def main():
     except ValueError:
         pass
 
-    target_id = adu.get("id")
-    if target_id:
-        if is_epic_run:
-            if args.agent == "system-flow-designer":
-                snapshot_paths.extend([
-                    f".ai-agent/epics/{target_id}/system-flow.md",
-                    f".ai-agent/epics/{target_id}/system-flow.json"
-                ])
-            elif args.agent == "adu-splitter":
-                snapshot_paths.extend([
-                    f".ai-agent/epics/{target_id}/split-plan.md",
-                    f".ai-agent/epics/{target_id}/split-plan.json"
-                ])
-            elif args.agent == "epic-acceptance-reviewer":
-                snapshot_paths.extend([
-                    f".ai-agent/epics/{target_id}/epic-acceptance.json",
-                    f".ai-agent/epics/{target_id}/epic-acceptance.md"
-                ])
-        elif args.agent == "project-profiler":
-            snapshot_paths.extend([
-                ".agent-factory/project-profile.json",
-                ".agent-factory/knowledge/project-summary.md",
-                ".agent-factory/knowledge/module-map.md",
-                ".agent-factory/knowledge/test-strategy.md",
-                ".agent-factory/knowledge/risk-map.md"
-            ])
-        else:
-            if args.agent == "requirement-analyst":
-                snapshot_paths.append(f".ai-agent/analysis/{target_id}.md")
-            elif args.agent == "detail-designer":
-                snapshot_paths.extend([
-                    f".ai-agent/designs/{target_id}-detailed-design.md",
-                    f".ai-agent/designs/{target_id}-interfaces.json"
-                ])
-            elif args.agent == "context-pack":
-                snapshot_paths.append(f".ai-agent/context-packs/{target_id}.md")
-            elif args.agent == "contract":
-                snapshot_paths.extend([
-                    f".ai-agent/contracts/{target_id}.json",
-                    f".ai-agent/contracts/{target_id}-notes.md"
-                ])
-            elif args.agent == "rework-planner":
-                snapshot_paths.extend([
-                    f".ai-agent/rework/{target_id}-rework-plan.json",
-                    f".ai-agent/rework/{target_id}-rework-plan.md"
-                ])
-            elif args.agent == "buildfix-debugger":
-                snapshot_paths.append(f".ai-agent/runs/{target_id}-validation-summary.md")
-            elif args.agent == "code-reviewer":
-                snapshot_paths.extend([
-                    f".ai-agent/reviews/{target_id}-code-review.json",
-                    f".ai-agent/reviews/{target_id}-code-review.md"
-                ])
-            elif args.agent == "acceptance-reviewer":
-                snapshot_paths.extend([
-                    f".ai-agent/acceptance/{target_id}-acceptance-review.json",
-                    f".ai-agent/acceptance/{target_id}-acceptance-review.md"
-                ])
-            elif args.agent == "evidence":
-                snapshot_paths.extend([
-                    f".ai-agent/evidence/{target_id}.json",
-                    f".ai-agent/evidence/{target_id}-notes.md"
-                ])
-            elif args.agent == "testwriter":
-                snapshot_paths.append(f"tests/ai-agent-mvp/{target_id}-validation.md")
+    for tf in target_files:
+        try:
+            rel = str(Path(tf).relative_to(project_repo_path)).replace("\\", "/")
+            snapshot_paths.append(rel)
+        except ValueError:
+            pass
 
     # Clean and filter absolute/traversal paths
     snapshot_paths = [
@@ -1472,34 +1470,42 @@ def main():
                 provider_error = extract_provider_error(diag, agent_model_cfg)
             if not provider_error:
                 combined_output = f"{proc.stdout}\n{proc.stderr}"
-                if (
-                    "AuthenticationError" in combined_output
-                    or "invalid_api_key" in combined_output.lower()
-                    or "Incorrect API key provided" in combined_output
-                    or "API_KEY_INVALID" in combined_output
-                    or "HTTP 401 Unauthorized" in combined_output
-                    or "status_code: 401" in combined_output.lower()
-                    or "status code 401" in combined_output.lower()
-                ):
-                    provider_error = {
-                        "result": "failed",
-                        "error_code": "PROVIDER_AUTHENTICATION_FAILED",
-                        "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
-                    }
-                elif (
-                    "RateLimitError" in combined_output
-                    or "RESOURCE_EXHAUSTED" in combined_output
-                    or "Resource has been exhausted" in combined_output
-                    or "rate limit exceeded" in combined_output.lower()
-                    or "HTTP 429 Too Many Requests" in combined_output
-                    or "status_code: 429" in combined_output.lower()
-                    or "status code 429" in combined_output.lower()
-                ):
-                    provider_error = {
-                        "result": "failed",
-                        "error_code": "PROVIDER_RATE_LIMITED",
-                        "error": f"Provider rate limited detected in output: {combined_output[:500]}"
-                    }
+                provider_signatures = [
+                    "openai", "anthropic", "google-generativeai", "google.api_core",
+                    "urllib3", "requests", "httpx", "api.openai.com", "api.anthropic.com",
+                    "generativelanguage.googleapis.com", "groq", "openrouter", "deepseek",
+                    "gemini", "claude"
+                ]
+                has_provider_context = any(sig in combined_output.lower() for sig in provider_signatures)
+                if has_provider_context:
+                    if (
+                        "AuthenticationError" in combined_output
+                        or "invalid_api_key" in combined_output.lower()
+                        or "Incorrect API key provided" in combined_output
+                        or "API_KEY_INVALID" in combined_output
+                        or "HTTP 401 Unauthorized" in combined_output
+                        or "status_code: 401" in combined_output.lower()
+                        or "status code 401" in combined_output.lower()
+                    ):
+                        provider_error = {
+                            "result": "failed",
+                            "error_code": "PROVIDER_AUTHENTICATION_FAILED",
+                            "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
+                        }
+                    elif (
+                        "RateLimitError" in combined_output
+                        or "RESOURCE_EXHAUSTED" in combined_output
+                        or "Resource has been exhausted" in combined_output
+                        or "rate limit exceeded" in combined_output.lower()
+                        or "HTTP 429 Too Many Requests" in combined_output
+                        or "status_code: 429" in combined_output.lower()
+                        or "status code 429" in combined_output.lower()
+                    ):
+                        provider_error = {
+                            "result": "failed",
+                            "error_code": "PROVIDER_RATE_LIMITED",
+                            "error": f"Provider rate limited detected in output: {combined_output[:500]}"
+                        }
 
         has_provider_block = False
         if provider_error:
@@ -1541,34 +1547,42 @@ def main():
                 provider_error_result = extract_provider_error(diag, agent_model_cfg)
             if not provider_error_result:
                 combined_output = f"{proc.stdout}\n{proc.stderr}"
-                if (
-                    "AuthenticationError" in combined_output
-                    or "invalid_api_key" in combined_output.lower()
-                    or "Incorrect API key provided" in combined_output
-                    or "API_KEY_INVALID" in combined_output
-                    or "HTTP 401 Unauthorized" in combined_output
-                    or "status_code: 401" in combined_output.lower()
-                    or "status code 401" in combined_output.lower()
-                ):
-                    provider_error_result = {
-                        "result": "failed",
-                        "error_code": "PROVIDER_AUTHENTICATION_FAILED",
-                        "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
-                    }
-                elif (
-                    "RateLimitError" in combined_output
-                    or "RESOURCE_EXHAUSTED" in combined_output
-                    or "Resource has been exhausted" in combined_output
-                    or "rate limit exceeded" in combined_output.lower()
-                    or "HTTP 429 Too Many Requests" in combined_output
-                    or "status_code: 429" in combined_output.lower()
-                    or "status code 429" in combined_output.lower()
-                ):
-                    provider_error_result = {
-                        "result": "failed",
-                        "error_code": "PROVIDER_RATE_LIMITED",
-                        "error": f"Provider rate limited detected in output: {combined_output[:500]}"
-                    }
+                provider_signatures = [
+                    "openai", "anthropic", "google-generativeai", "google.api_core",
+                    "urllib3", "requests", "httpx", "api.openai.com", "api.anthropic.com",
+                    "generativelanguage.googleapis.com", "groq", "openrouter", "deepseek",
+                    "gemini", "claude"
+                ]
+                has_provider_context = any(sig in combined_output.lower() for sig in provider_signatures)
+                if has_provider_context:
+                    if (
+                        "AuthenticationError" in combined_output
+                        or "invalid_api_key" in combined_output.lower()
+                        or "Incorrect API key provided" in combined_output
+                        or "API_KEY_INVALID" in combined_output
+                        or "HTTP 401 Unauthorized" in combined_output
+                        or "status_code: 401" in combined_output.lower()
+                        or "status code 401" in combined_output.lower()
+                    ):
+                        provider_error_result = {
+                            "result": "failed",
+                            "error_code": "PROVIDER_AUTHENTICATION_FAILED",
+                            "error": f"Provider authentication failed detected in output: {combined_output[:500]}"
+                        }
+                    elif (
+                        "RateLimitError" in combined_output
+                        or "RESOURCE_EXHAUSTED" in combined_output
+                        or "Resource has been exhausted" in combined_output
+                        or "rate limit exceeded" in combined_output.lower()
+                        or "HTTP 429 Too Many Requests" in combined_output
+                        or "status_code: 429" in combined_output.lower()
+                        or "status code 429" in combined_output.lower()
+                    ):
+                        provider_error_result = {
+                            "result": "failed",
+                            "error_code": "PROVIDER_RATE_LIMITED",
+                            "error": f"Provider rate limited detected in output: {combined_output[:500]}"
+                        }
 
         if not provider_error_result and is_empty_output and proc.completion_status in ("invalid", "missing"):
             provider_error_result = {

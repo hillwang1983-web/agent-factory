@@ -427,7 +427,7 @@ class TestRunnerRetry(unittest.TestCase):
         with patch("hermes_agent_run.agent_run_policy.load_policy", return_value=mock_policy):
             # Normal business output mentioning a 401 code from an API call
             res1 = MockControlledProcessResult(
-                stdout="We tested the login endpoint and it correctly returns 401 Unauthorized for bad credentials",
+                stdout="We tested the login endpoint and it correctly returns HTTP 401 Unauthorized for bad credentials",
                 stderr="All ok",
                 returncode=1,
                 completion_result=None,
