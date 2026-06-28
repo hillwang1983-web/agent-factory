@@ -1274,37 +1274,74 @@ def main():
     policy = agent_run_policy.load_policy(args.agent, ROOT)
     target_files = get_agent_target_files(args.agent, adu, project_repo_path)
 
-    completion_file = run_dir / "completion.json"
-    run_started_ns = time.time_ns()
-
     import run_file_snapshot
     allowed_write_paths = adu.get("allowed_write_paths") or ["."]
-    snapshot_before = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
 
-    proc = agent_run_policy.execute_controlled_process(
-        cmd,
-        cwd_path,
-        env,
-        policy,
-        target_files=target_files,
-        completion_file=completion_file
-    )
+    max_attempts = policy.no_progress_max_attempts
+    if max_attempts < 1:
+        max_attempts = 1
 
-    snapshot_after = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
-    delta = run_file_snapshot.diff_snapshots(snapshot_before, snapshot_after)
+    for attempt in range(1, max_attempts + 1):
+        session_id = f"oneshot_{timestamp}_{adu['id']}_{args.agent}_att{attempt}"
+        attempt_env = env.copy()
+        attempt_env["HERMES_SESSION_ID"] = session_id
 
-    try:
-        with open(run_dir / "file-snapshot-before.json", "w", encoding="utf-8") as f:
-            json.dump(snapshot_before, f, ensure_ascii=False, indent=2)
-        with open(run_dir / "file-snapshot-after.json", "w", encoding="utf-8") as f:
-            json.dump(snapshot_after, f, ensure_ascii=False, indent=2)
-        with open(run_dir / "file-delta.json", "w", encoding="utf-8") as f:
-            json.dump(delta, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        sys.stderr.write(f"Failed to write file snapshots: {e}\n")
+        completion_file = run_dir / f"completion_att{attempt}.json"
+        run_started_ns = time.time_ns()
 
-    (run_dir / "stdout.md").write_text(proc.stdout, encoding="utf-8")
-    (run_dir / "stderr.md").write_text(proc.stderr, encoding="utf-8")
+        attempt_prompt = prompt.replace("completion.json", f"completion_att{attempt}.json")
+        (run_dir / "prompt.md").write_text(attempt_prompt, encoding="utf-8")
+
+        attempt_cmd = list(cmd)
+        try:
+            z_idx = attempt_cmd.index("-z")
+            attempt_cmd[z_idx + 1] = attempt_prompt
+        except ValueError:
+            pass
+
+        snapshot_before = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
+
+        proc = agent_run_policy.execute_controlled_process(
+            attempt_cmd,
+            cwd_path,
+            attempt_env,
+            policy,
+            target_files=target_files,
+            completion_file=completion_file
+        )
+
+        snapshot_after = run_file_snapshot.snapshot_allowed_files(project_repo_path, allowed_write_paths)
+        delta = run_file_snapshot.diff_snapshots(snapshot_before, snapshot_after)
+
+        stdout_path = run_dir / f"stdout_att{attempt}.md" if attempt > 1 else run_dir / "stdout.md"
+        stderr_path = run_dir / f"stderr_att{attempt}.md" if attempt > 1 else run_dir / "stderr.md"
+        stdout_path.write_text(proc.stdout, encoding="utf-8")
+        stderr_path.write_text(proc.stderr, encoding="utf-8")
+        if attempt > 1:
+            (run_dir / "stdout.md").write_text(proc.stdout, encoding="utf-8")
+            (run_dir / "stderr.md").write_text(proc.stderr, encoding="utf-8")
+
+        try:
+            with open(run_dir / "file-snapshot-before.json", "w", encoding="utf-8") as f:
+                json.dump(snapshot_before, f, ensure_ascii=False, indent=2)
+            with open(run_dir / "file-snapshot-after.json", "w", encoding="utf-8") as f:
+                json.dump(snapshot_after, f, ensure_ascii=False, indent=2)
+            with open(run_dir / "file-delta.json", "w", encoding="utf-8") as f:
+                json.dump(delta, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            sys.stderr.write(f"Failed to write file snapshots: {e}\n")
+
+        retryable = (
+            proc.termination_reason == "no_progress_timeout"
+            and proc.completion_status == "missing"
+            and not proc.target_files_changed
+            and attempt < max_attempts
+        )
+        if not retryable:
+            break
+
+        print(f"No progress timeout on attempt {attempt}. Retrying in {policy.retry_backoff_seconds * attempt} seconds...", file=sys.stderr)
+        time.sleep(policy.retry_backoff_seconds * attempt)
 
     if proc.completion_status == "valid":
         result = proc.completion_result

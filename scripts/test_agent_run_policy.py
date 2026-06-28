@@ -25,7 +25,7 @@ def run_tests():
 
     workspace = pathlib.Path(__file__).resolve().parent.parent
     scripts_dir = workspace / "scripts"
-    
+
     # We will write a temp mock_hermes.py
     mock_hermes_path = scripts_dir / "temp_mock_hermes.py"
     mock_hermes_code = """import sys
@@ -198,6 +198,33 @@ elif scenario == "completion_success_without_inner_result":
     tmp.replace(completion_file)
     time.sleep(100)
     sys.exit(0)
+
+elif scenario == "completion_success_without_audit_arrays":
+    completion_file = pathlib.Path(sys.argv[3])
+    output_file.write_text("rework plan", encoding="utf-8")
+    envelope = {
+        "version": 1,
+        "status": "success",
+        "result": {
+            "result": "success",
+            "next_state": "rework_planned",
+            "changed_files": [str(output_file)],
+            "artifacts": [str(output_file)],
+            "return_to": "developer",
+            "next_agent": "developer"
+        }
+    }
+    tmp = completion_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(envelope), encoding="utf-8")
+    tmp.replace(completion_file)
+    time.sleep(100)
+    sys.exit(0)
+
+elif scenario == "write_to_target_then_stall":
+    time.sleep(0.5)
+    output_file.write_text("some changes", encoding="utf-8")
+    time.sleep(100)
+    sys.exit(0)
 """
     mock_hermes_path.write_text(mock_hermes_code, encoding="utf-8")
 
@@ -228,7 +255,7 @@ elif scenario == "completion_success_without_inner_result":
         print("Testing Case 2: Max duration timeout...")
         target_file = workspace / "temp_outcome_2.json"
         if target_file.exists(): target_file.unlink()
-        
+
         # We spawn a subprocess running execute_controlled_process via a wrapper
         wrapper_code = f"""import sys
 import pathlib
@@ -434,7 +461,7 @@ sys.exit(res.returncode)
         assert result.completion_result is not None
         assert result.completion_result["result"] == "human_gate"
         assert t_elapsed < 5.0, f"Expected fast completion (under 5s), took {t_elapsed}s"
-        
+
         # Assert child PID is dead and reaped
         pid_alive = True
         try:
@@ -469,7 +496,7 @@ sys.exit(res.returncode)
         assert result.completion_result is not None
         assert result.completion_result["next_state"] == "rework_planned"
         assert t_elapsed < 5.0, f"Expected fast completion (under 5s), took {t_elapsed}s"
-        
+
         # Assert child PID is dead and reaped
         pid_alive = True
         try:
@@ -502,6 +529,73 @@ sys.exit(res.returncode)
         assert result.completion_result["result"] == "success"
         assert result.completion_result["review_status"] == "fail"
         assert result.completion_result["next_state"] == "code_rework"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        # Test Case 12: Completion may omit audit arrays when no commands/risks were produced
+        print("Testing Case 12: Completion success without audit arrays...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "completion_success_without_audit_arrays", str(target_file), str(completion_file)]
+        result = execute_controlled_process(
+            cmd,
+            workspace,
+            None,
+            AgentRunPolicy(20, 10, 1, 10000, 1000),
+            [str(target_file)],
+            completion_file=str(completion_file)
+        )
+        assert result.returncode == 0, f"Expected 0 exit on completion, got {result.returncode}"
+        assert result.completion_status == "valid", f"Expected completion_status valid, got {result.completion_status}"
+        assert result.completion_result is not None
+        assert result.completion_result["commands_run"] == []
+        assert result.completion_result["risks"] == []
+        assert result.completion_result["next_state"] == "rework_planned"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        # Test Case 13: target_files_changed check
+        print("Testing Case 13: target_files_changed detection...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "write_to_target_then_stall", str(target_file), str(completion_file)]
+        result = execute_controlled_process(
+            cmd,
+            workspace,
+            None,
+            AgentRunPolicy(20, 2, 1, 10000, 1000),
+            [str(target_file)],
+            completion_file=str(completion_file)
+        )
+        assert result.termination_reason == "no_progress_timeout", f"Expected no_progress_timeout, got {result.termination_reason}"
+        assert result.target_files_changed is True, "Expected target_files_changed to be True"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        # Test Case 14: target_files_changed is False when unchanged
+        print("Testing Case 14: target_files_changed is False when unchanged...")
+        target_file = workspace / "temp_outcome_4.json"
+        completion_file = workspace / "temp_completion.json"
+        if target_file.exists(): target_file.unlink()
+        if completion_file.exists(): completion_file.unlink()
+
+        cmd = [sys.executable, str(mock_hermes_path), "silent", str(target_file), str(completion_file)]
+        result = execute_controlled_process(
+            cmd,
+            workspace,
+            None,
+            AgentRunPolicy(20, 2, 1, 10000, 1000),
+            [str(target_file)],
+            completion_file=str(completion_file)
+        )
+        assert result.termination_reason == "no_progress_timeout", f"Expected no_progress_timeout, got {result.termination_reason}"
+        assert result.target_files_changed is False, "Expected target_files_changed to be False"
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 

@@ -1,5 +1,10 @@
 {
   "version": 1,
+  "retry": {
+    "no_progress_max_attempts": 2,
+    "backoff_seconds": 5,
+    "require_no_target_file_changes": true
+  },
   "defaults": {
     "max_duration_seconds": 600,
     "no_progress_timeout_seconds": 180,
@@ -23,6 +28,10 @@
     },
     "developer": {
       "max_duration_seconds": 1200
+    },
+    "detail-designer": {
+      "max_duration_seconds": 1800,
+      "no_progress_timeout_seconds": 300
     }
   }
 }

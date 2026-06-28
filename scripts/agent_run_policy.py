@@ -11,25 +11,32 @@ class AgentRunPolicy:
     termination_grace_seconds: int
     max_prompt_bytes: int
     max_estimated_input_tokens: int
+    no_progress_max_attempts: int = 1
+    retry_backoff_seconds: int = 5
+    require_no_target_file_changes: bool = True
 
 def load_policy(agent_name: str, workspace_root: pathlib.Path) -> AgentRunPolicy:
     policy_path = workspace_root / ".ai-agent" / "policies" / "agent-run-policy.json"
-    
+
     # defaults definition
     d_max_duration = 600
     d_no_progress = 180
     d_grace = 5
     d_prompt_bytes = 120000
     d_tokens = 30000
+    d_max_attempts = 1
+    d_backoff = 5
+    d_no_changes = True
 
     if policy_path.exists():
         try:
             with open(policy_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
             defaults = data.get("defaults", {})
             agent_override = data.get("agents", {}).get(agent_name, {})
-            
+            retry_config = data.get("retry", {})
+
             # Validation
             for k, v in defaults.items():
                 if isinstance(v, (int, float)) and v <= 0:
@@ -38,20 +45,36 @@ def load_policy(agent_name: str, workspace_root: pathlib.Path) -> AgentRunPolicy
                 for k, v in a_override.items():
                     if isinstance(v, (int, float)) and v <= 0:
                         raise ValueError(f"Policy override for agent {a_name} key {k} must be positive: {v}")
+            for k, v in retry_config.items():
+                if k in ("no_progress_max_attempts", "backoff_seconds"):
+                    if isinstance(v, (int, float)) and v <= 0:
+                        raise ValueError(f"Policy retry value for {k} must be positive: {v}")
 
             return AgentRunPolicy(
                 max_duration_seconds=int(agent_override.get("max_duration_seconds", defaults.get("max_duration_seconds", d_max_duration))),
                 no_progress_timeout_seconds=int(agent_override.get("no_progress_timeout_seconds", defaults.get("no_progress_timeout_seconds", d_no_progress))),
                 termination_grace_seconds=int(agent_override.get("termination_grace_seconds", defaults.get("termination_grace_seconds", d_grace))),
                 max_prompt_bytes=int(agent_override.get("max_prompt_bytes", defaults.get("max_prompt_bytes", d_prompt_bytes))),
-                max_estimated_input_tokens=int(agent_override.get("max_estimated_input_tokens", defaults.get("max_estimated_input_tokens", d_tokens)))
+                max_estimated_input_tokens=int(agent_override.get("max_estimated_input_tokens", defaults.get("max_estimated_input_tokens", d_tokens))),
+                no_progress_max_attempts=int(retry_config.get("no_progress_max_attempts", d_max_attempts)),
+                retry_backoff_seconds=int(retry_config.get("backoff_seconds", d_backoff)),
+                require_no_target_file_changes=bool(retry_config.get("require_no_target_file_changes", d_no_changes))
             )
         except Exception as exc:
             # Propagate validation error, otherwise fallback
             if isinstance(exc, ValueError):
                 raise exc
-    
-    return AgentRunPolicy(d_max_duration, d_no_progress, d_grace, d_prompt_bytes, d_tokens)
+
+    return AgentRunPolicy(
+        max_duration_seconds=d_max_duration,
+        no_progress_timeout_seconds=d_no_progress,
+        termination_grace_seconds=d_grace,
+        max_prompt_bytes=d_prompt_bytes,
+        max_estimated_input_tokens=d_tokens,
+        no_progress_max_attempts=d_max_attempts,
+        retry_backoff_seconds=d_backoff,
+        require_no_target_file_changes=d_no_changes
+    )
 
 def read_completion_result(completion_path):
     if completion_path is None or not completion_path.is_file():
@@ -72,6 +95,8 @@ def read_completion_result(completion_path):
         return None
     result = dict(result)
     result.setdefault("result", payload["status"])
+    result.setdefault("commands_run", [])
+    result.setdefault("risks", [])
 
     if payload["status"] == "success":
         if result.get("result") != "success":
@@ -138,7 +163,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     if target_files:
         for f in target_files:
             target_paths.append(pathlib.Path(f))
-    
+
     def get_max_mtime():
         mtimes = []
         for p in target_paths:
@@ -155,8 +180,9 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     start_time = time.time()
     last_progress_time = start_time
     last_mtime = get_max_mtime()
+    initial_mtime = last_mtime
     progress_observed = False
-    
+
     stdout_buf = []
     stderr_buf = []
 
@@ -193,7 +219,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
     while True:
         now = time.time()
         elapsed = now - start_time
-        
+
         # Check completion file first
         completion_result = read_completion_result(completion_path)
         if completion_result is not None:
@@ -214,7 +240,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
 
         # 3. Read output
         has_new_output = False
-        
+
         current_stdout_buf = list(stdout_buf)
         current_stderr_buf = list(stderr_buf)
         current_stdout_len = sum(len(x) for x in current_stdout_buf)
@@ -273,7 +299,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
             if termination_reason != "completion_signal":
                 print(f"Watchdog triggered: {termination_reason}. Killing process group {pgid}", file=sys.stderr)
                 os.killpg(pgid, signal.SIGTERM)
-                
+
                 # Wait grace period
                 wait_start = time.time()
                 killed = False
@@ -282,7 +308,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
                         killed = True
                         break
                     time.sleep(0.2)
-                
+
                 if not killed:
                     try:
                         os.killpg(pgid, signal.SIGKILL)
@@ -323,10 +349,10 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
                     pass
         except Exception:
             pass
-        
+
         if termination_reason != "completion_signal":
             err_code = "AGENT_RUN_TIMEOUT" if termination_reason == "max_duration_exceeded" else "AGENT_NO_PROGRESS"
-            
+
             result_json = {
                 "result": "failed",
                 "error_code": err_code,
@@ -357,7 +383,7 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
         completion_status = "missing"
 
     class ControlledProcessResult:
-        def __init__(self, stdout, stderr, returncode, completion_result=None, completion_status="not_expected", termination_reason=None, pid=None):
+        def __init__(self, stdout, stderr, returncode, completion_result=None, completion_status="not_expected", termination_reason=None, pid=None, target_files_changed=False):
             self.stdout = stdout
             self.stderr = stderr
             self.returncode = returncode
@@ -365,5 +391,16 @@ def execute_controlled_process(cmd, cwd_path, env, policy, target_files=None, co
             self.completion_status = completion_status
             self.termination_reason = termination_reason
             self.pid = pid
-    
-    return ControlledProcessResult(final_stdout, final_stderr, exit_code, completion_result, completion_status, termination_reason, proc.pid)
+            self.target_files_changed = target_files_changed
+
+    current_mtime = get_max_mtime()
+    return ControlledProcessResult(
+        final_stdout,
+        final_stderr,
+        exit_code,
+        completion_result,
+        completion_status,
+        termination_reason,
+        proc.pid,
+        current_mtime > initial_mtime
+    )
