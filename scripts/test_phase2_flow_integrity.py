@@ -387,6 +387,8 @@ try:
         assert gate is not None, "Gate should be opened"
         assert gate.get("result") == "human_gate"
         assert gate.get("gate_type") == "rework_requires_operator_cleanup"
+        assert gate.get("pre_gate_state") == "rework_planned"
+        assert gate.get("operator_actions") == ["cleanup_out_of_scope_changes", "reject_rework_plan"]
         assert set(gate.get("blocked_write_paths")) == {"src/core.c", "lib/app"}
         assert gate.get("next_agent") == "human"
 
