@@ -699,9 +699,34 @@ def evaluate_rework_plan_gate(adu, result, project_repo_path):
     if not isinstance(rework_plan, dict):
         return None
 
-    requested_paths = rework_plan.get("additional_write_paths", [])
-    if not isinstance(requested_paths, list):
-        requested_paths = []
+    requested_paths = []
+    raw_additional = rework_plan.get("additional_write_paths", [])
+    if isinstance(raw_additional, list):
+        requested_paths.extend(raw_additional)
+
+    must_fix = rework_plan.get("must_fix_now", [])
+    if isinstance(must_fix, list):
+        for item in must_fix:
+            if isinstance(item, dict):
+                raw_affected = item.get("affected_paths", [])
+                if isinstance(raw_affected, list):
+                    requested_paths.extend(raw_affected)
+
+    # Heuristic fallback scanning for path-like strings in must_fix_now items
+    if isinstance(must_fix, list):
+        for item in must_fix:
+            if isinstance(item, dict):
+                for field in ("developer_action", "verification_command"):
+                    val = item.get(field)
+                    if isinstance(val, str):
+                        words = re.split(r'[\s\'"`,\(\)]', val)
+                        for w in words:
+                            w = w.strip().strip("/").strip(".")
+                            if not w:
+                                continue
+                            if "/" in w and not any(w.startswith(p) for p in ("--", "git/", "scripts/", "python3/")):
+                                if not any(w.endswith(ext) for ext in (".py", ".sh")):
+                                    requested_paths.append(w)
 
     blocked_paths = []
     for path_value in requested_paths:
@@ -726,6 +751,26 @@ def evaluate_rework_plan_gate(adu, result, project_repo_path):
             "Route to operator/human gate instead of developer to avoid contradictory permissions."
         ],
     }
+
+
+def find_latest_verification_results_path(adu_id, project_repo_path):
+    runs_file = REGISTRY / "runs.json"
+    if not runs_file.is_file():
+        return None
+    try:
+        with open(runs_file, "r", encoding="utf-8") as f:
+            runs_data = json.load(f)
+        for run in reversed(runs_data.get("runs", [])):
+            if run.get("adu_id") == adu_id and run.get("result") == "success":
+                if run.get("agent") in ("acceptance-reviewer", "buildfix-debugger"):
+                    v_path = run.get("verification_results_path")
+                    if v_path:
+                        full_path = project_repo_path / v_path
+                        if full_path.is_file():
+                            return full_path
+    except Exception:
+        pass
+    return None
 
 
 RUNTIME_MANAGED_PREFIXES = (
@@ -1360,7 +1405,40 @@ def main():
                 kind = "code-review" if args.agent == "code-reviewer" else "acceptance"
                 val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_quality_report.py"), "--adu", adu["id"], "--kind", kind, "--repo-root", str(project_repo_path), "--run-dir", str(run_dir)]
             elif args.agent == "evidence":
-                val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_evidence_package.py"), "--adu", adu["id"], "--repo-root", str(project_repo_path), "--registry-dir", str(REGISTRY)]
+                import evidence_package_compiler
+                contract_path = project_repo_path / ".ai-agent" / "contracts" / f"{adu['id']}.json"
+                acceptance_path = project_repo_path / ".ai-agent" / "acceptance" / f"{adu['id']}-acceptance-review.json"
+                evidence_path = project_repo_path / ".ai-agent" / "evidence" / f"{adu['id']}.json"
+
+                v_path = find_latest_verification_results_path(adu["id"], project_repo_path)
+                if not v_path:
+                    # Fallback to an empty verification-results.json structure
+                    v_path = run_dir / "verification-results.json"
+                    if not v_path.is_file():
+                        v_path.write_text("{}", encoding="utf-8")
+
+                runtime_records = adu.get("runtime_evidence_records") or []
+
+                try:
+                    package = evidence_package_compiler.compile_evidence_from_files(
+                        str(contract_path),
+                        str(acceptance_path),
+                        str(v_path),
+                        runtime_records
+                    )
+                    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                    temp_path = evidence_path.with_suffix(".json.tmp")
+                    with open(temp_path, "w", encoding="utf-8") as f:
+                        json.dump(package, f, ensure_ascii=False, indent=2)
+                        f.write("\n")
+                    temp_path.replace(evidence_path)
+                except Exception as e:
+                    run_result = "failed"
+                    result["result"] = "failed"
+                    result["error"] = f"Canonical evidence package compilation failed: {e}"
+
+                if run_result == "success":
+                    val_cmd = [sys.executable, str(ROOT / "scripts" / "validate_evidence_package.py"), "--adu", adu["id"], "--repo-root", str(project_repo_path), "--registry-dir", str(REGISTRY)]
             elif args.agent == "system-flow-designer":
                 flow_path = project_repo_path / ".ai-agent" / "epics" / adu["id"] / "system-flow.json"
                 if flow_path.exists():

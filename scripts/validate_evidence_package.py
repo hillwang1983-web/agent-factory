@@ -193,6 +193,11 @@ def main():
         has_evidence = False
         evidence_dict = evidence_data.get("evidence", {})
         assertions_dict = evidence_data.get("assertions", {})
+        negative_assertions_dict = evidence_data.get("negative_assertions", {})
+
+        static_lookup = {**evidence_dict, **assertions_dict, **negative_assertions_dict}
+        runtime_lookup = {**evidence_dict, **assertions_dict}
+
         ass_reqs = [r for r in contract.get("evidence_requirements", []) if r.get("assertion_id") == ass_id or ass_id in r.get("assertion_ids", [])]
 
         def evaluate_required_fields(reqs, ev_data):
@@ -232,64 +237,18 @@ def main():
                 has_summary_path = isinstance(ev_val.get("summary_path"), str) and bool(ev_val.get("summary_path").strip())
                 has_hash = isinstance(ev_val.get("hash"), str) and bool(ev_val.get("hash").strip())
                 has_evidence_url = isinstance(ev_val.get("evidence_url"), str) and bool(ev_val.get("evidence_url").strip())
-                return has_notes or has_path or has_legacy_path or has_summary_path or has_hash or has_evidence_url
+                has_obs = isinstance(ev_val.get("observed_result"), str) and bool(ev_val.get("observed_result").strip())
+                return has_notes or has_path or has_legacy_path or has_summary_path or has_hash or has_evidence_url or has_obs
 
-            for key, val in evidence_dict.items():
-                if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
-                    if is_valid_static(val):
-                        has_evidence = True
-                        break
-
-            if not has_evidence:
-                negative_assertions_dict = evidence_data.get("negative_assertions", {})
-                for key, val in negative_assertions_dict.items():
-                    if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
-                        if is_valid_static(val):
-                            has_evidence = True
-                            break
-
-            # Check inside 'assertions' dict if not found in 'evidence'
-            if not has_evidence and ass_id in assertions_dict:
-                val = assertions_dict[ass_id]
-                if is_valid_static(val):
+            # Check inside static_lookup
+            if ass_id in static_lookup:
+                if is_valid_static(static_lookup[ass_id]):
                     has_evidence = True
 
-            # NOTE: a self-reported top-level evidence package status
-            # ("success"/"passed") is deliberately NOT accepted as evidence here.
-            # Per-assertion evidence is required; trusting the agent's own
-            # package status would let assertions pass with no real artifact.
         else:
             # Runtime assertions: MUST have concrete runtime evidence
-
-            # 1. Check evidence.json matching entries for command, exitCode, output
-            for key, val in evidence_dict.items():
-                # Match evidence to the assertion by EXACT id (dict key or an
-                # explicit assertion_id), never a loose substring like "A1" in "A12".
-                if key == ass_id or (isinstance(val, dict) and val.get("assertion_id") == ass_id):
-                    if isinstance(val, dict):
-                        sub = val.get("script_result") or val.get("curl_output") or val.get("executed_script") or val
-                        cmd_val = sub.get("command") or sub.get("script")
-                        out_val = sub.get("output") or sub.get("stdout") or sub.get("observed_output") or sub.get("observed_result")
-                        code_val = sub.get("exitCode")
-                        if code_val is None:
-                            code_val = sub.get("exit_code")
-
-                        has_code = type(code_val) is int and code_val == 0
-
-                        has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
-                        has_out = isinstance(out_val, str) and bool(out_val.strip())
-                        if has_cmd and has_code and has_out:
-                            if ass_reqs:
-                                if evaluate_required_fields(ass_reqs, evidence_data):
-                                    has_evidence = True
-                                    break
-                            else:
-                                has_evidence = True
-                                break
-
-            # Also check 'assertions' dict for runtime execution evidence
-            if not has_evidence and ass_id in assertions_dict:
-                val = assertions_dict[ass_id]
+            if ass_id in runtime_lookup:
+                val = runtime_lookup[ass_id]
                 if isinstance(val, dict):
                     cmd_val = val.get("command")
                     out_val = val.get("observed_result") or val.get("output") or val.get("observed_output")
@@ -298,7 +257,6 @@ def main():
                         code_val = val.get("exit_code")
 
                     has_code = type(code_val) is int and code_val == 0
-
                     has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                     has_out = isinstance(out_val, str) and bool(out_val.strip())
                     if has_cmd and has_code and has_out:
@@ -308,15 +266,9 @@ def main():
                         else:
                             has_evidence = True
 
-            # 2. Check runtime records (runtime_evidence_records in adu.json).
-            # Require an EXACT assertion_id, a real exit code 0, and a non-empty
-            # command + output. No substring/text guessing (so an "A12" record
-            # cannot satisfy "A1"), and no empty-content records.
+            # 2. Check runtime records (runtime_evidence_records in adu.json)
             if not has_evidence:
                 for r in runtime_records:
-                    # Exact id match only: a plural `assertion_ids` list (written
-                    # by the Human Gate) by membership, or a singular
-                    # `assertion_id`. No substring/text guessing.
                     r_ids = r.get("assertion_ids")
                     if isinstance(r_ids, list):
                         matched = ass_id in r_ids
@@ -331,14 +283,11 @@ def main():
                         code_val = r.get("exit_code")
 
                     has_code = type(code_val) is int and code_val == 0
-
                     has_cmd = isinstance(cmd_val, str) and bool(cmd_val.strip())
                     has_out = isinstance(out_val, str) and bool(out_val.strip())
-                    has_code = type(code_val) is int and code_val == 0
                     if has_cmd and has_out and has_code:
                         has_evidence = True
                         break
-
         if not has_evidence:
             if is_runtime:
                 missing_runtime.append(ass)

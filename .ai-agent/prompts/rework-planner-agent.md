@@ -24,6 +24,7 @@ Findings that must be fixed in this rework iteration. Each entry includes:
 - `finding_id`: Reference to the original finding
 - `severity`: P1, P2, or P3
 - `developer_action`: Clear, concrete instruction for the developer
+- `affected_paths`: List of files or directories affected/modified by this action (must be within ADU allowed_write_paths, or declared in additional_write_paths)
 - `verification_command`: A command the developer can run to self-verify the fix
 
 ### defer_or_escalate
@@ -52,6 +53,7 @@ Produce TWO files:
       "finding_id": "CR-1",
       "severity": "P1",
       "developer_action": "Remove dead function or add a real caller.",
+      "affected_paths": ["webui/server/index.js"],
       "verification_command": "git grep -n \"function_name\" src/ lib/"
     }
   ],

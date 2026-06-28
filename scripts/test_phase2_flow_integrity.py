@@ -386,7 +386,7 @@ try:
         assert gate is not None, "Gate should be opened"
         assert gate.get("result") == "human_gate"
         assert gate.get("gate_type") == "rework_requires_operator_cleanup"
-        assert gate.get("blocked_write_paths") == ["src/core.c"]
+        assert set(gate.get("blocked_write_paths")) == {"src/core.c", "lib/app"}
         assert gate.get("next_agent") == "human"
 
         # Positive check: webui/server/index.js is inside webui/
@@ -407,6 +407,31 @@ try:
             repo,
         )
         assert gate_ok is None, f"Expected None gate but got {gate_ok}"
+
+        # Heuristic check: additional_write_paths is empty, but developer_action mentions src/core.c
+        (rework_dir / "REQ-FLOW-006-rework-plan.json").write_text(
+            json.dumps({
+                "version": 1,
+                "adu_id": "REQ-FLOW-006",
+                "source": "code-review",
+                "must_fix_now": [{
+                    "finding_id": "CR-1",
+                    "severity": "P1",
+                    "developer_action": "Fix logic in src/core.c",
+                    "verification_command": "git diff"
+                }],
+                "additional_write_paths": [],
+                "return_to": "developer",
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        gate_heur = run_mod.evaluate_rework_plan_gate(
+            {"id": "REQ-FLOW-006", "allowed_write_paths": ["webui/"]},
+            result,
+            repo,
+        )
+        assert gate_heur is not None, "Gate should be opened via heuristic scan"
+        assert gate_heur.get("blocked_write_paths") == ["src/core.c"]
 
         ok("T11: rework plan with out-of-allowlist cleanup opens human gate")
 except Exception as exc:
