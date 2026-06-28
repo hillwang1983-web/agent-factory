@@ -815,7 +815,7 @@ def normalize_path_simple(raw: str) -> str | None:
 
 ALLOWED_WRITE_AGENTS = {"developer", "buildfix-debugger"}
 
-def validate_agent_file_declarations(agent_name, result, repo_root, run_started_ns):
+def validate_agent_file_declarations(agent_name, result, repo_root, run_started_ns, delta=None):
     """Classify changed_files declarations into valid/runtime/generated/errors."""
     declared = result.get("changed_files", [])
     if not isinstance(declared, list):
@@ -871,9 +871,16 @@ def validate_agent_file_declarations(agent_name, result, repo_root, run_started_
         if not file_path.is_file():
             errors.append(f"declared changed file does not exist: {normalized}")
             continue
-        if file_path.stat().st_mtime_ns < run_started_ns:
-            errors.append(f"declared changed file was not modified during this run: {normalized}")
-            continue
+
+        if delta is not None:
+            actual_changes = set(delta.get("created", [])) | set(delta.get("modified", [])) | set(delta.get("deleted", []))
+            if normalized not in actual_changes:
+                errors.append(f"declared changed file was not modified during this run: {normalized}")
+                continue
+        else:
+            if file_path.stat().st_mtime_ns < run_started_ns:
+                errors.append(f"declared changed file was not modified during this run: {normalized}")
+                continue
         valid_changed_files.append(normalized)
 
     return {
@@ -1287,6 +1294,7 @@ def main():
 
     import run_file_snapshot
     allowed_write_paths = adu.get("allowed_write_paths") or ["."]
+    delta = None
 
     max_attempts = policy.no_progress_max_attempts
     if max_attempts < 1:
@@ -1417,7 +1425,7 @@ def main():
             #   generated_files (build/dist/coverage output — not agent-authored)
             #   errors (invalid, missing, unmodified, or evidence declaring source paths)
             file_decls = validate_agent_file_declarations(
-                args.agent, result, project_repo_path, run_started_ns
+                args.agent, result, project_repo_path, run_started_ns, delta=delta
             )
             if file_decls.get("errors"):
                 run_result = "failed"
