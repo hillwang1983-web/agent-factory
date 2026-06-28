@@ -425,10 +425,20 @@ async function main() {
     const fullRunDir = path.join(tmp, runDir);
     fs.mkdirSync(fullRunDir, { recursive: true });
 
+    const deltaData = {
+      created: ['webui/server/index.js'],
+      modified: ['webui/client/app.js'],
+      deleted: []
+    };
+    const deltaContent = JSON.stringify(deltaData);
+    const crypto = require('crypto');
+    const file_delta_sha256 = crypto.createHash('sha256').update(deltaContent).digest('hex');
+
     // Write run record
     fs.writeFileSync(path.join(registry, 'runs.json'), JSON.stringify({ version: 1, runs: [{
       timestamp: '20260621-102439', adu_id: aduId, agent: 'developer',
       returncode: 1, result: options.runResult || 'failed', run_dir: runDir,
+      file_delta_sha256,
       parsed_result: {
         result: options.runResult || 'failed',
         error_code: options.errorCode || 'declared_changes_unverified',
@@ -438,11 +448,7 @@ async function main() {
     }]}));
 
     // Write file-delta.json
-    fs.writeFileSync(path.join(fullRunDir, 'file-delta.json'), JSON.stringify({
-      created: ['webui/server/index.js'],
-      modified: ['webui/client/app.js'],
-      deleted: []
-    }));
+    fs.writeFileSync(path.join(fullRunDir, 'file-delta.json'), deltaContent);
 
     return { tmp, aduId };
   }

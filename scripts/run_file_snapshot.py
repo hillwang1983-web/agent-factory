@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import hashlib
 import argparse
@@ -7,13 +8,10 @@ from pathlib import Path
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
-    try:
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception:
-        return ""
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 def is_safe_and_inside(path: Path, root: Path) -> bool:
     try:
@@ -88,8 +86,7 @@ def snapshot_allowed_files(repo_root: Path, allowed_paths: list[str]) -> dict[st
     for relative, path in expand_allowed_files(repo_root, allowed_paths):
         if path.is_file():
             sha = sha256_file(path)
-            if sha:
-                results[relative] = {"sha256": sha, "exists": True}
+            results[relative] = {"sha256": sha, "exists": True}
     return results
 
 def diff_snapshots(before: dict, after: dict) -> dict[str, list[str]]:

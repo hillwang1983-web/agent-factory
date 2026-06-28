@@ -1303,12 +1303,46 @@ def main():
     import run_file_snapshot
     allowed_write_paths = adu.get("allowed_write_paths") or ["."]
     snapshot_paths = list(allowed_write_paths)
-    if args.agent == "evidence":
-        snapshot_paths.append(".ai-agent/evidence")
-    elif args.agent == "testwriter":
-        snapshot_paths.extend([".ai-agent", "tests"])
-    else:
-        snapshot_paths.append(".ai-agent")
+    try:
+        run_dir_rel = str(run_dir.relative_to(project_repo_path)).replace("\\", "/")
+        snapshot_paths.append(run_dir_rel)
+    except ValueError:
+        pass
+
+    adu_id = adu.get("id")
+    if adu_id:
+        if args.agent == "requirement-analyst":
+            snapshot_paths.extend([
+                f".ai-agent/analysis/{adu_id}-analysis-review.json",
+                f".ai-agent/analysis/{adu_id}-analysis-review.md"
+            ])
+        elif args.agent == "detail-designer":
+            snapshot_paths.extend([
+                f".ai-agent/designs/{adu_id}-design-review.json",
+                f".ai-agent/designs/{adu_id}-design-review.md"
+            ])
+        elif args.agent == "contract":
+            snapshot_paths.extend([
+                f".ai-agent/contracts/{adu_id}.json",
+                f".ai-agent/contracts/{adu_id}-notes.md"
+            ])
+        elif args.agent == "code-reviewer":
+            snapshot_paths.extend([
+                f".ai-agent/reviews/{adu_id}-code-review.json",
+                f".ai-agent/reviews/{adu_id}-code-review.md"
+            ])
+        elif args.agent == "acceptance-reviewer":
+            snapshot_paths.extend([
+                f".ai-agent/acceptance/{adu_id}-acceptance-review.json",
+                f".ai-agent/acceptance/{adu_id}-acceptance-review.md"
+            ])
+        elif args.agent == "evidence":
+            snapshot_paths.extend([
+                f".ai-agent/evidence/{adu_id}.json",
+                f".ai-agent/evidence/{adu_id}-notes.md"
+            ])
+        elif args.agent == "testwriter":
+            snapshot_paths.append("tests")
 
     # Clean and filter absolute/traversal paths
     snapshot_paths = [
@@ -1371,19 +1405,53 @@ def main():
         except Exception as e:
             sys.stderr.write(f"Failed to write file snapshots: {e}\n")
 
+        try:
+            run_dir_rel = str(run_dir.relative_to(project_repo_path)).replace("\\", "/")
+        except ValueError:
+            run_dir_rel = ""
+
+        control_files = set()
+        if run_dir_rel:
+            control_files.add(f"{run_dir_rel}/file-snapshot-before.json")
+            control_files.add(f"{run_dir_rel}/file-snapshot-after.json")
+            control_files.add(f"{run_dir_rel}/file-delta.json")
+            for att in range(1, max_attempts + 1):
+                control_files.add(f"{run_dir_rel}/prompt.md")
+                control_files.add(f"{run_dir_rel}/prompt_att{att}.md")
+                control_files.add(f"{run_dir_rel}/completion.json")
+                control_files.add(f"{run_dir_rel}/completion_att{att}.json")
+                control_files.add(f"{run_dir_rel}/stdout.md")
+                control_files.add(f"{run_dir_rel}/stdout_att{att}.md")
+                control_files.add(f"{run_dir_rel}/stderr.md")
+                control_files.add(f"{run_dir_rel}/stderr_att{att}.md")
+
         has_delta = False
         if delta:
             all_changed = set(delta.get("created", [])) | set(delta.get("modified", [])) | set(delta.get("deleted", []))
             for path in all_changed:
-                if not any(path.startswith(prefix) for prefix in RUNTIME_MANAGED_PREFIXES):
+                if path not in control_files:
                     has_delta = True
                     break
+
+        provider_error = None
+        is_empty_output = not proc.stdout.strip() and not proc.stderr.strip()
+        if is_empty_output and proc.completion_status in ("invalid", "missing"):
+            hermes_profile = _hermes_profile_from_args(agent_cfg.get("hermes_args", []))
+            diag = _find_and_parse_hermes_diagnostic(session_id, hermes_profile)
+            if diag:
+                provider_error = extract_provider_error(diag, agent_model_cfg)
+
+        has_provider_block = False
+        if provider_error:
+            if provider_error.get("error_code") in ("PROVIDER_AUTHENTICATION_FAILED", "PROVIDER_RATE_LIMITED"):
+                has_provider_block = True
 
         retryable = (
             proc.termination_reason == "no_progress_timeout"
             and proc.completion_status == "missing"
             and not proc.target_files_changed
             and not has_delta
+            and not has_provider_block
             and attempt < max_attempts
         )
         if not retryable:

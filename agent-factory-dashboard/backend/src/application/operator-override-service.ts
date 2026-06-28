@@ -29,6 +29,7 @@ interface OverrideSnapshot {
   runDir: string;
   runResult: string;
   runOperatorOverrideId?: string;
+  fileDeltaSha256?: string;
 }
 
 interface ValidatorResult {
@@ -295,6 +296,10 @@ export class OperatorOverrideService {
           throw Object.assign(new Error(`Amend file declaration only allowed for declared_changes_unverified error, got: ${errCode || 'none'}`), { status: 409 });
         }
 
+        if (!run.file_delta_sha256) {
+          throw Object.assign(new Error('Missing file delta SHA-256 hash in runs registry'), { status: 422 });
+        }
+
         // Validate files against file-delta.json
         const repoRoot = path.resolve(adu.repo_path || this.workspaceRoot);
         const runDir = run.run_dir ? path.resolve(repoRoot, run.run_dir) : '';
@@ -302,14 +307,12 @@ export class OperatorOverrideService {
         if (runDir) {
           const deltaPath = path.join(runDir, 'file-delta.json');
           if (fs.existsSync(deltaPath)) {
-            if (run.file_delta_sha256) {
-              const fileBuffer = fs.readFileSync(deltaPath);
-              const hashSum = crypto.createHash('sha256');
-              hashSum.update(fileBuffer);
-              const actualSha = hashSum.digest('hex');
-              if (actualSha !== run.file_delta_sha256) {
-                throw Object.assign(new Error('Inconsistent file delta snapshot (SHA-256 mismatch)'), { status: 409 });
-              }
+            const fileBuffer = fs.readFileSync(deltaPath);
+            const hashSum = crypto.createHash('sha256');
+            hashSum.update(fileBuffer);
+            const actualSha = hashSum.digest('hex');
+            if (actualSha !== run.file_delta_sha256) {
+              throw Object.assign(new Error('Inconsistent file delta snapshot (SHA-256 mismatch)'), { status: 409 });
             }
 
             try {
@@ -352,6 +355,7 @@ export class OperatorOverrideService {
         runDir,
         runResult: run.result || 'failed',
         runOperatorOverrideId: run.operator_override_id,
+        fileDeltaSha256: run.file_delta_sha256,
       };
       return { snapshot };
     });
@@ -388,6 +392,23 @@ export class OperatorOverrideService {
           new Error('ADU or run changed during validation; retry the override'),
           { status: 409 },
         );
+      }
+
+      if (input.operation === 'amend_file_declaration') {
+        if (!snapshot.fileDeltaSha256) {
+          throw Object.assign(new Error('Missing file delta SHA-256 hash in override snapshot'), { status: 422 });
+        }
+        const deltaPath = path.join(snapshot.runDir, 'file-delta.json');
+        if (!fs.existsSync(deltaPath)) {
+          throw Object.assign(new Error('file-delta.json not found on disk'), { status: 409 });
+        }
+        const fileBuffer = fs.readFileSync(deltaPath);
+        const hashSum = crypto.createHash('sha256');
+        hashSum.update(fileBuffer);
+        const actualSha = hashSum.digest('hex');
+        if (actualSha !== snapshot.fileDeltaSha256) {
+          throw Object.assign(new Error('Inconsistent file delta snapshot (SHA-256 mismatch before write)'), { status: 409 });
+        }
       }
 
       const overrideId = `override-${aduId}-${Date.now()}`;

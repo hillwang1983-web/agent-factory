@@ -276,5 +276,54 @@ class TestRunnerRetry(unittest.TestCase):
             self.assertIn("webui/file1.js", final_delta["created"])
             self.assertIn("webui/file2.js", final_delta["created"])
 
+    def test_no_retry_on_provider_auth_error(self):
+        if "hermes_agent_run" in sys.modules:
+            import importlib
+            run_mod = importlib.reload(sys.modules["hermes_agent_run"])
+        else:
+            import hermes_agent_run as run_mod
+
+        # Mock policy
+        mock_policy = MagicMock()
+        mock_policy.no_progress_max_attempts = 2
+        mock_policy.retry_backoff_seconds = 0.01
+        mock_policy.max_duration_seconds = 10
+        mock_policy.no_progress_timeout_seconds = 5
+        mock_policy.termination_grace_seconds = 1
+        mock_policy.max_prompt_bytes = 1000
+        mock_policy.max_estimated_input_tokens = 1000
+
+        with patch("hermes_agent_run.agent_run_policy.load_policy", return_value=mock_policy):
+            res1 = MockControlledProcessResult(
+                stdout="",
+                stderr="",
+                returncode=1,
+                completion_result=None,
+                completion_status="missing",
+                termination_reason="no_progress_timeout",
+                pid=128,
+                target_files_changed=False
+            )
+
+            with patch("hermes_agent_run.extract_provider_error") as mock_extract:
+                mock_extract.return_value = {
+                    "result": "failed",
+                    "error_code": "PROVIDER_AUTHENTICATION_FAILED",
+                    "error": "Authentication failed"
+                }
+
+                with patch("hermes_agent_run.agent_run_policy.execute_controlled_process", return_value=res1) as mock_execute:
+                    # Mock _find_and_parse_hermes_diagnostic to return a dummy dict so extract_provider_error is called
+                    with patch("hermes_agent_run._find_and_parse_hermes_diagnostic", return_value={"dummy": "value"}):
+                        test_args = ["hermes_agent_run.py", "--adu", "REQ-RETRY-001", "--agent", "developer"]
+                        with patch.object(sys, "argv", test_args):
+                            try:
+                                run_mod.main()
+                            except SystemExit:
+                                pass
+
+                    # Should NOT retry! So execute call count should be 1
+                    self.assertEqual(mock_execute.call_count, 1)
+
 if __name__ == "__main__":
     unittest.main()
