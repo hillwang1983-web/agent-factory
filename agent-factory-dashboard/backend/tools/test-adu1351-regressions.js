@@ -6,8 +6,10 @@ const tests = [
   ['python3', ['scripts/test_agent_run_policy.py']],
   ['python3', ['scripts/test_command_policy.py']],
   ['python3', ['scripts/test_code_review_fact_gate.py']],
+  ['python3', ['scripts/test_trusted_verification_policy.py']],
   ['python3', ['scripts/test_token_ledger.py']],
   ['node', ['agent-factory-dashboard/backend/tools/test-operator-overrides.js']],
+  ['node', ['agent-factory-dashboard/backend/tools/test-orchestration-operation.js']],
 ];
 
 for (const [command, args] of tests) {
