@@ -125,7 +125,7 @@ def compile_manual_assertion(review, acceptance_status):
         "observed_result": review.get("observed_result") or review.get("reviewer_notes") or review.get("summary") or "Manual review completed."
     }
 
-def compile_evidence(contract, acceptance_report, verification_results, runtime_records):
+def compile_evidence(contract, acceptance_report, verification_results, runtime_records, source_run_timestamp=None):
     acceptance_status = acceptance_report.get("acceptance_status")
 
     assertions = {}
@@ -210,6 +210,7 @@ def compile_evidence(contract, acceptance_report, verification_results, runtime_
         "title": contract.get("title", ""),
         "evidence_generated_at": acceptance_report.get("evidence_generated_at") or "",
         "acceptance_status": overall_status,
+        "source_run_timestamp": source_run_timestamp or acceptance_report.get("source_run_timestamp") or "",
         "assertions": assertions,
         "negative_assertions": negative_assertions,
         "summary": {
@@ -234,12 +235,12 @@ def validate_compiled_package(package, contract):
     if missing:
         raise ValueError("Missing required evidence fields: " + ", ".join(missing))
 
-def compile_evidence_from_files(contract_path, acceptance_path, verification_path, runtime_records):
+def compile_evidence_from_files(contract_path, acceptance_path, verification_path, runtime_records, source_run_timestamp=None):
     contract = load_json(Path(contract_path))
     acceptance = load_json(Path(acceptance_path))
     verification = load_json(Path(verification_path))
 
-    package = compile_evidence(contract, acceptance, verification, runtime_records)
+    package = compile_evidence(contract, acceptance, verification, runtime_records, source_run_timestamp)
     validate_compiled_package(package, contract)
     return package
 
@@ -250,6 +251,7 @@ def main():
     parser.add_argument("--registry-dir", required=True, help="Path to registry directory")
     parser.add_argument("--run-dir", required=True, help="Path to the current run directory (where verification-results.json sits)")
     parser.add_argument("--output", required=True, help="Output evidence JSON path")
+    parser.add_argument("--source-run-timestamp", default="", help="Timestamp of the source run")
     args = parser.parse_args()
 
     adu_id = args.adu
@@ -280,7 +282,8 @@ def main():
             contract_path,
             acceptance_path,
             verification_path,
-            runtime_records
+            runtime_records,
+            source_run_timestamp=args.source_run_timestamp
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

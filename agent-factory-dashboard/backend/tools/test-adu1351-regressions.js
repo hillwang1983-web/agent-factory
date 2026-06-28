@@ -8,6 +8,7 @@ const tests = [
   ['python3', ['scripts/test_code_review_fact_gate.py']],
   ['python3', ['scripts/test_trusted_verification_policy.py']],
   ['python3', ['scripts/test_token_ledger.py']],
+  ['python3', ['scripts/test_validate_rework_plan.py']],
   ['node', ['agent-factory-dashboard/backend/tools/test-operator-overrides.js']],
   ['node', ['agent-factory-dashboard/backend/tools/test-orchestration-operation.js']],
 ];

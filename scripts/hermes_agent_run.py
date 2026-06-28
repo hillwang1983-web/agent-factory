@@ -704,7 +704,8 @@ def evaluate_rework_plan_gate(adu, result, project_repo_path):
         sys.executable,
         str(ROOT / "scripts" / "validate_rework_plan.py"),
         "--plan-path", str(plan_path),
-        "--allowed-paths", ",".join(adu.get("allowed_write_paths") or [])
+        "--allowed-paths", ",".join(adu.get("allowed_write_paths") or []),
+        "--adu", adu.get("id")
     ]
     proc = subprocess.run(cmd, text=True, capture_output=True)
     if proc.returncode != 0:
@@ -738,30 +739,47 @@ def evaluate_rework_plan_gate(adu, result, project_repo_path):
 
 
 def find_latest_verification_results_path(adu_id, project_repo_path):
+    """Find the verification results file path for the ADU, prioritizing
+    acceptance-reviewer and falling back to buildfix-debugger.
+
+    Returns:
+        tuple (full_path, timestamp, source_agent) or (None, None, None)
+    """
     runs_file = REGISTRY / "runs.json"
     if not runs_file.is_file():
-        return None
+        return None, None, None
     try:
         with open(runs_file, "r", encoding="utf-8") as f:
             runs_data = json.load(f)
         runs = runs_data.get("runs", [])
-        # Sort explicitly by timestamp descending
         runs_sorted = sorted(
             [r for r in runs if r.get("timestamp")],
             key=lambda r: r["timestamp"],
             reverse=True
         )
+
+        # 1. Prioritize acceptance-reviewer
         for run in runs_sorted:
             if run.get("adu_id") == adu_id and run.get("result") == "success":
-                if run.get("agent") in ("acceptance-reviewer", "buildfix-debugger"):
+                if run.get("agent") == "acceptance-reviewer":
                     v_path = run.get("verification_results_path")
                     if v_path:
                         full_path = project_repo_path / v_path
                         if full_path.is_file():
-                            return full_path
+                            return full_path, run.get("timestamp"), "acceptance-reviewer"
+
+        # 2. Fall back to buildfix-debugger
+        for run in runs_sorted:
+            if run.get("adu_id") == adu_id and run.get("result") == "success":
+                if run.get("agent") == "buildfix-debugger":
+                    v_path = run.get("verification_results_path")
+                    if v_path:
+                        full_path = project_repo_path / v_path
+                        if full_path.is_file():
+                            return full_path, run.get("timestamp"), "buildfix-debugger"
     except Exception:
         pass
-    return None
+    return None, None, None
 
 
 RUNTIME_MANAGED_PREFIXES = (
@@ -1413,7 +1431,7 @@ def main():
 
             rework_gate = evaluate_rework_plan_gate(adu, result, project_repo_path)
             if rework_gate:
-                run_result = "human_gate"
+                run_result = rework_gate.get("result", "human_gate")
                 result.update(rework_gate)
 
         if run_result == "success" and args.agent in ("buildfix-debugger", "code-reviewer", "acceptance-reviewer"):
@@ -1456,7 +1474,7 @@ def main():
                 acceptance_path = project_repo_path / ".ai-agent" / "acceptance" / f"{adu['id']}-acceptance-review.json"
                 evidence_path = project_repo_path / ".ai-agent" / "evidence" / f"{adu['id']}.json"
 
-                v_path = find_latest_verification_results_path(adu["id"], project_repo_path)
+                v_path, source_timestamp, source_agent = find_latest_verification_results_path(adu["id"], project_repo_path)
                 if not v_path:
                     # Fallback to an empty verification-results.json structure
                     v_path = run_dir / "verification-results.json"
@@ -1470,7 +1488,8 @@ def main():
                         str(contract_path),
                         str(acceptance_path),
                         str(v_path),
-                        runtime_records
+                        runtime_records,
+                        source_run_timestamp=source_timestamp
                     )
                     evidence_path.parent.mkdir(parents=True, exist_ok=True)
                     temp_path = evidence_path.with_suffix(".json.tmp")
