@@ -238,9 +238,15 @@ elif scenario == "write_to_target_then_stall":
             max_estimated_input_tokens=1000
         )
 
+        # Define process-unique temporary filenames to prevent concurrent test collisions
+        temp_outcome_1 = f"temp_outcome_1_{os.getpid()}.json"
+        temp_outcome_2 = f"temp_outcome_2_{os.getpid()}.json"
+        temp_outcome_4 = f"temp_outcome_4_{os.getpid()}.json"
+        temp_completion = f"temp_completion_{os.getpid()}.json"
+
         # Test Case 1: Immediately successful
         print("Testing Case 1: Immediate success...")
-        target_file = workspace / "temp_outcome_1.json"
+        target_file = workspace / temp_outcome_1
         if target_file.exists(): target_file.unlink()
 
         cmd = [sys.executable, str(mock_hermes_path), "success", str(target_file)]
@@ -253,7 +259,7 @@ elif scenario == "write_to_target_then_stall":
         # For this test, it will trigger sys.exit(1) inside execute_controlled_process
         # because of timeout. We must run it in a subprocess to check its exit status and stdout outcome.
         print("Testing Case 2: Max duration timeout...")
-        target_file = workspace / "temp_outcome_2.json"
+        target_file = workspace / temp_outcome_2
         if target_file.exists(): target_file.unlink()
 
         # We spawn a subprocess running execute_controlled_process via a wrapper
@@ -282,6 +288,8 @@ sys.exit(res.returncode)
         # Test Case 3: Silent inference may exceed no-progress timeout, but
         # must be allowed to complete before the absolute duration limit.
         print("Testing Case 3: Silent inference completes...")
+        target_file = workspace / temp_outcome_4
+        if target_file.exists(): target_file.unlink()
         wrapper_code = f"""import sys
 import pathlib
 sys.path.append("{str(scripts_dir)}")
@@ -304,7 +312,7 @@ sys.exit(res.returncode)
         # Test Case 4: Once observable progress starts, a subsequent stall
         # must still be terminated by the no-progress watchdog.
         print("Testing Case 4: Progress followed by stall...")
-        target_file = workspace / "temp_outcome_4.json"
+        target_file = workspace / temp_outcome_4
         if target_file.exists(): target_file.unlink()
         wrapper_code = f"""import sys
 import pathlib
@@ -329,7 +337,7 @@ sys.exit(res.returncode)
         # Test Case 5: A target artifact alone is not proof that the Agent has
         # finished. The process may still be preparing its final JSON result.
         print("Testing Case 5: Artifact does not terminate a live Agent...")
-        target_file = workspace / "temp_outcome_4.json"
+        target_file = workspace / temp_outcome_4
         if target_file.exists(): target_file.unlink()
 
         wrapper_code = f"""import sys
@@ -357,8 +365,8 @@ sys.exit(res.returncode)
 
         # Test Case 6: Explicit completion protocol success then hang -> early exit on completion_signal
         print("Testing Case 6: Explicit completion success then hang...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -390,8 +398,8 @@ sys.exit(res.returncode)
 
         # Test Case 7: Invalid completion file -> fails/timeout, does not terminate early
         print("Testing Case 7: Invalid completion file...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -415,8 +423,8 @@ sys.exit(res.returncode)
 
         # Test Case 8: Completion missing fields -> fails/timeout, does not terminate early
         print("Testing Case 8: Completion missing fields...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -440,8 +448,8 @@ sys.exit(res.returncode)
 
         # Test Case 9: Explicit completion human_gate then hang -> early exit on completion_signal (human_gate status)
         print("Testing Case 9: Explicit completion human_gate then hang...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -474,8 +482,8 @@ sys.exit(res.returncode)
 
         # Test Case 10: Explicit completion envelope priority -> completion_status is valid, stdout business JSON ignored
         print("Testing Case 10: Explicit completion envelope priority...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -509,8 +517,8 @@ sys.exit(res.returncode)
 
         # Test Case 11: Completion status is authoritative when inner result.result is omitted
         print("Testing Case 11: Completion success without inner result field...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -534,8 +542,8 @@ sys.exit(res.returncode)
 
         # Test Case 12: Completion may omit audit arrays when no commands/risks were produced
         print("Testing Case 12: Completion success without audit arrays...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -559,8 +567,8 @@ sys.exit(res.returncode)
 
         # Test Case 13: target_files_changed check
         print("Testing Case 13: target_files_changed detection...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -580,8 +588,8 @@ sys.exit(res.returncode)
 
         # Test Case 14: target_files_changed is False when unchanged
         print("Testing Case 14: target_files_changed is False when unchanged...")
-        target_file = workspace / "temp_outcome_4.json"
-        completion_file = workspace / "temp_completion.json"
+        target_file = workspace / temp_outcome_4
+        completion_file = workspace / temp_completion
         if target_file.exists(): target_file.unlink()
         if completion_file.exists(): completion_file.unlink()
 
@@ -602,11 +610,11 @@ sys.exit(res.returncode)
         print("✅ All Agent Run Policy Watchdog Tests Passed!")
     finally:
         for temp_path in (
-            workspace / "temp_outcome_1.json",
-            workspace / "temp_outcome_2.json",
-            workspace / "temp_outcome_4.json",
+            workspace / temp_outcome_1,
+            workspace / temp_outcome_2,
+            workspace / temp_outcome_4,
             workspace / f"temp_wrapper_{os.getpid()}.py",
-            workspace / "temp_completion.json",
+            workspace / temp_completion,
         ):
             if temp_path.exists():
                 temp_path.unlink()
