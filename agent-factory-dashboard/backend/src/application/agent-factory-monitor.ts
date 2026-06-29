@@ -289,9 +289,12 @@ export class AgentFactoryMonitorUseCase {
       let convergedLatestRunTimestamp = adu.latest_run_timestamp;
       let convergedLastResult = adu.last_result;
       if (latestRun) {
-        convergedLatestAgent = latestRun.agent;
-        convergedLatestRunTimestamp = latestRun.timestamp;
-        convergedLastResult = latestRun.result;
+        const isRunStale = adu.latest_run_timestamp && latestRun.timestamp.localeCompare(adu.latest_run_timestamp) < 0;
+        if (!isRunStale) {
+          convergedLatestAgent = latestRun.agent;
+          convergedLatestRunTimestamp = latestRun.timestamp;
+          convergedLastResult = latestRun.result;
+        }
       }
 
       aduViews.push({

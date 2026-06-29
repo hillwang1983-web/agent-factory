@@ -332,3 +332,77 @@ export class OrchestrationOperationStore {
     } catch (_) {}
   }
 }
+
+export function handleOrchestratorStdoutLine(
+  opId: string,
+  line: string,
+  store: OrchestrationOperationStore
+): void {
+  try {
+    const parsed = JSON.parse(line);
+    store.addEvent(opId, {
+      type: parsed.event || parsed.type || 'orchestrator_event',
+      payload: parsed,
+      stream: 'stdout',
+      message: parsed.message || (parsed.payload && parsed.payload.message) || '',
+      severity: parsed.severity || 'info'
+    });
+
+    const updates = mapOrchestratorEvent(parsed);
+    if (updates && Object.keys(updates).length > 0) {
+      store.updateOperation(opId, updates);
+    }
+  } catch (e) {
+    store.addEvent(opId, {
+      type: 'stdout_raw',
+      payload: { line },
+      stream: 'stdout',
+    });
+  }
+}
+
+export function handleOrchestratorStderrLine(
+  opId: string,
+  line: string,
+  store: OrchestrationOperationStore
+): void {
+  store.addEvent(opId, {
+    type: 'stderr_line',
+    payload: { line },
+    stream: 'stderr',
+  });
+}
+
+export async function handleOrchestratorProcessClose(
+  opId: string,
+  code: number | null,
+  aduId: string,
+  repo: { getAduById(id: string): Promise<{ state: string } | null> },
+  store: OrchestrationOperationStore
+): Promise<void> {
+  let finalState: string | undefined;
+  try {
+    const updatedAdu = await repo.getAduById(aduId);
+    if (updatedAdu) {
+      finalState = updatedAdu.state;
+    }
+  } catch (_) {}
+
+  let status = 'completed';
+  let result = 'success';
+
+  if (code === 20 || finalState === 'human_gate') {
+    status = 'waiting_human';
+    result = 'human_gate';
+  } else if (code !== 0) {
+    status = 'failed';
+    result = 'failed';
+  }
+
+  store.updateOperation(opId, {
+    status,
+    result,
+    exitCode: code ?? -1,
+    finalState,
+  });
+}

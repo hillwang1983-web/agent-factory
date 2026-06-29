@@ -12,7 +12,13 @@ import { AgentRunPolicyLoader } from '../application/runtime/agent-run-policy';
 import { loadAppConfig } from '../config';
 import { broadcastOrchestratorEvent, activeOrchestrators } from '../websocket/broadcaster';
 import type { AgentFactoryArtifactEdit, AgentFactoryReview } from '../domain/agent-factory';
-import { OrchestrationOperationStore, mapOrchestratorEvent } from '../application/orchestration-operation-store';
+import {
+  OrchestrationOperationStore,
+  mapOrchestratorEvent,
+  handleOrchestratorStdoutLine,
+  handleOrchestratorStderrLine,
+  handleOrchestratorProcessClose
+} from '../application/orchestration-operation-store';
 import { EpicMonitor } from '../application/epic-monitor';
 import { RegistryLock } from '../infrastructure/registry-lock';
 import { OperatorOverrideService } from '../application/operator-override-service';
@@ -1291,15 +1297,6 @@ export function createAgentFactoryRouter(
             const parsed = JSON.parse(line);
             broadcastOrchestratorEvent(parsed);
 
-            // Map parsed fields into the new Event schema
-            OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
-              type: parsed.event || parsed.type || 'orchestrator_event',
-              payload: parsed,
-              stream: 'stdout',
-              message: parsed.message || (parsed.payload && parsed.payload.message) || '',
-              severity: parsed.severity || 'info'
-            });
-
             if (parsed.affected_assertions && Array.isArray(parsed.affected_assertions)) {
               affectedAssertions = parsed.affected_assertions;
             } else if (parsed.payload && parsed.payload.affected_assertions && Array.isArray(parsed.payload.affected_assertions)) {
@@ -1310,20 +1307,9 @@ export function createAgentFactoryRouter(
                 affectedAssertions = match[1].split(',').map((s: string) => s.trim()).filter(Boolean);
               }
             }
+          } catch (_) {}
 
-            // Update current status / current agent of operation
-            const updates = mapOrchestratorEvent(parsed);
-            if (Object.keys(updates).length > 0) {
-              OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, updates);
-            }
-          } catch (e) {
-            logger.debug({ line }, 'Failed to parse line from orchestrator stdout');
-            OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
-              type: 'stdout_raw',
-              payload: { line },
-              stream: 'stdout',
-            });
-          }
+          handleOrchestratorStdoutLine(op.operation_id, line, OrchestrationOperationStore.getInstance());
         }
         lineEnd = stdoutData.indexOf('\n');
       }
@@ -1340,11 +1326,7 @@ export function createAgentFactoryRouter(
         const line = stderrBuf.substring(0, lineEnd).trim();
         stderrBuf = stderrBuf.substring(lineEnd + 1);
         if (line) {
-          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
-            type: 'stderr_line',
-            payload: { line },
-            stream: 'stderr',
-          });
+          handleOrchestratorStderrLine(op.operation_id, line, OrchestrationOperationStore.getInstance());
         }
         lineEnd = stderrBuf.indexOf('\n');
       }
@@ -1359,58 +1341,15 @@ export function createAgentFactoryRouter(
         try {
           const parsed = JSON.parse(stdoutData.trim());
           broadcastOrchestratorEvent(parsed);
-          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
-            type: parsed.event || parsed.type || 'orchestrator_event',
-            payload: parsed,
-            stream: 'stdout',
-            message: parsed.message || (parsed.payload && parsed.payload.message) || '',
-            severity: parsed.severity || 'info'
-          });
-        } catch (_) {
-          OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
-            type: 'stdout_raw',
-            payload: { line: stdoutData.trim() },
-            stream: 'stdout',
-          });
-        }
+        } catch (_) {}
+        handleOrchestratorStdoutLine(op.operation_id, stdoutData.trim(), OrchestrationOperationStore.getInstance());
       }
       if (stderrBuf.trim()) {
-        OrchestrationOperationStore.getInstance().addEvent(op.operation_id, {
-          type: 'stderr_line',
-          payload: { line: stderrBuf.trim() },
-          stream: 'stderr',
-        });
+        handleOrchestratorStderrLine(op.operation_id, stderrBuf.trim(), OrchestrationOperationStore.getInstance());
       }
 
       broadcastOrchestratorEvent({ adu: aduId, action: 'closed', code });
-
-      let finalState: string | undefined;
-      let gateType: string | undefined;
-      try {
-        const updatedAdu = await agentFactoryRepository.getAduById(aduId);
-        if (updatedAdu) {
-          finalState = updatedAdu.state;
-          gateType = updatedAdu.gate_type;
-        }
-      } catch (_) {}
-
-      let status: any = 'completed';
-      let result: any = 'success';
-
-      if (code === 20 || finalState === 'human_gate') {
-        status = 'waiting_human';
-        result = 'human_gate';
-      } else if (code !== 0) {
-        status = 'failed';
-        result = 'failed';
-      }
-
-      OrchestrationOperationStore.getInstance().updateOperation(op.operation_id, {
-        status,
-        result,
-        exitCode: code,
-        finalState,
-      });
+      await handleOrchestratorProcessClose(op.operation_id, code, aduId, agentFactoryRepository, OrchestrationOperationStore.getInstance());
     });
 
     return op;
