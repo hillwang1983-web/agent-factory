@@ -217,6 +217,20 @@ async function main() {
     const updatedOp = store.getOperation(op.id);
     if (updatedOp.status !== 'completed') throw new Error('Expected operation status to be completed');
     if (updatedOp.finalState !== 'evidenced') throw new Error('Expected operation finalState to be evidenced');
+
+    // Wait a short duration for the async write back to disk to complete
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Verify adu.json on disk contains the converged values
+    const updatedDiskAdu = JSON.parse(fs.readFileSync(path.join(registryDir, 'adu.json'), 'utf8'));
+    const diskAdu = updatedDiskAdu.adus.find(a => a.id === 'ADU-CONVERGE');
+    if (!diskAdu) throw new Error('Expected to find ADU-CONVERGE in adu.json on disk');
+    if (diskAdu.latest_agent !== 'evidence') {
+      throw new Error(`Expected disk ADU latest_agent to be evidence, got: ${diskAdu.latest_agent}`);
+    }
+    if (diskAdu.latest_run_timestamp !== '20260621-120000') {
+      throw new Error(`Expected disk ADU latest_run_timestamp to be 20260621-120000, got: ${diskAdu.latest_run_timestamp}`);
+    }
   });
 
   try {

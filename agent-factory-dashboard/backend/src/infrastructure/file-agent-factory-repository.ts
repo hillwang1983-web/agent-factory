@@ -292,6 +292,35 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
 
   async readTextArtifact(relativePath: string, maxBytes: number, workspaceRootOverride?: string): Promise<{ path: string; content: string; truncated: boolean; availability: 'available' | 'empty' | 'not_recorded' }> {
     const fullPath = this.resolveSafePath(relativePath, workspaceRootOverride);
+    const root = workspaceRootOverride ? path.resolve(workspaceRootOverride) : this.workspaceRoot;
+    const allowedDirs = [
+      path.join(root, '.agent-factory'),
+      path.join(root, '.ai-agent', 'context-packs'),
+      path.join(root, '.ai-agent', 'contracts'),
+      path.join(root, '.ai-agent', 'evidence'),
+      path.join(root, '.ai-agent', 'runs'),
+      path.join(root, 'tests', 'ai-agent-mvp'),
+      path.join(root, '.ai-agent', 'analysis'),
+      path.join(root, '.ai-agent', 'designs'),
+      path.join(root, '.ai-agent', 'reviews'),
+      path.join(root, '.ai-agent', 'acceptance'),
+      path.join(root, '.ai-agent', 'intake'),
+      path.join(root, '.ai-agent', 'epics')
+    ];
+
+    const resolvedAllowedDirs = allowedDirs.map((dir) => path.resolve(dir));
+
+    // First validate the path *before* resolving realpath to prevent existence side-channels
+    const isPathWithinAllowedDirs = (p: string) => {
+      return resolvedAllowedDirs.some((resolvedDir) => {
+        return p === resolvedDir || p.startsWith(resolvedDir + path.sep);
+      });
+    };
+
+    const initialResolvedPath = path.resolve(fullPath);
+    if (!isPathWithinAllowedDirs(initialResolvedPath)) {
+      throw new Error(`Access denied: path is not in the allowed list of directories: ${relativePath}`);
+    }
 
     // Resolve the real absolute canonical path of the target file to handle and prevent symlink bypasses
     let realPath: string;
@@ -311,39 +340,9 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
       throw err;
     }
 
-    const root = workspaceRootOverride ? path.resolve(workspaceRootOverride) : this.workspaceRoot;
-    const allowedDirs = [
-      path.join(root, '.agent-factory'),
-      path.join(root, '.ai-agent', 'context-packs'),
-      path.join(root, '.ai-agent', 'contracts'),
-      path.join(root, '.ai-agent', 'evidence'),
-      path.join(root, '.ai-agent', 'runs'),
-      path.join(root, 'tests', 'ai-agent-mvp'),
-      path.join(root, '.ai-agent', 'analysis'),
-      path.join(root, '.ai-agent', 'designs'),
-      path.join(root, '.ai-agent', 'reviews'),
-      path.join(root, '.ai-agent', 'acceptance'),
-      path.join(root, '.ai-agent', 'intake'),
-      path.join(root, '.ai-agent', 'epics')
-    ];
-
-    // Resolve allowedDirs to real paths to be 100% robust
-    const resolvedAllowedDirs = await Promise.all(
-      allowedDirs.map(async (dir) => {
-        try {
-          return await fs.realpath(dir);
-        } catch {
-          return path.resolve(dir);
-        }
-      })
-    );
-
-    const isAllowed = resolvedAllowedDirs.some((resolvedDir) => {
-      return realPath === resolvedDir || realPath.startsWith(resolvedDir + path.sep);
-    });
-
-    if (!isAllowed) {
-      throw new Error(`Access denied: path is not in the allowed list of directories: ${relativePath}`);
+    // Double check realPath (if it exists) to prevent symlink bypass
+    if (!isPathWithinAllowedDirs(realPath)) {
+      throw new Error(`Access denied: resolved symlink target is not in the allowed list of directories: ${relativePath}`);
     }
 
     const limit = Math.min(maxBytes || this.maxBytes, 200000);

@@ -213,47 +213,6 @@ export class FileProjectRepository implements ProjectRepository {
     return project || null;
   }
 
-  private async backupRegistryFile(filePath: string): Promise<void> {
-    try {
-      const stat = await fs.stat(filePath);
-      if (!stat.isFile() || stat.size === 0) {
-        return;
-      }
-
-      const dirName = path.dirname(filePath);
-      const baseName = path.basename(filePath);
-      const backupDir = path.join(dirName, 'backups');
-      await fs.mkdir(backupDir, { recursive: true });
-
-      const now = new Date();
-      const timestamp = now.getFullYear().toString() +
-        (now.getMonth() + 1).toString().padStart(2, '0') +
-        now.getDate().toString().padStart(2, '0') + '_' +
-        now.getHours().toString().padStart(2, '0') +
-        now.getMinutes().toString().padStart(2, '0') +
-        now.getSeconds().toString().padStart(2, '0');
-
-      const backupPath = path.join(backupDir, `${baseName}.${timestamp}.bak`);
-      await fs.copyFile(filePath, backupPath);
-
-      // Keep only last 10 backups to prevent disk bloat
-      const files = await fs.readdir(backupDir);
-      const backups = files
-        .filter(f => f.startsWith(baseName) && f.endsWith('.bak'))
-        .map(f => path.join(backupDir, f));
-
-      if (backups.length > 10) {
-        backups.sort();
-        const toDelete = backups.slice(0, backups.length - 10);
-        for (const fileToDelete of toDelete) {
-          await fs.unlink(fileToDelete);
-        }
-      }
-    } catch (err) {
-      this.logger.warn({ err, filePath }, 'Failed to backup registry file');
-    }
-  }
-
   async createProject(input: RegisterProjectInput): Promise<AgentFactoryProject> {
     if (!input.name || !input.repoPath) {
       throw new Error('Project name and repoPath are required');
@@ -359,7 +318,7 @@ export class FileProjectRepository implements ProjectRepository {
       projects,
     };
     const tmpPath = this.registryPath + '.tmp';
-    await this.backupRegistryFile(this.registryPath);
+
     await fs.writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     await fs.rename(tmpPath, this.registryPath);
 
@@ -382,7 +341,7 @@ export class FileProjectRepository implements ProjectRepository {
       projects,
     };
     const tmpPath = this.registryPath + '.tmp';
-    await this.backupRegistryFile(this.registryPath);
+
     await fs.writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     await fs.rename(tmpPath, this.registryPath);
     this.logger.info({ projectId: project.project_id, status: project.status }, 'Project updated');

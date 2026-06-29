@@ -141,7 +141,21 @@ export class AgentFactoryMonitorUseCase {
       const isTerminal = adu.state === 'evidenced' || adu.state === 'mvp_ready';
 
       // Workflow Timeline
-      const workflow: AgentFactoryWorkflowStep[] = WORKFLOW_STEPS_CONFIG.map((step) => {
+      const hasReworkHistory = sortedAduRuns.some(
+        (r) => r.agent === 'rework-planner' || r.agent === 'rework-planner-debugger' || r.run_dir?.includes('rework')
+      ) ||
+        ['code_rework', 'build_rework', 'acceptance_rework', 'rework_planned'].includes(adu.state) ||
+        adu.pre_gate_state === 'rework_planned' ||
+        adu.gate_type === 'rework_requires_operator_cleanup';
+
+      const activeSteps = WORKFLOW_STEPS_CONFIG.filter((step) => {
+        if (step.state === 'rework_planned') {
+          return hasReworkHistory;
+        }
+        return true;
+      });
+
+      const workflow: AgentFactoryWorkflowStep[] = activeSteps.map((step) => {
         const stepOrderIndex = STATE_ORDER.indexOf(step.state);
         const orderState = adu.state === 'code_rework' || adu.state === 'acceptance_rework'
           ? 'test_red'
@@ -274,16 +288,48 @@ export class AgentFactoryMonitorUseCase {
       let convergedLatestAgent = adu.latest_agent;
       let convergedLatestRunTimestamp = adu.latest_run_timestamp;
       let convergedLastResult = adu.last_result;
-      if (latestRun) {
-        if (convergedLatestAgent !== latestRun.agent) {
-          convergedLatestAgent = latestRun.agent;
-        }
-        if (convergedLatestRunTimestamp !== latestRun.timestamp) {
-          convergedLatestRunTimestamp = latestRun.timestamp;
-        }
-        if (convergedLastResult !== latestRun.result) {
-          convergedLastResult = latestRun.result;
-        }
+      
+      const needsSync = latestRun && (
+        adu.latest_agent !== latestRun.agent ||
+        adu.latest_run_timestamp !== latestRun.timestamp ||
+        adu.last_result !== latestRun.result
+      );
+
+      if (needsSync && latestRun) {
+        convergedLatestAgent = latestRun.agent;
+        convergedLatestRunTimestamp = latestRun.timestamp;
+        convergedLastResult = latestRun.result;
+
+        const aduId = adu.id;
+        const targetAgent = latestRun.agent;
+        const targetTimestamp = latestRun.timestamp;
+        const targetResult = latestRun.result;
+
+        // Perform the write back to the registry asynchronously to avoid blocking the read response
+        void this.repo.updateAdus((adusList) => {
+          const target = adusList.find(a => a.id === aduId);
+          if (target) {
+            let innerChanged = false;
+            if (target.latest_agent !== targetAgent) {
+              target.latest_agent = targetAgent;
+              innerChanged = true;
+            }
+            if (target.latest_run_timestamp !== targetTimestamp) {
+              target.latest_run_timestamp = targetTimestamp;
+              innerChanged = true;
+            }
+            if (target.last_result !== targetResult) {
+              target.last_result = targetResult;
+              innerChanged = true;
+            }
+            if (innerChanged) {
+              target.updated_at = new Date().toISOString();
+            }
+          }
+          return adusList;
+        }).catch((err) => {
+          console.error(`Failed to write back converged ADU metadata to registry for ${aduId}:`, err);
+        });
       }
 
       aduViews.push({
