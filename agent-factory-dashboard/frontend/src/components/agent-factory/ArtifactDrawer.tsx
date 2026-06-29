@@ -3,7 +3,7 @@ import { X, FileText, AlertTriangle, Copy, Check } from 'lucide-react';
 import { useState } from 'react';
 
 export function ArtifactDrawer(): JSX.Element | null {
-  const { selectedArtifactPath, artifactContent, artifactTruncated, closeArtifact } = useAgentFactoryStore();
+  const { selectedArtifactPath, artifactContent, artifactTruncated, artifactAvailability, openArtifact, closeArtifact } = useAgentFactoryStore();
   const [copied, setCopied] = useState(false);
 
   if (!selectedArtifactPath) return null;
@@ -21,9 +21,9 @@ export function ArtifactDrawer(): JSX.Element | null {
   return (
     <div className="fixed inset-0 z-50 overflow-hidden flex justify-end">
       {/* Backdrop */}
-      <div 
+      <div
         onClick={closeArtifact}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" 
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
       />
 
       {/* Drawer */}
@@ -39,7 +39,7 @@ export function ArtifactDrawer(): JSX.Element | null {
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {artifactContent && (
               <button
@@ -73,6 +73,33 @@ export function ArtifactDrawer(): JSX.Element | null {
           {artifactContent === 'Loading...' ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-xs text-nms-text-dim animate-pulse">Loading artifact content...</div>
+            </div>
+          ) : artifactAvailability === 'error' ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <AlertTriangle className="w-8 h-8 text-rose-500" />
+              <div className="max-w-sm text-center text-xs text-nms-text-dim">
+                Error loading artifact content.
+              </div>
+              <button
+                onClick={() => selectedArtifactPath && openArtifact(selectedArtifactPath)}
+                className="nms-btn-primary text-xs px-3 py-1.5"
+              >
+                Retry
+              </button>
+            </div>
+          ) : artifactAvailability === 'not_recorded' ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2">
+              <FileText className="w-8 h-8 text-slate-500" />
+              <div className="max-w-sm text-center text-xs text-nms-text-dim">
+                该历史运行未持久化日志
+              </div>
+            </div>
+          ) : artifactAvailability === 'empty' ? (
+            <div className="flex flex-col items-center justify-center h-full gap-2">
+              <FileText className="w-8 h-8 text-slate-500" />
+              <div className="max-w-sm text-center text-xs text-nms-text-dim">
+                本次运行未产生 stderr/stdout
+              </div>
             </div>
           ) : (
             <pre className="text-xs font-mono p-4 bg-nms-surface-2 border border-nms-surface-3 rounded-lg overflow-x-auto text-nms-text leading-relaxed whitespace-pre-wrap max-h-[85vh]">

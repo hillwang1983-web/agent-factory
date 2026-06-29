@@ -734,7 +734,7 @@ if __name__ == "__main__":
     const express = require('express');
     const app = express();
     const { AgentFactoryError } = require('../dist/application/intake/intake-error');
-    
+
     app.get('/test-error', (req, res, next) => {
       next(new AgentFactoryError('Intake soft timeout', 'INTAKE_SOFT_TIMEOUT', 202, { retryable: true }));
     });

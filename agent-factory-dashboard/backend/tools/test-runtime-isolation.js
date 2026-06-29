@@ -26,11 +26,12 @@ async function testReworkAgentMapping() {
   assert('code_rework maps to rework-planner', NEXT_AGENT_BY_STATE.code_rework === 'rework-planner');
   assert('build_rework maps to rework-planner', NEXT_AGENT_BY_STATE.build_rework === 'rework-planner');
   assert('acceptance_rework maps to rework-planner', NEXT_AGENT_BY_STATE.acceptance_rework === 'rework-planner');
+  assert('rework_planned maps to developer', NEXT_AGENT_BY_STATE.rework_planned === 'developer');
 }
 
 async function testControllerIsolation() {
   console.log('\n--- Testing Controller Current ADU Data Isolation ---');
-  
+
   // We mock the repository and monitor to provide global data
   const mockRepo = {
     readRuns: async () => [
@@ -75,15 +76,15 @@ async function testControllerIsolation() {
     null, // aduIntake
     null  // epicFactory
   );
-  
+
   const route = router.stack.find(r => r.route && r.route.path === '/agents/runtime-status');
   if (!route) {
     assert('Found runtime-status route', false);
     return;
   }
-  
+
   const handler = route.route.stack[0].handle;
-  
+
   let globalResBody = null;
   const reqGlobal = { query: { scope: 'global' }, params: {} };
   await new Promise((resolve) => {

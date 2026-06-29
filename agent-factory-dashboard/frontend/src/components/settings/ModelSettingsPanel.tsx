@@ -199,9 +199,9 @@ export function ModelSettingsPanel(): JSX.Element {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <SettingsSectionHeader 
-          title="Agent 模型分配" 
-          description="为不同开发阶段的 AI Agent 分配最合适的大语言模型。Premium 档位更智能但成本更高，Balanced 与 Cost 档位速度较快且成本低廉。" 
+        <SettingsSectionHeader
+          title="Agent 模型分配"
+          description="为不同开发阶段的 AI Agent 分配最合适的大语言模型。Premium 档位更智能但成本更高，Balanced 与 Cost 档位速度较快且成本低廉。"
         />
         {!controlEnabled && (
           <span className="flex items-center gap-1.5 text-xs text-nms-amber bg-nms-amber/10 border border-nms-amber/20 px-3 py-1 rounded-full font-semibold">

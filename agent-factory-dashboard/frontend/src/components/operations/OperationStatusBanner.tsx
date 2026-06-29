@@ -63,7 +63,7 @@ export function OperationStatusBanner({ targetType, targetId, onNavigateToGates 
               <AlertCircle className="h-5 w-5" />
             </div>
           )}
-          
+
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-400">操作编号:</span>

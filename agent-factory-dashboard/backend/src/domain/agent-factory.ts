@@ -55,6 +55,9 @@ export interface AgentFactoryAdu {
   paused?: boolean;
   pre_gate_state?: string;
   language?: string;
+  latest_agent?: string;
+  latest_run_timestamp?: string;
+  last_result?: string;
   clarifications?: AgentFactoryDraftQuestionAnswer[];
   source_summary?: string;
   gate_type?: string;

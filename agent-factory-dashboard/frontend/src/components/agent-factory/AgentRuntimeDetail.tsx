@@ -22,7 +22,7 @@ export function AgentRuntimeDetail({ agent }: AgentRuntimeDetailProps): JSX.Elem
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      
+
       {/* Column 1: Active & Queued Tasks */}
       <div className="space-y-4">
         <div>
@@ -34,7 +34,7 @@ export function AgentRuntimeDetail({ agent }: AgentRuntimeDetailProps): JSX.Elem
               {agent.current_operations.map(op => (
                 <li key={op.operation_id} className="bg-nms-surface-2/30 rounded p-2 text-xs border border-nms-surface-3">
                   <div className="flex justify-between items-start">
-                    <button 
+                    <button
                       className="font-mono text-nms-accent hover:underline text-left"
                       onClick={(e) => handleTaskClick(e, op.target_type, op.target_id)}
                     >
@@ -62,7 +62,7 @@ export function AgentRuntimeDetail({ agent }: AgentRuntimeDetailProps): JSX.Elem
               {agent.queued_targets.map(qt => (
                 <li key={qt.target_id} className="bg-nms-surface-2/30 rounded p-2 text-xs border border-nms-surface-3">
                    <div className="flex justify-between items-start">
-                    <button 
+                    <button
                       className="font-mono text-blue-400 hover:underline text-left truncate flex-1 pr-2"
                       onClick={(e) => handleTaskClick(e, qt.target_type, qt.target_id)}
                     >
@@ -90,7 +90,7 @@ export function AgentRuntimeDetail({ agent }: AgentRuntimeDetailProps): JSX.Elem
               <li key={item.id} className="bg-amber-500/5 rounded p-2 text-xs border border-amber-500/20">
                 <div className="flex items-start justify-between gap-2">
                   <span className="font-semibold text-amber-400">{item.kind.replace('_', ' ')}</span>
-                  <button 
+                  <button
                     className="font-mono text-[10px] text-nms-accent hover:underline shrink-0"
                     onClick={(e) => handleTaskClick(e, item.target_type, item.target_id)}
                   >

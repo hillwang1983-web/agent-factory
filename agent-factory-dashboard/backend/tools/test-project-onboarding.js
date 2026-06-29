@@ -53,11 +53,11 @@ const TEST_BIN_DIR = path.resolve(__dirname, '../../.ai-agent-test/bin');
 function setupTestDir() {
   const registryParent = path.dirname(TEST_REGISTRY_PATH);
   const testRoot = path.dirname(registryParent); // .ai-agent-test directory
-  
+
   if (fs.existsSync(testRoot)) {
     fs.rmSync(testRoot, { recursive: true, force: true });
   }
-  
+
   fs.mkdirSync(registryParent, { recursive: true });
   fs.mkdirSync(TEST_BIN_DIR, { recursive: true });
 
@@ -95,7 +95,7 @@ function setupTestDir() {
   ].join('\n');
 
   fs.writeFileSync(path.join(TEST_BIN_DIR, 'hermes'), mockHermesScriptContent, { mode: 0o755 });
-  
+
   // Copy host agents.json to test registry to support sandbox running
   const srcAgents = path.join(TEST_WORKSPACE_ROOT, '.ai-agent/registry/agents.json');
   const destAgents = path.join(registryParent, 'agents.json');
@@ -151,7 +151,7 @@ async function runTests() {
     console.log('--- 场景 2: 合格注册及画像分析测试 ---');
     const mockProjDir = `/tmp/mock-git-project-${Date.now()}`;
     fs.mkdirSync(mockProjDir, { recursive: true });
-    
+
     // 初始化 git 仓库以通过合法 Git 检测
     execSync('git init', { cwd: mockProjDir, stdio: 'ignore' });
     // 写入模拟 package.json 以及一个源码文件
@@ -190,21 +190,21 @@ async function runTests() {
     }
 
     assert.strictEqual(profiledProj.status, 'profiled', '画像流程未在预期时间内成功完成');
-    
+
     // 校验生成的画像报告及 Markdown 知识包
     const profileJsonPath = path.join(mockProjDir, '.agent-factory', 'project-profile.json');
     assert.ok(fs.existsSync(profileJsonPath), '未在目标项目下生成 project-profile.json');
-    
+
     const profile = await onboarding.getProjectProfile(project.project_id);
     assert.strictEqual(profile.project_type, 'nodejs');
     assert.ok(profile.detected_stack.some(s =>
       (typeof s === 'string' ? s : (s.language || '')).toLowerCase() === 'javascript'
     ));
-    
+
     const knowledgeList = await onboarding.getProjectKnowledgeList(project.project_id);
     assert.ok(knowledgeList.includes('project-summary.md'));
     assert.ok(knowledgeList.includes('test-strategy.md'));
-    
+
     const docContent = await onboarding.getProjectKnowledgeDoc(project.project_id, 'project-summary.md');
     assert.ok(docContent.length > 0);
     console.log('✅ 场景 2 通过: 项目扫描与画像分析顺利跑通，产物校验完整\n');
@@ -214,7 +214,7 @@ async function runTests() {
     // 场景 3: 路径防越权拦截测试（反例）
     // ==========================================
     console.log('--- 场景 3: 路径防越权拦截测试 ---');
-    
+
     // 1. 注册不存在的非 Git 目录
     try {
       await onboarding.registerProject({
@@ -310,20 +310,20 @@ async function runTests() {
         return false; // Git dirty
       }
     };
-    
+
     // 此时 mockProj 应该是 clean 的
     assert.ok(mockGitDirtyCheck(mockProjDir), 'Mock 仓库应该在初始时是 clean 的');
-    
+
     // 模拟恶意 Agent 篡改了业务文件
     fs.writeFileSync(path.join(mockProjDir, 'index.js'), 'console.log("malicious code modification");', 'utf-8');
-    
+
     // 再次判定，发现 Git dirty 异常，应拦截
     assert.strictEqual(mockGitDirtyCheck(mockProjDir), false, '无法检测到非预期源码篡改');
     console.log('✅ 场景 5 通过: 物理状态防源码篡改越权拦截测试成功\n');
 
     // 清理临时 Git 项目
     fs.rmSync(mockProjDir, { recursive: true, force: true });
-    
+
     console.log('🎉 恭喜！通用项目 Onboarding 自动化集成测试全部 PASS！');
 
   } catch (err) {

@@ -60,7 +60,7 @@ export function TokenGovernancePanel() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-4">
             <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">全局默认预算限制 (Global Defaults)</h4>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -76,7 +76,7 @@ export function TokenGovernancePanel() {
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
                   输入拦截值 (Hard Input Tokens)
@@ -106,7 +106,7 @@ export function TokenGovernancePanel() {
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
                   输出拦截值 (Hard Output Tokens)
@@ -126,7 +126,7 @@ export function TokenGovernancePanel() {
 
           <div className="space-y-4">
             <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">裁剪策略配置 (Context Policy)</h4>
-            
+
             <div className="space-y-3">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -172,7 +172,7 @@ export function TokenGovernancePanel() {
             <Sparkles className="h-4 w-4 text-indigo-400" />
             超限时，将会在 pipeline 中触发 `token_budget_approval` 审核门。
           </div>
-          
+
           <button
             type="submit"
             disabled={saving}

@@ -8,6 +8,7 @@ import {
 export interface AppConfig {
   port: number;
   wsPort: number;
+  host: string;
   workspaceRoot: string;
   hermesConfigPath: string;
   artifactMaxBytes: number;
@@ -34,6 +35,7 @@ export function loadAppConfig(): AppConfig {
   return {
     port: parseInt(process.env.PORT || '3011', 10),
     wsPort: parseInt(process.env.WS_PORT || '3012', 10),
+    host: process.env.HOST || '0.0.0.0',
     workspaceRoot,
     hermesConfigPath: resolveHermesConfigPath(process.env.HERMES_CONFIG_PATH),
     artifactMaxBytes: parseInt(process.env.AGENT_FACTORY_ARTIFACT_MAX_BYTES || '100000', 10),

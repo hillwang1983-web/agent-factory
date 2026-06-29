@@ -118,7 +118,7 @@ function runTests() {
     agent: baseAgent, runs: [], aduViews: [], operations: [], humanGates: [], now, staleAfterSeconds: 60
   });
   eq(view11.success_rate, null, 'Scenario 11: success rate is null');
-  
+
   // Terminal calculation check
   let view12 = deriveAgentRuntimeView({
     agent: baseAgent, aduViews: [], operations: [], humanGates: [], now, staleAfterSeconds: 60,

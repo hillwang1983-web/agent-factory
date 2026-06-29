@@ -161,7 +161,7 @@ export const ProjectProfilePanel: React.FC<ProjectProfilePanelProps> = ({ profil
           <Code2 className="h-4 w-4 text-indigo-400" />
           技术栈语言分布
         </h4>
-        
+
         {/* Combined stacked progress bar */}
         <div className="h-4 w-full bg-slate-950 rounded-full overflow-hidden flex mb-4">
           {stackBreakdown.map((item: any, idx: number) => {

@@ -21,11 +21,11 @@ export const QuestionAnswerPanel: React.FC<Props> = ({ answers, onChange }) => {
       {answers.map((ans, idx) => (
         <div key={idx} className="p-4 border border-slate-700 rounded-lg bg-slate-800/50 space-y-3">
           <p className="text-sm font-medium text-indigo-300">问题 {idx + 1}: {ans.question}</p>
-          
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="text-xs text-slate-400">处理方式</label>
-              <select 
+              <select
                 className="w-full p-1.5 text-sm bg-slate-900 border border-slate-700 rounded text-slate-200"
                 value={ans.status}
                 onChange={e => handleUpdate(idx, { status: e.target.value as any })}
@@ -38,7 +38,7 @@ export const QuestionAnswerPanel: React.FC<Props> = ({ answers, onChange }) => {
             </div>
             <div className="space-y-1">
               <label className="text-xs text-slate-400">影响范围</label>
-              <select 
+              <select
                 className="w-full p-1.5 text-sm bg-slate-900 border border-slate-700 rounded text-slate-200"
                 value={ans.impact}
                 onChange={e => handleUpdate(idx, { impact: e.target.value as any })}
@@ -55,7 +55,7 @@ export const QuestionAnswerPanel: React.FC<Props> = ({ answers, onChange }) => {
 
           <div className="space-y-1">
             <label className="text-xs text-slate-400">回答 / 说明</label>
-            <textarea 
+            <textarea
               className="w-full p-2 text-sm bg-slate-900 border border-slate-700 rounded text-slate-200"
               rows={2}
               value={ans.answer || ''}

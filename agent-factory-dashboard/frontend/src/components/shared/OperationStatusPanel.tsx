@@ -134,7 +134,7 @@ export function OperationStatusPanel({ operation }: Props): JSX.Element {
             </span>
             {showStderr ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
-          
+
           {showStderr && (
             <pre className="p-3 text-[10px] font-mono text-red-300/95 overflow-x-auto max-h-[160px] divide-y divide-red-955/10 bg-slate-950">
               {stderrLines.join('\n')}

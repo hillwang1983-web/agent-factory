@@ -12,6 +12,7 @@ interface AgentFactoryState {
   selectedArtifactPath: string | null;
   artifactContent: string | null;
   artifactTruncated: boolean;
+  artifactAvailability: 'available' | 'empty' | 'not_recorded' | 'error' | null;
   loading: boolean;
   error: string | null;
   controlEnabled: boolean;
@@ -87,6 +88,7 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   selectedArtifactPath: null,
   artifactContent: null,
   artifactTruncated: false,
+  artifactAvailability: null,
   loading: false,
   error: null,
   controlEnabled: false,
@@ -270,24 +272,26 @@ export const useAgentFactoryStore = create<AgentFactoryState>((set, get) => ({
   },
 
   openArtifact: async (path: string) => {
-    set({ selectedArtifactPath: path, artifactContent: 'Loading...', artifactTruncated: false });
+    set({ selectedArtifactPath: path, artifactContent: 'Loading...', artifactTruncated: false, artifactAvailability: null });
     try {
       const selectedAduId = get().selectedAduId;
       const result = await agentFactoryApi.fetchAgentFactoryArtifact(path, undefined, selectedAduId || undefined);
       set({
         artifactContent: result.content,
         artifactTruncated: result.truncated,
+        artifactAvailability: result.availability || 'available',
       });
     } catch (error) {
       set({
-        artifactContent: `Error loading artifact content:\n${String(error)}`,
+        artifactContent: null,
         artifactTruncated: false,
+        artifactAvailability: 'error',
       });
     }
   },
 
   closeArtifact: () => {
-    set({ selectedArtifactPath: null, artifactContent: null, artifactTruncated: false });
+    set({ selectedArtifactPath: null, artifactContent: null, artifactTruncated: false, artifactAvailability: null });
   },
 
   loadReviews: async (aduId: string) => {

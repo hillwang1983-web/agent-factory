@@ -142,7 +142,7 @@ export function AgentFactoryPage(): JSX.Element {
                   <div className="text-xs font-semibold text-nms-text mb-2 flex items-center gap-1.5">
                     <FolderOpen className="w-3.5 h-3.5 text-nms-text-dim" /> Expected Artifacts
                   </div>
-                  {selectedAdu.artifact_status.length === 0 ? (
+                  {(!selectedAdu.artifact_status || selectedAdu.artifact_status.length === 0) ? (
                     <div className="text-[11px] text-nms-text-dim italic">No artifacts mapped for this ADU</div>
                   ) : (
                     <div className="flex flex-wrap gap-2">
@@ -173,7 +173,7 @@ export function AgentFactoryPage(): JSX.Element {
                       <Shield className="w-3 h-3 text-nms-accent" /> Allowed Write Paths
                     </div>
                     <ul className="text-[10px] text-nms-text font-mono list-disc list-inside">
-                      {selectedAdu.allowed_write_paths.map((p) => (
+                      {(selectedAdu.allowed_write_paths || []).map((p) => (
                         <li key={p}>{p}</li>
                       ))}
                     </ul>
@@ -212,7 +212,7 @@ export function AgentFactoryPage(): JSX.Element {
                       <Terminal className="w-3 h-3 text-nms-accent" /> Required Validation Commands
                     </div>
                     <ul className="text-[10px] text-nms-text font-mono list-disc list-inside truncate">
-                      {selectedAdu.required_commands.map((c) => (
+                      {(selectedAdu.required_commands || []).map((c) => (
                         <li key={c} title={c}>{c}</li>
                       ))}
                     </ul>

@@ -11,7 +11,7 @@ export function AgentRuntimeTable(): JSX.Element {
   const [scope, setScope] = useState<'global' | 'adu'>('global');
   const [statusFilter, setStatusFilter] = useState<AgentRuntimeStatus[]>([]);
   const [search, setSearch] = useState('');
-  
+
   const [data, setData] = useState<{
     summary: any;
     agents: AgentFactoryAgentView[];
@@ -65,7 +65,7 @@ export function AgentRuntimeTable(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <AgentRuntimeFilters 
+      <AgentRuntimeFilters
         scope={scope}
         onScopeChange={setScope}
         statusFilter={statusFilter}
@@ -92,10 +92,10 @@ export function AgentRuntimeTable(): JSX.Element {
       ) : data?.agents.length === 0 ? (
         <div className="nms-card p-12 text-center text-nms-text-dim border-dashed">
           <p className="text-sm">
-            {search || statusFilter.length > 0 
-              ? 'No agents match your current filters.' 
-              : scope === 'adu' 
-                ? 'Current ADU does not involve any agents.' 
+            {search || statusFilter.length > 0
+              ? 'No agents match your current filters.'
+              : scope === 'adu'
+                ? 'Current ADU does not involve any agents.'
                 : 'No registered agents found.'}
           </p>
         </div>
@@ -110,7 +110,7 @@ export function AgentRuntimeTable(): JSX.Element {
             <div className="col-span-1 text-center">Success</div>
             <div className="col-span-1 text-right">Updated</div>
           </div>
-          
+
           <div className="divide-y divide-nms-surface-2/40">
             {data?.agents.map(agent => (
               <AgentRuntimeRow key={agent.id} agent={agent} />

@@ -250,7 +250,7 @@ async function run() {
     }), 'utf-8');
     meta_reg.drafts.find(d => d.draft_id === draft_id).status = 'draft_ready';
     await fs.writeFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), JSON.stringify(meta_reg, null, 2));
-    
+
     const { adu_id } = await intake.registerDraft(draft_id);
     const createdAdu = await aduRepo.getAduById(adu_id);
     ok(createdAdu, 'ADU created');
@@ -281,7 +281,7 @@ async function run() {
     }), 'utf-8');
     meta_reg.drafts.find(d => d.draft_id === draft_id).status = 'draft_ready';
     await fs.writeFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), JSON.stringify(meta_reg, null, 2));
-    
+
     const { adu_id } = await intake.registerDraft(draft_id);
     const createdAdu = await aduRepo.getAduById(adu_id);
     ok(createdAdu, 'ADU created');
@@ -309,7 +309,7 @@ async function run() {
     }), 'utf-8');
     meta_reg.drafts.find(d => d.draft_id === draft_id).status = 'draft_ready';
     await fs.writeFile(path.join(tmp, '.ai-agent', 'registry', 'intake-drafts.json'), JSON.stringify(meta_reg, null, 2));
-    
+
     const { adu_id } = await intake.registerDraft(draft_id);
     const createdAdu = await aduRepo.getAduById(adu_id);
     ok(createdAdu, 'ADU created');

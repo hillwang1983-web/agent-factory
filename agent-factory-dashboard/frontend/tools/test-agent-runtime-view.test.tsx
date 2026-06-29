@@ -27,62 +27,62 @@ describe('AgentRuntimeFilters', () => {
   it('Has 4 runtime status labels and failed is not a runtime status', () => {
     const onStatusFilterChange = vi.fn();
     render(
-      <AgentRuntimeFilters 
-        scope="global" 
-        onScopeChange={() => {}} 
-        statusFilter={[]} 
-        onStatusFilterChange={onStatusFilterChange} 
-        search="" 
-        onSearchChange={() => {}} 
-        hasSelectedAdu={true} 
+      <AgentRuntimeFilters
+        scope="global"
+        onScopeChange={() => {}}
+        statusFilter={[]}
+        onStatusFilterChange={onStatusFilterChange}
+        search=""
+        onSearchChange={() => {}}
+        hasSelectedAdu={true}
       />
     );
-    
+
     // Check for the 4 status labels
     expect(screen.getByText('Running')).toBeDefined();
     expect(screen.getByText('Ready')).toBeDefined();
     expect(screen.getByText('Needs Attention')).toBeDefined();
     expect(screen.getByText('Idle')).toBeDefined();
-    
+
     // Failed should not exist
     expect(screen.queryByText('Failed')).toBeNull();
   });
 
   it('Scope toggle exists and ADU filter disabled when no ADU selected', () => {
     const { rerender } = render(
-      <AgentRuntimeFilters 
-        scope="global" 
-        onScopeChange={() => {}} 
-        statusFilter={[]} 
-        onStatusFilterChange={() => {}} 
-        search="" 
-        onSearchChange={() => {}} 
-        hasSelectedAdu={false} 
+      <AgentRuntimeFilters
+        scope="global"
+        onScopeChange={() => {}}
+        statusFilter={[]}
+        onStatusFilterChange={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        hasSelectedAdu={false}
       />
     );
-    
+
     const globalBtn = screen.getByText('Global');
     const aduBtn = screen.getByText('Current ADU');
-    
+
     expect(globalBtn).toBeDefined();
     expect(aduBtn).toBeDefined();
-    
+
     // Check if Current ADU button is disabled/styled differently when no ADU selected
     expect(aduBtn.className).toContain('opacity-50 cursor-not-allowed');
 
     // Re-render with ADU selected
     rerender(
-      <AgentRuntimeFilters 
-        scope="global" 
-        onScopeChange={() => {}} 
-        statusFilter={[]} 
-        onStatusFilterChange={() => {}} 
-        search="" 
-        onSearchChange={() => {}} 
-        hasSelectedAdu={true} 
+      <AgentRuntimeFilters
+        scope="global"
+        onScopeChange={() => {}}
+        statusFilter={[]}
+        onStatusFilterChange={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        hasSelectedAdu={true}
       />
     );
-    
+
     expect(aduBtn.className).not.toContain('opacity-50 cursor-not-allowed');
   });
 });
@@ -103,7 +103,7 @@ describe('AgentRuntimeRow', () => {
     };
 
     const { container } = render(<AgentRuntimeRow agent={mockAgent as any} />);
-    
+
     // The agent ID should be visible and have break-words
     const agentIdEl = screen.getAllByText(mockAgent.id)[0];
     expect(agentIdEl.className).toContain('break-words');
@@ -137,7 +137,7 @@ describe('AgentRuntimeTable', () => {
     });
 
     render(<AgentRuntimeTable />);
-    
+
     // Initial fetch
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith({

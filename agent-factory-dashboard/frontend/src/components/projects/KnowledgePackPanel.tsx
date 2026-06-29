@@ -24,13 +24,13 @@ const SafeMarkdown: React.FC<{ content: string }> = ({ content }) => {
   const parseInlineStyles = (text: string) => {
     // Escape HTML first
     const escaped = escapeHtml(text);
-    
+
     // Parse inline code: `code`
     let processed = escaped.replace(/`([^`]+)`/g, '<code class="bg-slate-950 px-1.5 py-0.5 rounded text-indigo-300 font-mono text-xs">$1</code>');
-    
+
     // Parse bold: **text**
     processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-white">$1</strong>');
-    
+
     // Parse links: [text](url)
     processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 underline">$1</a>');
 

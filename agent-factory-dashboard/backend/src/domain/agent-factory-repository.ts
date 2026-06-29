@@ -20,7 +20,7 @@ export interface AgentFactoryRepository {
   readRuns(): Promise<AgentFactoryRun[]>;
   listArtifacts(paths: string[], workspaceRootOverride?: string): Promise<AgentFactoryArtifact[]>;
   listRunFiles(runDir: string, workspaceRootOverride?: string): Promise<AgentFactoryArtifact[]>;
-  readTextArtifact(path: string, maxBytes: number, workspaceRootOverride?: string): Promise<{ path: string; content: string; truncated: boolean }>;
+  readTextArtifact(path: string, maxBytes: number, workspaceRootOverride?: string): Promise<{ path: string; content: string; truncated: boolean; availability: 'available' | 'empty' | 'not_recorded' }>;
   readReviews(): Promise<AgentFactoryReview[]>;
   writeReviews(reviews: AgentFactoryReview[]): Promise<void>;
   readEdits(): Promise<AgentFactoryArtifactEdit[]>;

@@ -40,7 +40,7 @@ export class ProjectAduFactory {
 
   async createForProject(projectId: string, input: CreateProjectAduInput): Promise<AgentFactoryAdu> {
     const project = await this.projectRepository.getProject(projectId);
-    
+
     if (!project) {
       const err = new Error(`Project ${projectId} not found`);
       (err as any).status = 404;
@@ -60,7 +60,7 @@ export class ProjectAduFactory {
     }
 
     const aduId = input.aduId || `REQ-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
-    
+
     if (!ADU_ID_PATTERN.test(aduId)) {
       const err = new Error(`Invalid ADU ID: ${aduId}`);
       (err as any).status = 400;
@@ -85,7 +85,7 @@ export class ProjectAduFactory {
     allowedReadPaths.add(normalizeRepoRelativePath('.agent-factory/project-profile.json'));
     allowedReadPaths.add(normalizeRepoRelativePath('.agent-factory/knowledge/'));
     allowedReadPaths.add(normalizeRepoRelativePath('.ai-agent/'));
-    
+
     if (input.preferredReadPaths) {
       input.preferredReadPaths.forEach(p => allowedReadPaths.add(normalizeRepoRelativePath(p)));
     }

@@ -31,11 +31,11 @@ export class ProjectOnboardingUseCase {
 
   async registerProject(input: RegisterProjectInput): Promise<AgentFactoryProject> {
     const project = await this.projectRepo.createProject(input);
-    
+
     // Create target .agent-factory/ directory structure inside target repo
     const targetDir = path.join(project.repo_path, '.agent-factory');
     const targetKnowledgeDir = path.join(targetDir, 'knowledge');
-    
+
     try {
       await fs.mkdir(targetKnowledgeDir, { recursive: true });
       this.logger.info({ projectId: project.project_id, targetDir }, 'Created target .agent-factory structure');
@@ -100,7 +100,7 @@ export class ProjectOnboardingUseCase {
     child.stdout.on('data', (chunk) => {
       stdoutData += chunk.toString();
       this.logger.info({ projectId, output: chunk.toString().trim() }, 'Profiling STDOUT');
-      
+
       // Broadcast output logs
       broadcastOrchestratorEvent({
         type: 'agentFactoryEvent',
@@ -229,7 +229,7 @@ export class ProjectOnboardingUseCase {
           updatedProject.status = 'profile_failed';
         }
         await this.projectRepo.updateProject(updatedProject);
-        
+
         broadcastOrchestratorEvent({
           type: 'agentFactoryEvent',
           event: 'project_profiling_completed',

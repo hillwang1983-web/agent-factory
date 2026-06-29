@@ -18,7 +18,7 @@ export function QualityReportBadge({ reports }: QualityReportBadgeProps): JSX.El
 
   const getStatusStyle = (exists: boolean, status?: string | boolean, valid?: boolean) => {
     if (!exists) return 'bg-nms-surface-2 border-nms-surface-3/30 text-nms-text-dim/40';
-    
+
     const isPassed = status === true || status === 'pass';
     if (isPassed) {
       if (valid === false) {

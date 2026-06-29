@@ -100,6 +100,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
         version: 1,
         adus,
       };
+
       await fs.writeFile(aduJsonPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     } catch (err) {
       this.logger.error({ err }, 'Failed to write adu.json');
@@ -142,6 +143,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     const runsJsonPath = this.resolveSafePath('.ai-agent/registry/runs.json');
     try {
       const data = { version: 1, runs };
+
       await fs.mkdir(path.dirname(runsJsonPath), { recursive: true });
       await fs.writeFile(runsJsonPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     } catch (err) {
@@ -288,7 +290,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     }
   }
 
-  async readTextArtifact(relativePath: string, maxBytes: number, workspaceRootOverride?: string): Promise<{ path: string; content: string; truncated: boolean }> {
+  async readTextArtifact(relativePath: string, maxBytes: number, workspaceRootOverride?: string): Promise<{ path: string; content: string; truncated: boolean; availability: 'available' | 'empty' | 'not_recorded' }> {
     const fullPath = this.resolveSafePath(relativePath, workspaceRootOverride);
 
     // Resolve the real absolute canonical path of the target file to handle and prevent symlink bypasses
@@ -298,8 +300,12 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     } catch (err: unknown) {
       const fsErr = err as NodeJS.ErrnoException;
       if (fsErr.code === 'ENOENT') {
-        // Preserve ENOENT so callers can return 404 rather than 500
-        throw Object.assign(new Error(`File not found: ${relativePath}`), { code: 'ENOENT' });
+        return {
+          path: relativePath,
+          content: '',
+          truncated: false,
+          availability: 'not_recorded'
+        };
       }
       this.logger.error({ err, path: relativePath }, 'Failed to resolve real path for text artifact');
       throw err;
@@ -354,11 +360,13 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
 
       const content = buffer.toString('utf-8');
       const truncated = size > limit;
+      const availability = size === 0 ? 'empty' : 'available';
 
       return {
         path: relativePath,
         content,
         truncated,
+        availability,
       };
     } catch (err: unknown) {
       this.logger.error({ err, path: relativePath }, 'Failed to read text artifact');
@@ -386,6 +394,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     const reviewsPath = this.resolveSafePath('.ai-agent/registry/reviews.json');
     try {
       const data = { version: 1, reviews };
+
       await fs.mkdir(path.dirname(reviewsPath), { recursive: true });
       await fs.writeFile(reviewsPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     } catch (err) {
@@ -418,6 +427,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
     const editsPath = this.resolveSafePath('.ai-agent/registry/artifact-edits.json');
     try {
       const data = { version: 1, edits };
+
       await fs.mkdir(path.dirname(editsPath), { recursive: true });
       await fs.writeFile(editsPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     } catch (err) {
@@ -513,6 +523,7 @@ export class FileAgentFactoryRepository implements AgentFactoryRepository {
   private async doWriteEpics(epics: AgentFactoryEpic[]): Promise<void> {
     const epicsPath = this.resolveSafePath('.ai-agent/registry/epics.json');
     try {
+
       await fs.mkdir(path.dirname(epicsPath), { recursive: true });
       const data = { version: 1, epics };
       const tmpPath = epicsPath + '.tmp';

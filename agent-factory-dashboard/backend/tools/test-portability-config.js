@@ -21,6 +21,12 @@ assert.strictEqual(config.hermesConfigPath, expectedHermesPath);
 // Assert allowProjectPaths defaults only to the resolved workspaceRoot
 assert.deepStrictEqual(config.allowProjectPaths, [config.workspaceRoot]);
 
+// Assert network binding is local-only unless explicitly overridden.
+assert.strictEqual(config.host, '127.0.0.1');
+process.env.HOST = '0.0.0.0';
+assert.strictEqual(loadAppConfig().host, '0.0.0.0');
+delete process.env.HOST;
+
 // Assert file-project-repository.ts does not hardcode specific user paths
 const fs = require('fs');
 const repoSource = fs.readFileSync(

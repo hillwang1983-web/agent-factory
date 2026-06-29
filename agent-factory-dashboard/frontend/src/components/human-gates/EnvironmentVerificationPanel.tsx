@@ -13,16 +13,16 @@ interface EnvironmentVerificationPanelProps {
 
 export function EnvironmentVerificationPanel({ gateId, affectedAssertions = [], onSuccess, onCancel }: EnvironmentVerificationPanelProps) {
   const [activeTab, setActiveTab] = useState<'submit' | 'waiver' | 'rework'>('submit');
-  
+
   // Submit Results state
   const [command, setCommand] = useState('');
   const [exitCode, setExitCode] = useState<number>(0);
   const [output, setOutput] = useState('');
-  
+
   // Rework state
   const [targetAgent, setTargetAgent] = useState<'developer' | 'rework-planner'>('developer');
   const [instruction, setInstruction] = useState('');
-  
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

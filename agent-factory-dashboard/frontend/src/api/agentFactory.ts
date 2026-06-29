@@ -75,6 +75,7 @@ export const agentFactoryApi = {
     path: string;
     content: string;
     truncated: boolean;
+    availability?: 'available' | 'empty' | 'not_recorded';
   }> {
     const query = new URLSearchParams();
     query.append('path', path);

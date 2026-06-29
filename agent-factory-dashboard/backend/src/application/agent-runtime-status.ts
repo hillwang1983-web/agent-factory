@@ -45,10 +45,10 @@ export function deriveAgentRuntimeView(params: DeriveAgentRuntimeViewParams): Ag
 
   // 2. Queued Targets (Ready)
   const queued_targets: AgentFactoryAgentQueuedTarget[] = aduViews
-    .filter(adu => 
-      adu.next_agent === agent.id && 
-      adu.state !== 'mvp_ready' && 
-      adu.state !== 'human_gate' && 
+    .filter(adu =>
+      adu.next_agent === agent.id &&
+      adu.state !== 'mvp_ready' &&
+      adu.state !== 'human_gate' &&
       !operations.some(op => op.target_id === adu.id && ['spawning', 'running'].includes(op.status))
     )
     .map(adu => ({
@@ -61,7 +61,7 @@ export function deriveAgentRuntimeView(params: DeriveAgentRuntimeViewParams): Ag
 
   if (params.epicViews) {
     queued_targets.push(...params.epicViews
-      .filter(epic => 
+      .filter(epic =>
         epic.next_agent === agent.id &&
         epic.state !== 'epic_acceptance' &&
         epic.state !== 'epic_evidenced' &&
@@ -84,7 +84,7 @@ export function deriveAgentRuntimeView(params: DeriveAgentRuntimeViewParams): Ag
 
   // 3. Attention Items (Needs Attention)
   const attention_items: AgentFactoryAgentAttentionItem[] = [];
-  
+
   // 3.1 Human Gates
   humanGates.filter(hg => hg.status === 'pending' && hg.source_agent === agent.id).forEach(hg => {
     attention_items.push({
@@ -168,9 +168,9 @@ export function deriveAgentRuntimeView(params: DeriveAgentRuntimeViewParams): Ag
     const opsForTarget = operations
       .filter(o => o.target_id === op.target_id)
       .sort((a, b) => new Date(b.created_at || b.last_progress_at || 0).getTime() - new Date(a.created_at || a.last_progress_at || 0).getTime());
-    
+
     const latestOpForTarget = opsForTarget[0];
-    
+
     // Check if target is terminal
     const adu = aduViews.find(a => a.id === op.target_id);
     const epic = params.epicViews?.find((e: any) => e.id === op.target_id);
@@ -217,7 +217,7 @@ export function deriveAgentRuntimeView(params: DeriveAgentRuntimeViewParams): Ag
   // 6. Last Result & Success Rate
   let last_result: AgentFactoryAgentLastResult | null = null;
   let success_rate: number | null = null;
-  
+
   const agentRuns = runs.filter(r => r.agent === agent.id).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   if (agentRuns.length > 0) {
     const latest = agentRuns[0];

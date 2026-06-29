@@ -11,6 +11,7 @@ const commands = [
   ['python3', [path.resolve(__dirname, '../../../scripts/test_phase2_flow_integrity.py')]],
   ['python3', [path.resolve(__dirname, '../../../scripts/test_agent_run_policy.py')]],
   ['python3', [path.resolve(__dirname, '../../../scripts/test_context_payload_builder.py')]],
+  ['python3', [path.resolve(__dirname, '../../../scripts/test_provider_auth_failure.py')]],
 ];
 
 let failed = false;

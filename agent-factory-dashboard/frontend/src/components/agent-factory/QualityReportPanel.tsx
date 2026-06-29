@@ -105,7 +105,7 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
           <h3 className="text-sm font-semibold text-nms-text">品质控制质量门 (Quality Gates)</h3>
           <p className="text-xs text-nms-text-dim mt-0.5">硬验收契约、双层 Agent 代码/最终验收评估结果</p>
         </div>
-        
+
         {/* Rework indicators */}
         {(adu.state === 'code_rework' || adu.state === 'build_rework' || adu.state === 'acceptance_rework') && (
           <div className={`flex items-center gap-1.5 border px-2.5 py-1 rounded text-[10px] ${
@@ -166,10 +166,10 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
           <Code className="w-3.5 h-3.5" />
           <span>代码评审 (CR)</span>
           <span className={`text-[9px] px-1 rounded-full ${
-            codeReview.exists 
-              ? (codeReview.status === 'pass' 
+            codeReview.exists
+              ? (codeReview.status === 'pass'
                   ? (codeReview.valid !== false ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400')
-                  : 'bg-red-500/10 text-red-400') 
+                  : 'bg-red-500/10 text-red-400')
               : 'bg-nms-surface-2 text-nms-text-dim/50'
           }`}>
             {codeReview.exists ? (codeReview.status === 'pass' ? (codeReview.valid !== false ? '通过' : '通过(无效)') : '未通过') : '无'}
@@ -187,10 +187,10 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
           <Award className="w-3.5 h-3.5" />
           <span>验收审计 (AR)</span>
           <span className={`text-[9px] px-1 rounded-full ${
-            acceptanceReview.exists 
-              ? (acceptanceReview.status === 'pass' 
+            acceptanceReview.exists
+              ? (acceptanceReview.status === 'pass'
                   ? (acceptanceReview.valid !== false ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400')
-                  : 'bg-red-500/10 text-red-400') 
+                  : 'bg-red-500/10 text-red-400')
               : 'bg-nms-surface-2 text-nms-text-dim/50'
           }`}>
             {acceptanceReview.exists ? (acceptanceReview.status === 'pass' ? (acceptanceReview.valid !== false ? '通过' : '通过(无效)') : '未通过') : '无'}
@@ -221,7 +221,7 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
                 </div>
               </div>
             </div>
-            
+
             {contract.exists && (
               <div className="text-xs text-nms-text-dim bg-nms-surface-2/20 border border-nms-surface-3/10 p-3 rounded-lg">
                 可前往 <span className="font-mono text-nms-text bg-nms-surface-3/40 px-1 py-0.5 rounded">Artifacts</span> 面板浏览完整的配置断言 JSON 及中文的 <span className="font-mono text-nms-text bg-nms-surface-3/40 px-1 py-0.5 rounded">{adu.id}-notes.md</span> 契约备忘说明。
@@ -258,16 +258,16 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
                 <div className="space-y-4 text-xs">
                   {/* Status Banner */}
                   <div className={`flex items-center justify-between border px-3 py-2 rounded-lg ${
-                    reportDetail.review_status === 'pass' 
+                    reportDetail.review_status === 'pass'
                       ? (codeReview.valid !== false
                           ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400'
                           : 'bg-amber-500/5 border-amber-500/20 text-amber-400')
                       : 'bg-red-500/5 border-red-500/20 text-red-400'
                   }`}>
                     <div className="flex items-center gap-1.5 font-semibold">
-                      {reportDetail.review_status === 'pass' 
+                      {reportDetail.review_status === 'pass'
                         ? (codeReview.valid !== false
-                            ? <CheckCircle2 className="w-4 h-4" /> 
+                            ? <CheckCircle2 className="w-4 h-4" />
                             : <AlertTriangle className="w-4 h-4" />)
                         : <XCircle className="w-4 h-4" />
                       }
@@ -352,16 +352,16 @@ export function QualityReportPanel({ adu }: QualityReportPanelProps): JSX.Elemen
                 <div className="space-y-4 text-xs">
                   {/* Status Banner */}
                   <div className={`flex items-center justify-between border px-3 py-2 rounded-lg ${
-                    reportDetail.acceptance_status === 'pass' 
+                    reportDetail.acceptance_status === 'pass'
                       ? (acceptanceReview.valid !== false
                           ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400'
                           : 'bg-amber-500/5 border-amber-500/20 text-amber-400')
                       : 'bg-red-500/5 border-red-500/20 text-red-400'
                   }`}>
                     <div className="flex items-center gap-1.5 font-semibold">
-                      {reportDetail.acceptance_status === 'pass' 
+                      {reportDetail.acceptance_status === 'pass'
                         ? (acceptanceReview.valid !== false
-                            ? <CheckCircle2 className="w-4 h-4" /> 
+                            ? <CheckCircle2 className="w-4 h-4" />
                             : <AlertTriangle className="w-4 h-4" />)
                         : <XCircle className="w-4 h-4" />
                       }

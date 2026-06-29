@@ -27,9 +27,9 @@ export function WorkflowTimeline({ adu }: WorkflowTimelineProps): JSX.Element {
   // Determine stage status
   const getPhaseStatus = (steps: AgentFactoryWorkflowStep[], prevPhaseComplete = true) => {
     if (steps.length === 0) return 'pending';
-    
+
     const isComplete = steps.every(
-      s => s.status === 'complete' || 
+      s => s.status === 'complete' ||
       (s.status === 'current' && (adu.state === 'evidenced' || adu.state === 'mvp_ready') && s.state === 'evidenced')
     );
     if (isComplete) return 'complete';
@@ -142,10 +142,10 @@ export function WorkflowTimeline({ adu }: WorkflowTimelineProps): JSX.Element {
                   {/* Phase Header Info */}
                   <div className="flex items-center gap-3">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                      isPhaseComplete 
-                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                        : isPhaseActive 
-                          ? 'bg-nms-accent/15 border-nms-accent/30 text-nms-accent' 
+                      isPhaseComplete
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        : isPhaseActive
+                          ? 'bg-nms-accent/15 border-nms-accent/30 text-nms-accent'
                           : 'bg-nms-surface-2 border-nms-surface-3 text-nms-text-dim/40'
                     }`}>
                       {phase.badgeText}
@@ -162,7 +162,7 @@ export function WorkflowTimeline({ adu }: WorkflowTimelineProps): JSX.Element {
                   <div className="flex flex-wrap items-center gap-2 py-0.5">
                     {phase.steps.map((step, idx) => {
                       const isStepCurrent = step.status === 'current';
-                      const isStepComplete = step.status === 'complete' || 
+                      const isStepComplete = step.status === 'complete' ||
                         (step.status === 'current' && (adu.state === 'evidenced' || adu.state === 'mvp_ready') && step.state === 'evidenced');
                       const isStepFailed = step.status === 'failed';
                       const isStepBlocked = step.status === 'blocked';
@@ -232,10 +232,10 @@ export function WorkflowTimeline({ adu }: WorkflowTimelineProps): JSX.Element {
                           {/* Connecting Chevron */}
                           {hasNext && (
                             <ChevronRight className={`w-3.5 h-3.5 flex-shrink-0 ${
-                              isNextStepComplete 
-                                ? 'text-emerald-500/40' 
-                                : isStepComplete 
-                                  ? 'text-nms-accent/40' 
+                              isNextStepComplete
+                                ? 'text-emerald-500/40'
+                                : isStepComplete
+                                  ? 'text-nms-accent/40'
                                   : 'text-nms-surface-3'
                             }`} />
                           )}

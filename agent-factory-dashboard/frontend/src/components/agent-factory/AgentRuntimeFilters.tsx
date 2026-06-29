@@ -29,7 +29,7 @@ export function AgentRuntimeFilters({
   hasSelectedAdu,
   summary
 }: AgentRuntimeFiltersProps): JSX.Element {
-  
+
   const toggleStatus = (status: AgentRuntimeStatus) => {
     if (statusFilter.includes(status)) {
       onStatusFilterChange(statusFilter.filter(s => s !== status));
@@ -74,8 +74,8 @@ export function AgentRuntimeFilters({
                 key={opt.value}
                 onClick={() => toggleStatus(opt.value)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 text-xs border rounded-full transition-all ${
-                  isSelected 
-                    ? `border-opacity-100 ${opt.colorClass}` 
+                  isSelected
+                    ? `border-opacity-100 ${opt.colorClass}`
                     : 'border-nms-surface-3 text-nms-text-dim hover:border-nms-surface-4'
                 }`}
               >
@@ -90,7 +90,7 @@ export function AgentRuntimeFilters({
         {/* Search */}
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-nms-text-dim" />
-          <input 
+          <input
             type="text"
             placeholder="Search agents..."
             value={search}

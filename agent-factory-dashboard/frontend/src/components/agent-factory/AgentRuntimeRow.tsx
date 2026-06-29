@@ -18,7 +18,7 @@ export function AgentRuntimeRow({ agent }: AgentRuntimeRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false);
 
   const statusCfg = STATUS_CONFIG[agent.runtime_status] || STATUS_CONFIG.idle;
-  
+
   // Format "time ago" for last_run_at
   const timeAgo = (dateStr: string | null) => {
     if (!dateStr) return 'Never';
@@ -55,7 +55,7 @@ export function AgentRuntimeRow({ agent }: AgentRuntimeRowProps): JSX.Element {
   return (
     <div className="group border-b border-nms-surface-2/20 last:border-0">
       {/* Desktop View */}
-      <div 
+      <div
         className="hidden md:grid grid-cols-12 gap-4 p-4 hover:bg-nms-surface-2/30 cursor-pointer items-center transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
@@ -114,7 +114,7 @@ export function AgentRuntimeRow({ agent }: AgentRuntimeRowProps): JSX.Element {
       </div>
 
       {/* Mobile View */}
-      <div 
+      <div
         className="md:hidden p-3 hover:bg-nms-surface-2/30 cursor-pointer"
         onClick={() => setExpanded(!expanded)}
       >

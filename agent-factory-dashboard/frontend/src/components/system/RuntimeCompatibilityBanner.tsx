@@ -49,17 +49,17 @@ export const RuntimeCompatibilityBanner: React.FC<RuntimeCompatibilityBannerProp
       <div className="relative w-full max-w-xl bg-slate-900 border border-red-500/30 rounded-xl shadow-[0_0_50px_rgba(239,68,68,0.15)] overflow-hidden">
         {/* Top Accent Gradient Bar */}
         <div className="h-1.5 bg-gradient-to-r from-red-600 via-orange-500 to-red-600" />
-        
+
         <div className="p-6">
           <div className="flex items-start gap-4">
             <div className="w-12 h-12 rounded-lg bg-red-950/50 border border-red-500/20 flex items-center justify-center shrink-0">
               <AlertOctagon className="h-6 w-6 text-red-500 animate-pulse" />
             </div>
-            
+
             <div className="flex-1 space-y-2">
               <h2 className="text-lg font-bold text-white tracking-tight">{title}</h2>
               <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
-              
+
               {errorDetail && (
                 <div className="mt-4 p-3 bg-black/40 rounded border border-slate-800 font-mono text-xs text-red-400/90 break-all max-h-32 overflow-y-auto">
                   {errorDetail}

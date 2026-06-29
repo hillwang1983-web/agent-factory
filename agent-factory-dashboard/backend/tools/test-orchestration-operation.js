@@ -1,5 +1,5 @@
 /**
- * Unit tests for OrchestrationOperationStore
+ * Unit tests for OrchestrationOperationStore and metadata convergence
  */
 const fs = require('fs');
 const os = require('os');
@@ -7,6 +7,10 @@ const path = require('path');
 
 const testWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-factory-ops-test-'));
 process.env.AGENT_FACTORY_WORKSPACE = testWorkspace;
+
+// Create dummy config.json / project registry to keep monitor config parser happy
+const registryDir = path.join(testWorkspace, '.ai-agent', 'registry');
+fs.mkdirSync(registryDir, { recursive: true });
 
 const { OrchestrationOperationStore } = require('../dist/application/orchestration-operation-store');
 
@@ -24,7 +28,18 @@ function assert(label, fn) {
   }
 }
 
-function main() {
+async function asyncAssert(label, fn) {
+  try {
+    await fn();
+    console.log(`✅  ${label}`);
+    passed++;
+  } catch (e) {
+    console.error(`❌  ${label}: ${e.message}`);
+    failed++;
+  }
+}
+
+async function main() {
   console.log('── Orchestration Operation Store Tests ──\n');
 
   const store = OrchestrationOperationStore.getInstance();
@@ -56,7 +71,6 @@ function main() {
   assert('getLatestForTarget retrieves the most recent operation', () => {
     store.clear();
     const op1 = store.createOperation({ targetType: 'adu', targetId: 'ADU-X', mode: 'start' });
-    // Simulate delay
     const op2 = store.createOperation({ targetType: 'adu', targetId: 'ADU-X', mode: 'continue' });
 
     const latest = store.getLatestForTarget('adu', 'ADU-X');
@@ -82,7 +96,6 @@ function main() {
     if (updated.events.length !== 200) {
       throw new Error(`Expected event length to be capped at 200, got: ${updated.events.length}`);
     }
-    // Check that the last events are preserved
     if (updated.events[199].payload.text !== 'log line 249') {
       throw new Error(`Expected last event payload to be log line 249, got: ${updated.events[199].payload.text}`);
     }
@@ -128,16 +141,45 @@ function main() {
     if (!updated.endedAt) throw new Error('Expected stale operation to receive endedAt');
   });
 
-  // Test 7: ADU latest metadata and operation final state convergence
-  assert('ADU latest metadata and operation state converges', () => {
+  // Test 7: ADU latest metadata and operation final state convergence (Real Registry-based Test)
+  await asyncAssert('ADU latest metadata and operation state converges', async () => {
     store.clear();
-    const adu = {
-      id: 'ADU-CONVERGE',
-      state: 'evidenced',
-      latest_agent: 'evidence',
-      latest_run_timestamp: '20260621-120000',
-    };
 
+    // 1. Write the initial mock files under the active test registry
+    fs.writeFileSync(
+      path.join(registryDir, 'adu.json'),
+      JSON.stringify({
+        version: 1,
+        adus: [
+          {
+            id: 'ADU-CONVERGE',
+            state: 'evidenced',
+            project_id: 'default-open5gs',
+            repo_path: '/tmp',
+            artifacts: [],
+            latest_agent: 'acceptance-reviewer',
+            latest_run_timestamp: '20260621-110000'
+          }
+        ]
+      }, null, 2) + '\n'
+    );
+    fs.writeFileSync(
+      path.join(registryDir, 'runs.json'),
+      JSON.stringify({
+        version: 1,
+        runs: [
+          {
+            timestamp: '20260621-120000',
+            adu_id: 'ADU-CONVERGE',
+            agent: 'evidence',
+            result: 'success',
+            returncode: 0
+          }
+        ]
+      }, null, 2) + '\n'
+    );
+
+    // 2. Create the operation and set its terminal status in the store
     const op = store.createOperation({
       targetType: 'adu',
       targetId: 'ADU-CONVERGE',
@@ -150,13 +192,31 @@ function main() {
       exitCode: 0,
     });
 
-    const updatedOp = store.getOperation(op.id);
-    if (updatedOp.status !== 'completed') throw new Error('Expected operation status completed');
-    if (updatedOp.finalState !== 'evidenced') throw new Error('Expected operation finalState evidenced');
+    // 3. Load the monitor and check that the ADU metadata converges with the latest run
+    const { FileAgentFactoryRepository } = require('../dist/infrastructure/file-agent-factory-repository');
+    const { AgentFactoryMonitorUseCase } = require('../dist/application/agent-factory-monitor');
+    const pino = require('pino');
+    const logger = pino({ level: 'silent' });
+    const repo = new FileAgentFactoryRepository(testWorkspace, 100000, logger);
+    const monitor = new AgentFactoryMonitorUseCase(repo);
 
-    if (adu.state !== 'evidenced') throw new Error('Expected adu state evidenced');
-    if (adu.latest_agent !== 'evidence') throw new Error('Expected adu latest_agent evidence');
-    if (adu.latest_run_timestamp !== '20260621-120000') throw new Error('Expected adu latest_run_timestamp mismatch');
+    const dashboard = await monitor.getDashboard();
+    const aduView = dashboard.adus.find(a => a.id === 'ADU-CONVERGE');
+
+    if (!aduView) throw new Error('Expected to find ADU-CONVERGE in dashboard');
+    if (aduView.state !== 'evidenced') {
+      throw new Error(`Expected ADU state to converge to evidenced, got: ${aduView.state}`);
+    }
+    if (aduView.latest_agent !== 'evidence') {
+      throw new Error(`Expected ADU latest_agent to converge to evidence, got: ${aduView.latest_agent}`);
+    }
+    if (aduView.latest_run_timestamp !== '20260621-120000') {
+      throw new Error(`Expected ADU latest_run_timestamp to converge to 20260621-120000, got: ${aduView.latest_run_timestamp}`);
+    }
+
+    const updatedOp = store.getOperation(op.id);
+    if (updatedOp.status !== 'completed') throw new Error('Expected operation status to be completed');
+    if (updatedOp.finalState !== 'evidenced') throw new Error('Expected operation finalState to be evidenced');
   });
 
   try {
@@ -167,4 +227,7 @@ function main() {
   process.exit(failed > 0 ? 1 : 0);
 }
 
-main();
+main().catch(e => {
+  console.error(e);
+  process.exit(1);
+});

@@ -19,6 +19,7 @@ const WORKFLOW_STEPS_CONFIG = [
   { state: 'contracted', label: 'Contracted', agent: 'testwriter' },
   { state: 'test_red', label: 'Test Red', agent: 'developer' },
   { state: 'implemented', label: 'Implemented', agent: 'code-reviewer' },
+  { state: 'rework_planned', label: 'Rework Planned', agent: 'developer' },
   { state: 'code_reviewed', label: 'Code Reviewed', agent: 'buildfix-debugger' },
   { state: 'debugged', label: 'Debugged', agent: 'acceptance-reviewer' },
   { state: 'acceptance_reviewed', label: 'Acceptance Approved', agent: 'evidence' },
@@ -35,6 +36,7 @@ const STATE_ORDER = [
   'contracted',
   'test_red',
   'implemented',
+  'rework_planned',
   'code_reviewed',
   'debugged',
   'acceptance_reviewed',
@@ -54,6 +56,7 @@ export const NEXT_AGENT_BY_STATE: Record<string, string | null> = {
   code_rework: 'rework-planner',
   build_rework: 'rework-planner',
   acceptance_rework: 'rework-planner',
+  rework_planned: 'developer',
   implemented: 'code-reviewer',
   code_reviewed: 'buildfix-debugger',
   debugged: 'acceptance-reviewer',
@@ -65,6 +68,14 @@ export const NEXT_AGENT_BY_STATE: Record<string, string | null> = {
 
 export class AgentFactoryMonitorUseCase {
   constructor(public readonly repo: AgentFactoryRepository) {}
+
+  private isRetryableFailedAttempt(adu: AgentFactoryAdu, latestRun: AgentFactoryRun | null): boolean {
+    if (!latestRun) return false;
+    if (!(latestRun.result === 'failed' || latestRun.result === 'unstructured' || latestRun.returncode !== 0)) {
+      return false;
+    }
+    return latestRun.agent === NEXT_AGENT_BY_STATE[adu.state];
+  }
 
   private parseTimestamp(ts: string): Date | null {
     const m = ts.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
@@ -154,14 +165,17 @@ export class AgentFactoryMonitorUseCase {
           status = 'complete';
         } else if (adu.state === 'human_gate') {
           const failedAgent = latestRun?.agent;
-          const failedStep = failedAgent
+          let failedStep = failedAgent
             ? WORKFLOW_STEPS_CONFIG.find((s) => s.agent === failedAgent)
             : null;
+          if (adu.pre_gate_state === 'rework_planned' || adu.gate_type === 'rework_requires_operator_cleanup') {
+            failedStep = WORKFLOW_STEPS_CONFIG.find((s) => s.state === 'rework_planned') || failedStep;
+          }
           const failedStepOrderIndex = failedStep ? STATE_ORDER.indexOf(failedStep.state) : 0;
 
           if (failedStep) {
-            if (step.agent && step.agent === failedAgent) {
-              status = latestRun?.result === 'failed' ? 'failed' : 'blocked';
+            if (step.state === failedStep.state) {
+              status = (latestRun?.result === 'failed' || (adu as any).paused) ? 'failed' : 'blocked';
             } else if (stepOrderIndex < failedStepOrderIndex) {
               status = 'complete';
             } else {
@@ -223,6 +237,11 @@ export class AgentFactoryMonitorUseCase {
       } else if (adu.state === 'human_gate') {
         healthStatus = 'blocked';
         reasons.push('Human gate triggered. Blocked due to execution failure or compliance rule.');
+      } else if (this.isRetryableFailedAttempt(adu, latestRun)) {
+        healthStatus = 'active';
+        reasons.push(
+          `Latest ${latestRun?.agent} attempt failed, but ADU remains in ${adu.state} and can retry the same step.`,
+        );
       } else if (
         latestRun &&
         (latestRun.result === 'failed' || latestRun.result === 'unstructured')
@@ -251,8 +270,27 @@ export class AgentFactoryMonitorUseCase {
         }
       }
 
+      // Sync ADU latest fields if out of sync with runs
+      let convergedLatestAgent = adu.latest_agent;
+      let convergedLatestRunTimestamp = adu.latest_run_timestamp;
+      let convergedLastResult = adu.last_result;
+      if (latestRun) {
+        if (convergedLatestAgent !== latestRun.agent) {
+          convergedLatestAgent = latestRun.agent;
+        }
+        if (convergedLatestRunTimestamp !== latestRun.timestamp) {
+          convergedLatestRunTimestamp = latestRun.timestamp;
+        }
+        if (convergedLastResult !== latestRun.result) {
+          convergedLastResult = latestRun.result;
+        }
+      }
+
       aduViews.push({
         ...adu,
+        latest_agent: convergedLatestAgent,
+        latest_run_timestamp: convergedLatestRunTimestamp,
+        last_result: convergedLastResult,
         next_agent: NEXT_AGENT_BY_STATE[adu.state] || null,
         latest_run: latestRun,
         runs: aduRuns,
@@ -559,6 +597,7 @@ export class AgentFactoryMonitorUseCase {
       ];
       adu.state = nextState;
       adu.human_gate_required = false;
+      (adu as any).paused = false;
       adu.retry_count = 0;
       delete (adu as any).pre_gate_state;
       if (adu.review_counters) {
@@ -646,6 +685,7 @@ export class AgentFactoryMonitorUseCase {
       adu.state = nextState as any;
       if (nextState !== 'human_gate') {
         adu.human_gate_required = false;
+        (adu as any).paused = false;
         adu.retry_count = 0;
         delete (adu as any).pre_gate_state;
         if (adu.review_counters) {
@@ -698,6 +738,13 @@ export class AgentFactoryMonitorUseCase {
         kind: 'blocked',
         label: 'Blocked',
         reason: 'ADU is waiting for human gate disposition.',
+      };
+    }
+    if (this.isRetryableFailedAttempt(adu, latestRun)) {
+      return {
+        kind: 'active',
+        label: 'Retry Ready',
+        reason: `Latest ${latestRun?.agent} attempt failed, but ADU remains in ${adu.state}; retry can continue from the same step.`,
       };
     }
     if (latestRun && (latestRun.result === 'failed' || latestRun.result === 'unstructured' || latestRun.returncode !== 0)) {

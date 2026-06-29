@@ -182,7 +182,7 @@ export class FileProjectRepository implements ProjectRepository {
       const data = await fs.readFile(this.registryPath, 'utf-8');
       const parsed = JSON.parse(data) as { projects?: AgentFactoryProject[] };
       const projects = parsed.projects || [];
-      
+
       // Dynamic status validation based on existence of profile_path
       for (const p of projects) {
         if (p.status !== 'registered') {
@@ -211,6 +211,47 @@ export class FileProjectRepository implements ProjectRepository {
     const projects = await this.listProjects();
     const project = projects.find((p) => p.project_id === projectId);
     return project || null;
+  }
+
+  private async backupRegistryFile(filePath: string): Promise<void> {
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile() || stat.size === 0) {
+        return;
+      }
+
+      const dirName = path.dirname(filePath);
+      const baseName = path.basename(filePath);
+      const backupDir = path.join(dirName, 'backups');
+      await fs.mkdir(backupDir, { recursive: true });
+
+      const now = new Date();
+      const timestamp = now.getFullYear().toString() +
+        (now.getMonth() + 1).toString().padStart(2, '0') +
+        now.getDate().toString().padStart(2, '0') + '_' +
+        now.getHours().toString().padStart(2, '0') +
+        now.getMinutes().toString().padStart(2, '0') +
+        now.getSeconds().toString().padStart(2, '0');
+
+      const backupPath = path.join(backupDir, `${baseName}.${timestamp}.bak`);
+      await fs.copyFile(filePath, backupPath);
+
+      // Keep only last 10 backups to prevent disk bloat
+      const files = await fs.readdir(backupDir);
+      const backups = files
+        .filter(f => f.startsWith(baseName) && f.endsWith('.bak'))
+        .map(f => path.join(backupDir, f));
+
+      if (backups.length > 10) {
+        backups.sort();
+        const toDelete = backups.slice(0, backups.length - 10);
+        for (const fileToDelete of toDelete) {
+          await fs.unlink(fileToDelete);
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, filePath }, 'Failed to backup registry file');
+    }
   }
 
   async createProject(input: RegisterProjectInput): Promise<AgentFactoryProject> {
@@ -283,7 +324,7 @@ export class FileProjectRepository implements ProjectRepository {
     let projectId = baseId || 'project';
 
     const projects = await this.listProjects();
-    
+
     // Check duplication
     if (projects.some((p) => p.repo_path === resolvedRepoPath)) {
       throw new Error(`Project with repository path ${resolvedRepoPath} is already registered`);
@@ -318,6 +359,7 @@ export class FileProjectRepository implements ProjectRepository {
       projects,
     };
     const tmpPath = this.registryPath + '.tmp';
+    await this.backupRegistryFile(this.registryPath);
     await fs.writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     await fs.rename(tmpPath, this.registryPath);
 
@@ -340,6 +382,7 @@ export class FileProjectRepository implements ProjectRepository {
       projects,
     };
     const tmpPath = this.registryPath + '.tmp';
+    await this.backupRegistryFile(this.registryPath);
     await fs.writeFile(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     await fs.rename(tmpPath, this.registryPath);
     this.logger.info({ projectId: project.project_id, status: project.status }, 'Project updated');

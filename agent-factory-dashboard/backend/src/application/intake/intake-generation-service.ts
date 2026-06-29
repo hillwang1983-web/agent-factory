@@ -186,7 +186,7 @@ export class IntakeGenerationService {
     const hardDeadline = new Date(Date.now() + hardTimeoutMs).toISOString();
 
     const scriptPath = path.join(this.workspaceRoot, 'scripts', 'hermes_agent_run.py');
-    
+
     // Spawn with detached: true to start a new process group
     const child = spawn(
       'python3',
@@ -410,7 +410,7 @@ export class IntakeGenerationService {
           const remaining = Math.max(0, hardTimeoutMs - elapsed);
 
           console.log(`[IntakeGenerationService] Recovered active PID ${pid} for ${op.draft_id}. Watchdog remaining: ${remaining}ms`);
-          
+
           const watchdogTimer = setTimeout(() => {
             this.terminateProcessGroup(pid, 'recovered_hard_timeout_exceeded');
           }, remaining);

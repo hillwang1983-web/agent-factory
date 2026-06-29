@@ -16,7 +16,7 @@ function request(url, options = {}) {
       method: options.method || 'GET',
       headers: headers,
     };
-    
+
     const req = http.request(reqOptions, (res) => {
       let data = '';
       res.on('data', (chunk) => {
@@ -30,11 +30,11 @@ function request(url, options = {}) {
         });
       });
     });
-    
+
     req.on('error', (err) => {
       reject(err);
     });
-    
+
     if (options.body) {
       req.write(options.body);
     }
@@ -47,7 +47,7 @@ async function runTests() {
   const baseUrl = process.env.TEST_BASE_URL || 'http://localhost:3011';
   const aduId = 'REQ-MVP-004';
   const workspaceRoot = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../..');
-  
+
   console.log(`Target Base URL: ${baseUrl}`);
   console.log(`Workspace Root: ${workspaceRoot}`);
 
@@ -79,7 +79,7 @@ async function runTests() {
     if (fs.existsSync(analysisDocPath)) {
       fs.unlinkSync(analysisDocPath);
     }
-    
+
     const resA = await request(`${baseUrl}/api/agent-factory/adus/${aduId}/reviews/analysis/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -96,7 +96,7 @@ async function runTests() {
     console.log('\n--- Test Case 2: Document is empty (Expected: 400) ---');
     fs.mkdirSync(path.dirname(analysisDocPath), { recursive: true });
     fs.writeFileSync(analysisDocPath, '   \n   \n', 'utf-8');
-    
+
     const resB = await request(`${baseUrl}/api/agent-factory/adus/${aduId}/reviews/analysis/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -115,7 +115,7 @@ async function runTests() {
     fs.mkdirSync(lockDir, { recursive: true });
     const projectId = aduData.adus[aduIndex].project_id || 'default-open5gs';
     const lockPath = path.join(lockDir, `${projectId}__${aduId}.lock`);
-    
+
     const lockData = {
       adu_id: aduId,
       mode: 'continue',
@@ -152,7 +152,7 @@ async function runTests() {
     }
     // Delete any existing pending review for this adu to keep it clean
     reviewsWrapper.reviews = (reviewsWrapper.reviews || []).filter(r => !(r.adu_id === aduId && r.gate === 'analysis' && r.status === 'pending'));
-    
+
     // Add a simulated pending review
     const testReviewId = `review-${aduId}-analysis-${Date.now()}`;
     reviewsWrapper.reviews.push({
@@ -174,7 +174,7 @@ async function runTests() {
 
     // Restore valid document to allow successful approval
     fs.writeFileSync(analysisDocPath, '# Valid Document\nSome analysis notes.', 'utf-8');
-    
+
     console.log('Approving the review now...');
     const resApprove = await request(`${baseUrl}/api/agent-factory/adus/${aduId}/reviews/analysis/approve`, {
       method: 'POST',
@@ -183,7 +183,7 @@ async function runTests() {
     });
     console.log(`Status code: ${resApprove.statusCode}`);
     console.log(`Response: ${resApprove.data}`);
-    
+
     if (resApprove.statusCode !== 200) {
       throw new Error(`Failed to approve: ${resApprove.data}`);
     }

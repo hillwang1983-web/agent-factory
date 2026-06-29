@@ -43,7 +43,7 @@ async function main() {
   const aduIntake = new AduIntake(projectRepo, aduFactory, config.workspaceRoot, epicFactory, generationService);
 
   // Initialize WS Broadcaster
-  initializeWebSocketServer(config.wsPort, monitor, config.pollIntervalMs, logger);
+  initializeWebSocketServer(config.wsPort, config.host, monitor, config.pollIntervalMs, logger);
 
   const app = express();
 
@@ -91,8 +91,8 @@ async function main() {
     });
   });
 
-  app.listen(config.port, '0.0.0.0', () => {
-    logger.info({ port: config.port }, 'HTTP Server running');
+  app.listen(config.port, config.host, () => {
+    logger.info({ port: config.port, host: config.host }, 'HTTP Server running');
   });
 }
 
