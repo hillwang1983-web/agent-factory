@@ -525,7 +525,7 @@ class TestRunnerRetry(unittest.TestCase):
         registry_dir = self.repo_root / ".ai-agent" / "registry"
         registry_dir.mkdir(parents=True, exist_ok=True)
         adu_file = registry_dir / "adu.json"
-        
+
         initial_adu = {
             "version": 1,
             "adus": [
@@ -541,11 +541,11 @@ class TestRunnerRetry(unittest.TestCase):
             ]
         }
         adu_file.write_text(json.dumps(initial_adu, indent=2), encoding="utf-8")
-        
+
         # Initialize mock agents.json and runs.json to keep runner happy
         (registry_dir / "agents.json").write_text(json.dumps({"agents": {"developer": {"description": "mock developer", "prompt": ".ai-agent/prompts/developer.md"}}}, indent=2), encoding="utf-8")
         (registry_dir / "runs.json").write_text(json.dumps({"version": 1, "runs": []}, indent=2), encoding="utf-8")
-        
+
         # Write dummy developer.md prompt
         (self.repo_root / ".ai-agent" / "prompts" / "developer.md").write_text("Mock Prompt template: completion.json", encoding="utf-8")
 
@@ -557,43 +557,65 @@ class TestRunnerRetry(unittest.TestCase):
         mock_policy.max_prompt_bytes = 1000
         mock_policy.max_estimated_input_tokens = 1000
 
-        with patch("hermes_agent_run.agent_run_policy.load_policy", return_value=mock_policy):
-            res = MockControlledProcessResult(
-                stdout="Done",
-                stderr="",
-                returncode=0,
-                completion_result={"result": "success", "next_state": "implemented", "changed_files": []},
-                completion_status="valid",
-                termination_reason="process_exit",
-                pid=135,
-                target_files_changed=False
-            )
+        orig_registry = getattr(run_mod, "REGISTRY", None)
+        orig_root = getattr(run_mod, "ROOT", None)
 
-            with patch("hermes_agent_run.agent_run_policy.execute_controlled_process", return_value=res) as mock_execute:
-                with patch("hermes_agent_run._find_and_parse_hermes_diagnostic", return_value=None):
-                    test_args = [
-                        "hermes_agent_run.py",
-                        "--adu", "ADU-CONVERGE-RUNNER",
-                        "--agent", "developer",
-                        "--repo", str(self.repo_root)
-                    ]
-                    # Direct env patch for test registry path
-                    run_mod.REGISTRY = registry_dir
-                    run_mod.ROOT = self.repo_root
-                    with patch.dict(os.environ, {"AGENT_FACTORY_REGISTRY_DIR": str(registry_dir)}):
-                        with patch.object(sys, "argv", test_args):
-                            try:
-                                run_mod.main()
-                            except SystemExit:
-                                pass
+        try:
+            with patch("hermes_agent_run.agent_run_policy.load_policy", return_value=mock_policy):
+                res = MockControlledProcessResult(
+                    stdout="Done",
+                    stderr="",
+                    returncode=0,
+                    completion_result={"result": "success", "next_state": "implemented", "changed_files": []},
+                    completion_status="valid",
+                    termination_reason="process_exit",
+                    pid=135,
+                    target_files_changed=False
+                )
+
+                with patch("hermes_agent_run.agent_run_policy.execute_controlled_process", return_value=res) as mock_execute:
+                    with patch("hermes_agent_run._find_and_parse_hermes_diagnostic", return_value=None):
+                        test_args = [
+                            "hermes_agent_run.py",
+                            "--adu", "ADU-CONVERGE-RUNNER",
+                            "--agent", "developer",
+                            "--repo", str(self.repo_root)
+                        ]
+                        # Direct env patch for test registry path
+                        run_mod.REGISTRY = registry_dir
+                        run_mod.ROOT = self.repo_root
+                        with patch.dict(os.environ, {"AGENT_FACTORY_REGISTRY_DIR": str(registry_dir)}):
+                            with patch.object(sys, "argv", test_args):
+                                try:
+                                    run_mod.main()
+                                    exit_code = 0
+                                except SystemExit as e:
+                                    exit_code = e.code if e.code is not None else 0
+
+                                # Exit code should indicate success (0)
+                                self.assertEqual(exit_code, 0)
+        finally:
+            if orig_registry is not None:
+                run_mod.REGISTRY = orig_registry
+            if orig_root is not None:
+                run_mod.ROOT = orig_root
 
         # Verify adu.json metadata converged on runner exit
         updated_adu_data = json.loads(adu_file.read_text(encoding="utf-8"))
         converged_adu = updated_adu_data["adus"][0]
-        
+
         self.assertEqual(converged_adu["latest_agent"], "developer")
         self.assertEqual(converged_adu["last_result"], "success")
         self.assertNotEqual(converged_adu["latest_run_timestamp"], "20260621-110000")
+
+        # Verify runs.json has recorded the successful run record
+        runs_file = registry_dir / "runs.json"
+        runs_data = json.loads(runs_file.read_text(encoding="utf-8"))
+        self.assertTrue(len(runs_data.get("runs", [])) > 0)
+        latest_run = runs_data["runs"][-1]
+        self.assertEqual(latest_run["adu_id"], "ADU-CONVERGE-RUNNER")
+        self.assertEqual(latest_run["agent"], "developer")
+        self.assertEqual(latest_run["result"], "success")
 
 if __name__ == "__main__":
     unittest.main()

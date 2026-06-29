@@ -141,95 +141,237 @@ async function main() {
     if (!updated.endedAt) throw new Error('Expected stale operation to receive endedAt');
   });
 
-  // Test 7: ADU latest metadata and operation final state convergence (Real Registry-based Test)
-  await asyncAssert('ADU latest metadata and operation state converges', async () => {
+  // Test 7: ADU latest metadata and operation final state convergence (E2E Process Integration)
+  await asyncAssert('ADU latest metadata and operation state converges via E2E Orchestrator subprocess', async () => {
     store.clear();
 
-    // 1. Write the initial mock files under the active test registry
+    const aduId = 'ADU-CONVERGE-E2E';
+
+    // 1. Setup paths
+    const runScriptPath = path.join(__dirname, '..', '..', '..', 'scripts', 'hermes_agent_run.py');
+    const runScriptBakPath = runScriptPath + '.bak';
+
+    // 2. Initialize mock files under the active test registry
     fs.writeFileSync(
       path.join(registryDir, 'adu.json'),
       JSON.stringify({
         version: 1,
         adus: [
           {
-            id: 'ADU-CONVERGE',
-            state: 'evidenced',
-            project_id: 'default-open5gs',
-            repo_path: '/tmp',
+            id: aduId,
+            state: 'created',
+            project_id: 'smoke-proj',
+            repo_path: testWorkspace,
             artifacts: [],
-            latest_agent: 'acceptance-reviewer',
+            latest_agent: 'requirement-analyst',
             latest_run_timestamp: '20260621-110000'
           }
         ]
       }, null, 2) + '\n'
     );
+
+    fs.writeFileSync(
+      path.join(registryDir, 'agents.json'),
+      JSON.stringify({
+        agents: {
+          'requirement-analyst': {
+            description: 'Requirement analyst agent',
+            prompt: '.ai-agent/prompts/analyst.md'
+          }
+        }
+      }, null, 2) + '\n'
+    );
+
     fs.writeFileSync(
       path.join(registryDir, 'runs.json'),
       JSON.stringify({
         version: 1,
-        runs: [
-          {
-            timestamp: '20260621-120000',
-            adu_id: 'ADU-CONVERGE',
-            agent: 'evidence',
-            result: 'success',
-            returncode: 0
-          }
-        ]
+        runs: []
       }, null, 2) + '\n'
     );
 
-    // 2. Create the operation and set its terminal status in the store
+    // Create prompt file in repo
+    const promptsDir = path.join(testWorkspace, '.ai-agent', 'prompts');
+    fs.mkdirSync(promptsDir, { recursive: true });
+    fs.writeFileSync(path.join(promptsDir, 'analyst.md'), 'Mock prompt template', 'utf8');
+
+    // 3. Create the operation in the store
     const op = store.createOperation({
       targetType: 'adu',
-      targetId: 'ADU-CONVERGE',
-      mode: 'continue',
+      targetId: aduId,
+      mode: 'step',
     });
 
-    store.updateOperation(op.id, {
-      status: 'completed',
-      finalState: 'evidenced',
-      exitCode: 0,
-    });
+    // 4. Back up and replace hermes_agent_run.py
+    fs.renameSync(runScriptPath, runScriptBakPath);
 
-    // 3. Load the monitor and check that the ADU metadata converges with the latest run
-    const { FileAgentFactoryRepository } = require('../dist/infrastructure/file-agent-factory-repository');
-    const { AgentFactoryMonitorUseCase } = require('../dist/application/agent-factory-monitor');
-    const pino = require('pino');
-    const logger = pino({ level: 'silent' });
-    const repo = new FileAgentFactoryRepository(testWorkspace, 100000, logger);
-    const monitor = new AgentFactoryMonitorUseCase(repo);
+    try {
+      const mockRunCode = `#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+reg_dir_env = os.environ.get("AGENT_FACTORY_REGISTRY_DIR")
+if not reg_dir_env:
+    sys.exit("AGENT_FACTORY_REGISTRY_DIR not set")
+reg_dir = Path(reg_dir_env).resolve()
 
-    const dashboard = await monitor.getDashboard();
-    const aduView = dashboard.adus.find(a => a.id === 'ADU-CONVERGE');
+# Update adu.json to simulated converged state
+adu_path = reg_dir / "adu.json"
+adu_data = json.loads(adu_path.read_text(encoding="utf-8"))
+for adu in adu_data.get("adus", []):
+    if adu["id"] == "ADU-CONVERGE-E2E":
+        adu["state"] = "analysis_review"
+        adu["latest_agent"] = "requirement-analyst"
+        adu["latest_run_timestamp"] = "20260621-120000"
+        adu["last_result"] = "success"
+adu_path.write_text(json.dumps(adu_data, indent=2), encoding="utf-8")
 
-    if (!aduView) throw new Error('Expected to find ADU-CONVERGE in dashboard');
-    if (aduView.state !== 'evidenced') {
-      throw new Error(`Expected ADU state to converge to evidenced, got: ${aduView.state}`);
-    }
-    if (aduView.latest_agent !== 'evidence') {
-      throw new Error(`Expected ADU latest_agent to converge to evidence, got: ${aduView.latest_agent}`);
-    }
-    if (aduView.latest_run_timestamp !== '20260621-120000') {
-      throw new Error(`Expected ADU latest_run_timestamp to converge to 20260621-120000, got: ${aduView.latest_run_timestamp}`);
-    }
+# Write to runs.json
+runs_path = reg_dir / "runs.json"
+runs_data = {"version": 1, "runs": [{
+    "timestamp": "20260621-120000",
+    "adu_id": "ADU-CONVERGE-E2E",
+    "agent": "requirement-analyst",
+    "result": "success",
+    "returncode": 0
+}]}
+runs_path.write_text(json.dumps(runs_data, indent=2), encoding="utf-8")
 
-    const updatedOp = store.getOperation(op.id);
-    if (updatedOp.status !== 'completed') throw new Error('Expected operation status to be completed');
-    if (updatedOp.finalState !== 'evidenced') throw new Error('Expected operation finalState to be evidenced');
+# Print success JSON expected by orchestrator
+print(json.dumps({
+    "result": "success",
+    "next_state": "analysis_review",
+    "token_usage": {"inputTokens": 100, "outputTokens": 50}
+}))
+`;
+      fs.writeFileSync(runScriptPath, mockRunCode, { mode: 0o755, encoding: 'utf8' });
 
-    // Wait a short duration for the async write back to disk to complete
-    await new Promise(resolve => setTimeout(resolve, 50));
+      // 5. Spawn the orchestrator process
+      const { spawn } = require('child_process');
+      const orchestratorScriptPath = path.join(__dirname, '..', '..', '..', 'scripts', 'hermes_agent_orchestrator.py');
+      const env = { ...process.env, AGENT_FACTORY_REGISTRY_DIR: registryDir };
 
-    // Verify adu.json on disk contains the converged values
-    const updatedDiskAdu = JSON.parse(fs.readFileSync(path.join(registryDir, 'adu.json'), 'utf8'));
-    const diskAdu = updatedDiskAdu.adus.find(a => a.id === 'ADU-CONVERGE');
-    if (!diskAdu) throw new Error('Expected to find ADU-CONVERGE in adu.json on disk');
-    if (diskAdu.latest_agent !== 'evidence') {
-      throw new Error(`Expected disk ADU latest_agent to be evidence, got: ${diskAdu.latest_agent}`);
-    }
-    if (diskAdu.latest_run_timestamp !== '20260621-120000') {
-      throw new Error(`Expected disk ADU latest_run_timestamp to be 20260621-120000, got: ${diskAdu.latest_run_timestamp}`);
+      const child = spawn('python3', [
+        orchestratorScriptPath,
+        '--adu', aduId,
+        '--mode', 'step',
+        '--operation-id', op.id,
+        '--project', 'smoke-proj',
+        '--repo-root', testWorkspace
+      ], { env });
+
+      let lockFileCreatedDuringExecution = false;
+      const lockFilePath = path.join(registryDir, 'registry.lock');
+
+      // Check lock file existence periodically
+      const lockCheckInterval = setInterval(() => {
+        if (fs.existsSync(lockFilePath)) {
+          lockFileCreatedDuringExecution = true;
+        }
+      }, 5);
+
+      let stdoutData = '';
+      child.stdout.on('data', (chunk) => {
+        stdoutData += chunk.toString();
+        let idx = stdoutData.indexOf('\n');
+        while (idx !== -1) {
+          const line = stdoutData.substring(0, idx).trim();
+          stdoutData = stdoutData.substring(idx + 1);
+          if (line) {
+            try {
+              const parsed = JSON.parse(line);
+              store.addEvent(op.id, {
+                type: parsed.event || parsed.type || 'orchestrator_event',
+                payload: parsed,
+                stream: 'stdout',
+                message: parsed.message || ''
+              });
+              const updates = mapOrchestratorEvent(parsed);
+              if (Object.keys(updates).length > 0) {
+                store.updateOperation(op.id, updates);
+              }
+            } catch (_) {}
+          }
+          idx = stdoutData.indexOf('\n');
+        }
+      });
+
+      child.stderr.on('data', (chunk) => {
+        console.error(`Orchestrator stderr: ${chunk.toString()}`);
+      });
+
+      const exitCode = await new Promise((resolve) => {
+        child.on('close', (code) => {
+          clearInterval(lockCheckInterval);
+          resolve(code);
+        });
+      });
+
+      // Update operation status to match close handler logic
+      const { FileAgentFactoryRepository } = require('../dist/infrastructure/file-agent-factory-repository');
+      const { AgentFactoryMonitorUseCase } = require('../dist/application/agent-factory-monitor');
+      const pino = require('pino');
+      const logger = pino({ level: 'silent' });
+      const repo = new FileAgentFactoryRepository(testWorkspace, 100000, logger);
+      const monitor = new AgentFactoryMonitorUseCase(repo);
+
+      let finalState = 'created';
+      try {
+        const updatedAdu = await repo.getAduById(aduId);
+        if (updatedAdu) finalState = updatedAdu.state;
+      } catch (_) {}
+
+      store.updateOperation(op.id, {
+        status: exitCode === 0 ? 'completed' : 'failed',
+        result: exitCode === 0 ? 'success' : 'failed',
+        exitCode,
+        finalState
+      });
+
+      // 6. Assertions
+      if (exitCode !== 0) {
+        throw new Error(`Orchestrator process exited with non-zero code ${exitCode}`);
+      }
+
+      // Assert lock was unlinked
+      if (fs.existsSync(lockFilePath)) {
+        throw new Error('Expected registry.lock file to be unlinked after execution');
+      }
+
+      // Assert operation store updated correctly
+      const finalOp = store.getOperation(op.id);
+      if (finalOp.status !== 'completed') {
+        throw new Error(`Expected operation status completed, got: ${finalOp.status}`);
+      }
+      if (finalOp.result !== 'success') {
+        throw new Error(`Expected operation result success, got: ${finalOp.result}`);
+      }
+      if (finalOp.finalState !== 'analysis_review') {
+        throw new Error(`Expected operation finalState analysis_review, got: ${finalOp.finalState}`);
+      }
+
+      // Assert ADU metadata converged in returned view
+      const dashboard = await monitor.getDashboard();
+      const aduView = dashboard.adus.find(a => a.id === aduId);
+      if (!aduView) throw new Error('Expected to find converged ADU in dashboard view');
+      if (aduView.state !== 'analysis_review') {
+        throw new Error(`Expected ADU state analysis_review, got: ${aduView.state}`);
+      }
+      if (aduView.latest_agent !== 'requirement-analyst') {
+        throw new Error(`Expected ADU latest_agent requirement-analyst, got: ${aduView.latest_agent}`);
+      }
+      if (aduView.latest_run_timestamp !== '20260621-120000') {
+        throw new Error(`Expected ADU latest_run_timestamp 20260621-120000, got: ${aduView.latest_run_timestamp}`);
+      }
+    } finally {
+      // 7. Clean up bak file and restore original hermes_agent_run.py
+      try {
+        if (fs.existsSync(runScriptBakPath)) {
+          if (fs.existsSync(runScriptPath)) {
+            fs.unlinkSync(runScriptPath);
+          }
+          fs.renameSync(runScriptBakPath, runScriptPath);
+        }
+      } catch (_) {}
     }
   });
 

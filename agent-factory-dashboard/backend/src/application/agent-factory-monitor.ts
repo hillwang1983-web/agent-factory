@@ -288,48 +288,10 @@ export class AgentFactoryMonitorUseCase {
       let convergedLatestAgent = adu.latest_agent;
       let convergedLatestRunTimestamp = adu.latest_run_timestamp;
       let convergedLastResult = adu.last_result;
-      
-      const needsSync = latestRun && (
-        adu.latest_agent !== latestRun.agent ||
-        adu.latest_run_timestamp !== latestRun.timestamp ||
-        adu.last_result !== latestRun.result
-      );
-
-      if (needsSync && latestRun) {
+      if (latestRun) {
         convergedLatestAgent = latestRun.agent;
         convergedLatestRunTimestamp = latestRun.timestamp;
         convergedLastResult = latestRun.result;
-
-        const aduId = adu.id;
-        const targetAgent = latestRun.agent;
-        const targetTimestamp = latestRun.timestamp;
-        const targetResult = latestRun.result;
-
-        // Perform the write back to the registry asynchronously to avoid blocking the read response
-        void this.repo.updateAdus((adusList) => {
-          const target = adusList.find(a => a.id === aduId);
-          if (target) {
-            let innerChanged = false;
-            if (target.latest_agent !== targetAgent) {
-              target.latest_agent = targetAgent;
-              innerChanged = true;
-            }
-            if (target.latest_run_timestamp !== targetTimestamp) {
-              target.latest_run_timestamp = targetTimestamp;
-              innerChanged = true;
-            }
-            if (target.last_result !== targetResult) {
-              target.last_result = targetResult;
-              innerChanged = true;
-            }
-            if (innerChanged) {
-              target.updated_at = new Date().toISOString();
-            }
-          }
-          return adusList;
-        }).catch((err) => {
-          console.error(`Failed to write back converged ADU metadata to registry for ${aduId}:`, err);
-        });
       }
 
       aduViews.push({
