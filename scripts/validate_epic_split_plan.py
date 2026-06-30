@@ -42,6 +42,31 @@ def check_split_semantics(data: dict, profile_data: dict, system_flow_data: dict
     child_adus = data.get("child_adus") or []
     adu_ids = {adu.get("id") for adu in child_adus if adu.get("id")}
 
+    # Validate codeless and required_deliverables semantics for all child ADUs
+    for adu in child_adus:
+        adu_id = adu.get("id", "unknown")
+        write_paths = adu.get("allowed_write_paths", [])
+        is_codeless = adu.get("codeless") is True
+        req_deliverables = adu.get("required_deliverables")
+        if is_codeless:
+            if req_deliverables:
+                fail(f"child ADU {adu_id} is codeless but has required_deliverables defined")
+        else:
+            if not req_deliverables or not isinstance(req_deliverables, list) or len(req_deliverables) == 0:
+                fail(f"child ADU {adu_id} must specify either 'codeless': true OR a non-empty list of 'required_deliverables'")
+            for deliverable in req_deliverables:
+                if not isinstance(deliverable, str):
+                    fail(f"child ADU {adu_id} required_deliverables has non-string path")
+                if deliverable.startswith("/") or ".." in deliverable or deliverable.startswith("\\"):
+                    fail(f"child ADU {adu_id} required_deliverables has unsafe path: {deliverable}")
+                matched = False
+                for wp in write_paths:
+                    if deliverable == wp or deliverable.startswith(wp.rstrip("/") + "/"):
+                        matched = True
+                        break
+                if not matched:
+                    fail(f"child ADU {adu_id} required deliverable '{deliverable}' is not in allowed_write_paths")
+
     # 1. Dependency semantics validation
     deps = data.get("dependencies") or []
     for i, dep in enumerate(deps):
@@ -193,6 +218,8 @@ def main():
             fail(f"child ADU {adu_id} missing or empty 'allowed_write_paths'")
         if not adu.get("acceptance_summary"):
             fail(f"child ADU {adu_id} missing 'acceptance_summary'")
+
+
 
     # Check decision vs child count
     if decision == "single_adu" and len(child_adus) != 1:

@@ -703,6 +703,250 @@ def normalize_repo_relative_path(value):
     return path_value
 
 
+def generate_adu_manifest(adu: dict, repo_root: Path, run_dir: Path, registry_dir: Path):
+    """Generate and save an ADU delivery manifest inside .ai-agent/evidence/."""
+    import hashlib
+    import datetime as dt
+    manifest_path = repo_root / ".ai-agent" / "evidence" / f"{adu['id']}-manifest.json"
+
+    # Get delivery commit
+    proc_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo_root), capture_output=True, text=True)
+    delivery_commit = proc_head.stdout.strip() if proc_head.returncode == 0 else "unknown"
+
+    # Get branch name
+    proc_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo_root), capture_output=True, text=True)
+    branch_name = proc_branch.stdout.strip() if proc_branch.returncode == 0 else "unknown"
+
+    # Get base commit from draft manifest
+    base_commit = None
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                base_commit = json.load(f).get("base_commit")
+        except Exception:
+            pass
+    if not base_commit:
+        base_commit = delivery_commit
+
+    # 1. Validate the current run's file-delta.json.
+    # P1: Raise RuntimeError if file-delta.json is missing or corrupted.
+    delta_file = run_dir / "file-delta.json"
+    if not delta_file.is_file():
+        raise RuntimeError(f"file-delta.json is missing in run_dir '{run_dir}'. Integrity check failed.")
+    try:
+        with open(delta_file, "r", encoding="utf-8") as f:
+            current_delta = json.load(f)
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse file-delta.json in '{run_dir}': {e}. Integrity check failed.")
+
+    # 2. Aggregate all file changes across all runs for this ADU
+    changed_files = set()
+
+    # Read past runs from registry runs.json
+    # P0/P1: runs.json must be present and parseable, otherwise fail-closed.
+    runs_file = registry_dir / "runs.json"
+    if not runs_file.is_file():
+        raise RuntimeError(f"runs.json is missing in registry '{registry_dir}'. Integrity check failed.")
+    try:
+        with open(runs_file, "r", encoding="utf-8") as f:
+            runs_data = json.load(f)
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse runs.json: {e}. Integrity check failed.")
+
+    has_production_run = False
+
+    for run in runs_data.get("runs", []):
+        if run.get("adu_id") == adu["id"]:
+            agent_name = run.get("agent")
+            run_res = run.get("result")
+            # Only aggregate production code agents with success results
+            if agent_name in ("developer", "buildfix-debugger") and run_res == "success":
+                has_production_run = True
+                r_dir = run.get("run_dir")
+                if not r_dir:
+                    raise RuntimeError(f"Run record has missing run_dir. Integrity check failed.")
+
+                # P2: Prevent directory traversal and verify repository boundary limits
+                try:
+                    abs_repo = repo_root.resolve()
+                    abs_df = (repo_root / r_dir / "file-delta.json").resolve()
+                    if abs_repo not in abs_df.parents:
+                        raise RuntimeError(f"Path traversal detected in run_dir: {r_dir}")
+                except Exception as e:
+                    raise RuntimeError(f"Invalid run_dir path boundary check: {e}")
+
+                df_path = repo_root / r_dir / "file-delta.json"
+                if not df_path.is_file():
+                    raise RuntimeError(f"file-delta.json is missing in production run_dir '{r_dir}'. Integrity check failed.")
+                try:
+                    with open(df_path, "r", encoding="utf-8") as df:
+                        past_delta = json.load(df)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to parse file-delta.json in '{r_dir}': {e}. Integrity check failed.")
+
+                for fpath in (past_delta.get("created", []) + past_delta.get("modified", [])):
+                    changed_files.add(fpath)
+
+    # Ensure we actually have at least one successful production run recorded.
+    if not has_production_run:
+        raise RuntimeError("No successful production run found for this ADU. Manifest cannot be generated.")
+
+    # Add current run delta
+    for fpath in (current_delta.get("created", []) + current_delta.get("modified", [])):
+        changed_files.add(fpath)
+
+    # 3. Get allowed write paths, required evidence, and required deliverables from ADU definition or contract
+    allowed_write_paths = adu.get("allowed_write_paths", [])
+    required_evidence = adu.get("required_evidence", [])
+
+    # P1: Raise exception if required_deliverables is present but not a list - fail-closed
+    req_deliv = adu.get("required_deliverables")
+    if req_deliv is not None and not isinstance(req_deliv, list):
+        raise RuntimeError("required_deliverables in ADU is not a list. Integrity check failed.")
+    required_deliverables = req_deliv or []
+
+    # P1: codeless must only be True (strict boolean check) from the trusted ADU definition.
+    # Contract must not override codeless to prevent Agent from self-escalating/bypassing.
+    is_codeless = (adu.get("codeless") is True) or (adu.get("is_codeless") is True)
+
+    contract_path = repo_root / ".ai-agent" / "contracts" / f"{adu['id']}.json"
+    if contract_path.exists():
+        try:
+            with open(contract_path, "r", encoding="utf-8") as f:
+                contract = json.load(f)
+            allowed_write_paths = contract.get("scope", {}).get("allowed_write_paths", allowed_write_paths)
+
+            c_req = contract.get("required_deliverables")
+            if c_req is None:
+                c_req = contract.get("scope", {}).get("required_deliverables")
+            if c_req is not None:
+                if not isinstance(c_req, list):
+                    raise RuntimeError("required_deliverables in contract is not a list. Integrity check failed.")
+
+                # Check for deletion from the base ADU required deliverables
+                for adu_f in required_deliverables:
+                    norm_adu_f = normalize_repo_relative_path(adu_f)
+                    if not norm_adu_f:
+                        continue
+                    if not any(normalize_repo_relative_path(cf) == norm_adu_f for cf in c_req):
+                        raise RuntimeError(f"Contract cannot remove required deliverable '{adu_f}' defined in the ADU. Integrity check failed.")
+
+                # Check allowed write paths inclusion
+                for cf in c_req:
+                    if not isinstance(cf, str):
+                        raise RuntimeError("required_deliverables in contract contains a non-string path.")
+                    normalized = normalize_repo_relative_path(cf)
+                    if normalized:
+                        # Make sure it's in allowed write paths
+                        matched = False
+                        for wp in allowed_write_paths:
+                            if normalized == wp or normalized.startswith(wp.rstrip("/") + "/"):
+                                matched = True
+                                break
+                        if not matched:
+                            raise RuntimeError(f"Contract required deliverable '{cf}' is not in allowed_write_paths")
+
+                # Union contract required deliverables with ADU base required deliverables
+                union_list = list(required_deliverables)
+                for cf in c_req:
+                    norm_cf = normalize_repo_relative_path(cf)
+                    if norm_cf and norm_cf not in union_list:
+                        union_list.append(norm_cf)
+                required_deliverables = union_list
+            elif required_deliverables:
+                # If ADU has deliverables, contract must specify them or we fail
+                raise RuntimeError("Contract does not specify required_deliverables but the ADU requires them. Integrity check failed.")
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"Failed to parse contract file '{contract_path}': {e}. Integrity check failed.")
+
+    required_outputs = []
+
+    # Add actually changed production files
+    for fpath in changed_files:
+        normalized = normalize_repo_relative_path(fpath)
+        if not normalized:
+            continue
+        if normalized.startswith(".ai-agent/") or normalized.startswith(".git/"):
+            continue
+        is_allowed = False
+        for allowed in allowed_write_paths:
+            if allowed.startswith(".ai-agent/") or allowed.startswith(".git/"):
+                continue
+            if normalized == allowed or normalized.startswith(allowed.rstrip("/") + "/"):
+                is_allowed = True
+                break
+        if is_allowed:
+            required_outputs.append(normalized)
+
+    # Add required deliverables (must be present in final required_outputs and actually created/modified by this ADU)
+    normalized_changed_files = {normalize_repo_relative_path(f) for f in changed_files if normalize_repo_relative_path(f)}
+    for fpath in required_deliverables:
+        normalized = normalize_repo_relative_path(fpath)
+        if normalized:
+            if normalized not in normalized_changed_files:
+                raise RuntimeError(f"Required deliverable '{fpath}' was not created or modified by this ADU.")
+            required_outputs.append(normalized)
+
+    # Add required evidence files (if they exist and are safely normalized)
+    for ev_path in required_evidence:
+        normalized = normalize_repo_relative_path(ev_path)
+        if not normalized:
+            continue
+        full_ev = repo_root / normalized
+        if full_ev.is_file():
+            required_outputs.append(normalized)
+
+    required_outputs = sorted(list(set(required_outputs)))
+
+    # Calculate hashes for all existing deliverables
+    outputs_hash = {}
+    for fpath in required_outputs:
+        full_path = repo_root / fpath
+        if full_path.is_file():
+            hasher = hashlib.sha256()
+            with open(full_path, "rb") as f:
+                while chunk := f.read(8192):
+                    hasher.update(chunk)
+            outputs_hash[fpath] = hasher.hexdigest()
+
+    # P0 checks for code-based ADUs:
+    if not is_codeless:
+        if not required_outputs:
+            raise RuntimeError("required_outputs is empty for code-based ADU. Integrity check failed.")
+
+        has_production_file = False
+        for fpath in required_outputs:
+            if not fpath.startswith(".ai-agent/") and not fpath.startswith(".git/"):
+                has_production_file = True
+                break
+        if not has_production_file:
+            raise RuntimeError("No production files found in required_outputs for code-based ADU. Integrity check failed.")
+
+    # All files in required_outputs must exist on disk and be in outputs_hash
+    for fpath in required_outputs:
+        full_path = repo_root / fpath
+        if not full_path.is_file():
+            raise RuntimeError(f"Required deliverable file '{fpath}' is missing from disk. Integrity check failed.")
+        if fpath not in outputs_hash:
+            raise RuntimeError(f"Required deliverable file '{fpath}' hash is missing from outputs_hash. Integrity check failed.")
+
+    manifest = {
+        "adu_id": adu["id"],
+        "base_commit": base_commit,
+        "delivery_commit": delivery_commit,
+        "branch": branch_name,
+        "required_outputs": required_outputs,
+        "outputs_hash": outputs_hash,
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat() + "Z"
+    }
+
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+
 def extend_unique(target_list, values):
     if not isinstance(target_list, list):
         target_list = []
@@ -1243,6 +1487,20 @@ def main():
                         "profile_path": p.get("profile_path") or str(project_repo_path / ".agent-factory" / "project-profile.json"),
                         "knowledge_dir": p.get("knowledge_dir") or str(project_repo_path / ".agent-factory" / "knowledge")
                     }
+            except Exception:
+                pass
+
+    # Record base_commit when first starting
+    if not is_epic_run and args.agent != "project-profiler" and not args.intake_draft:
+        manifest_path = project_repo_path / ".ai-agent" / "evidence" / f"{adu['id']}-manifest.json"
+        if not manifest_path.exists():
+            try:
+                proc_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(project_repo_path), capture_output=True, text=True)
+                if proc_head.returncode == 0:
+                    base_commit = proc_head.stdout.strip()
+                    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(manifest_path, "w", encoding="utf-8") as f:
+                        json.dump({"adu_id": adu["id"], "base_commit": base_commit}, f, indent=2)
             except Exception:
                 pass
 
@@ -1798,6 +2056,8 @@ def main():
         apply_agent_side_effects(adu, args.agent, result)
 
         if run_result == "success" and next_state:
+            if next_state == "evidenced":
+                generate_adu_manifest(adu, project_repo_path, run_dir, REGISTRY)
             adu["state"] = next_state
             adu["retry_count"] = 0
         elif run_result == "human_gate":

@@ -9,7 +9,7 @@ export interface AgentFactoryReviewPolicy {
   design_review_required: boolean;
 }
 
-export type AgentFactoryHealth = 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
+export type AgentFactoryHealth = 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running' | 'delivery_drifted';
 
 export interface AgentFactoryRun {
   timestamp: string;
@@ -67,6 +67,8 @@ export interface AgentFactoryAduView {
   allowed_write_paths: string[];
   required_commands: string[];
   required_evidence: string[];
+  required_deliverables?: string[];
+  codeless?: boolean;
   artifacts: string[];
   human_gate_required: boolean;
   pre_gate_state?: string;

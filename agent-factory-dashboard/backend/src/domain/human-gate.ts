@@ -7,6 +7,8 @@ export type HumanGateType =
   | 'acceptance_waiver'
   | 'command_policy_exception'
   | 'token_budget_approval'
+  | 'dependency_delivery_missing'
+  | 'dependency_blocked'
   | 'manual_intervention';
 
 export type HumanGateStatus =

@@ -251,6 +251,59 @@ def main():
 
     adu_allowed_paths = adu_entry.get("allowed_write_paths", [])
 
+    # required_deliverables checks
+    adu_req_deliv = adu_entry.get("required_deliverables")
+    if adu_req_deliv is not None and not isinstance(adu_req_deliv, list):
+        print(f"FAIL contract {adu_id}: ADU 'required_deliverables' is not an array", file=sys.stderr)
+        return 1
+
+    contract_req_deliv = contract.get("required_deliverables")
+    if contract_req_deliv is None:
+        contract_req_deliv = contract.get("scope", {}).get("required_deliverables")
+    if adu_req_deliv and (contract_req_deliv is None):
+        print(f"FAIL contract {adu_id}: contract must specify 'required_deliverables' since the ADU has required deliverables", file=sys.stderr)
+        return 1
+
+    if contract_req_deliv is not None:
+        if not isinstance(contract_req_deliv, list):
+            print(f"FAIL contract {adu_id}: contract 'required_deliverables' is not an array", file=sys.stderr)
+            return 1
+
+        # Check for path safety, allowed_write_paths inclusion, and no deletion of ADU required deliverables
+        sys.path.append(str(Path(__file__).resolve().parent))
+        from hermes_agent_run import normalize_repo_relative_path
+
+        # 1. Path safety and allowed_write_paths inclusion
+        for p in contract_req_deliv:
+            if not isinstance(p, str):
+                print(f"FAIL contract {adu_id}: contract 'required_deliverables' contains non-string item", file=sys.stderr)
+                return 1
+            if p.startswith("/") or ".." in p or p.startswith("\\"):
+                print(f"FAIL contract {adu_id}: contract 'required_deliverables' contains unsafe path: {p}", file=sys.stderr)
+                return 1
+            # Check allowed write paths inclusion
+            normalized = normalize_repo_relative_path(p)
+            if normalized:
+                matched = False
+                for wp in contract_allowed_paths:
+                    if normalized == wp or normalized.startswith(wp.rstrip("/") + "/"):
+                        matched = True
+                        break
+                if not matched:
+                    print(f"FAIL contract {adu_id}: contract required deliverable '{p}' is not in allowed_write_paths", file=sys.stderr)
+                    return 1
+
+        # 2. Prevent deletion of ADU required deliverables
+        if adu_req_deliv:
+            for adu_f in adu_req_deliv:
+                norm_adu_f = normalize_repo_relative_path(adu_f)
+                if not norm_adu_f:
+                    continue
+                # Must be present in contract_req_deliv
+                if not any(normalize_repo_relative_path(cf) == norm_adu_f for cf in contract_req_deliv):
+                    print(f"FAIL contract {adu_id}: contract cannot delete required deliverable '{adu_f}' defined in the ADU", file=sys.stderr)
+                    return 1
+
     # Command policy check: verification_command must satisfy the ADU's command_policy
     command_policy = adu_entry.get("command_policy")
     if command_policy and isinstance(command_policy, dict):
