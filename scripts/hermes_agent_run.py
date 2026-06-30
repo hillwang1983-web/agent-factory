@@ -143,6 +143,95 @@ def find_adu(adu_data, adu_id):
     raise SystemExit(f"ADU not found: {adu_id}")
 
 
+def generate_adu_manifest(adu: dict, repo_root: Path):
+    """Generate and save an ADU delivery manifest inside .ai-agent/evidence/."""
+    try:
+        import hashlib
+        import datetime
+        manifest_path = repo_root / ".ai-agent" / "evidence" / f"{adu['id']}-manifest.json"
+        
+        # Get delivery commit
+        proc_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo_root), capture_output=True, text=True, check=True)
+        delivery_commit = proc_head.stdout.strip()
+        
+        # Get branch or worktree identification
+        proc_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo_root), capture_output=True, text=True)
+        branch_name = proc_branch.stdout.strip() if proc_branch.returncode == 0 else "unknown"
+        
+        # Get base commit or fallback to parent of delivery commit
+        base_commit = None
+        if manifest_path.exists():
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    base_commit = json.load(f).get("base_commit")
+            except Exception:
+                pass
+                
+        if not base_commit:
+            proc_parent = subprocess.run(["git", "rev-parse", "HEAD~1"], cwd=str(repo_root), capture_output=True, text=True)
+            base_commit = proc_parent.stdout.strip() if proc_parent.returncode == 0 else delivery_commit
+        
+        # Determine changed files from base_commit to delivery_commit using git diff
+        created_files = []
+        modified_files = []
+        deleted_files = []
+        
+        if base_commit != delivery_commit:
+            proc_diff = subprocess.run(["git", "diff", "--name-status", f"{base_commit}..{delivery_commit}"], cwd=str(repo_root), capture_output=True, text=True)
+            if proc_diff.returncode == 0:
+                for line in proc_diff.stdout.strip().splitlines():
+                    if not line.strip():
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) < 2:
+                        continue
+                    status, fpath = parts[0], parts[1]
+                    # Filter out metadata files inside .ai-agent/ or .git
+                    if fpath.startswith(".ai-agent/") or fpath.startswith(".git/"):
+                        continue
+                    if status.startswith("A") or status.startswith("C"):
+                        created_files.append(fpath)
+                    elif status.startswith("D"):
+                        deleted_files.append(fpath)
+                    else:
+                        modified_files.append(fpath)
+                        
+        # Required outputs are all created or modified files
+        required_outputs = sorted(list(set(created_files + modified_files)))
+        
+        # Calculate SHA-256 for all outputs
+        outputs_hash = {}
+        for fpath in required_outputs:
+            full_path = repo_root / fpath
+            if full_path.is_file():
+                hasher = hashlib.sha256()
+                with open(full_path, "rb") as f:
+                    while chunk := f.read(8192):
+                        hasher.update(chunk)
+                outputs_hash[fpath] = hasher.hexdigest()
+                
+        manifest = {
+            "adu_id": adu["id"],
+            "base_commit": base_commit,
+            "delivery_commit": delivery_commit,
+            "branch": branch_name,
+            "required_outputs": required_outputs,
+            "outputs_hash": outputs_hash,
+            "created_files": created_files,
+            "modified_files": modified_files,
+            "deleted_files": deleted_files,
+            "generated_at": datetime.datetime.utcnow().isoformat() + "Z"
+        }
+        
+        # Ensure parent directories exist
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+            
+    except Exception as e:
+        print(f"WARNING: Failed to generate ADU delivery manifest: {e}", file=sys.stderr)
+
+
 def load_project_profile(project_repo_path: Path) -> dict:
     profile_path = project_repo_path / ".agent-factory" / "project-profile.json"
     if not profile_path.exists():
@@ -986,6 +1075,19 @@ def main():
         except Exception:
             pass
 
+    # Record base_commit when first starting
+    manifest_path = project_repo_path / ".ai-agent" / "evidence" / f"{adu['id']}-manifest.json"
+    if not manifest_path.exists():
+        try:
+            proc_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(project_repo_path), capture_output=True, text=True)
+            if proc_head.returncode == 0:
+                base_commit = proc_head.stdout.strip()
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(manifest_path, "w", encoding="utf-8") as f:
+                    json.dump({"adu_id": adu["id"], "base_commit": base_commit}, f, indent=2)
+        except Exception:
+            pass
+
     if args.dry_run:
         print(" ".join(cmd[: len(cmd) - 1]) + " <prompt>")
         return
@@ -1178,6 +1280,8 @@ def main():
 
         if run_result == "success" and next_state:
             adu["state"] = next_state
+            if next_state == "evidenced":
+                generate_adu_manifest(adu, project_repo_path)
             adu["retry_count"] = 0
         elif run_result == "human_gate":
             adu["pre_gate_state"] = adu.get("state", "created")
