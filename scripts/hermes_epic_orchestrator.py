@@ -334,6 +334,86 @@ def validate_child_adu_def(child_def: dict, index: int, epic_id: str) -> list[st
     return errors
 
 
+def check_dependency_health(adu_id: str, adu_data: dict, dep_map: dict, repo_root: str) -> dict:
+    """Check health of dependencies for a child ADU. Returns a status dict."""
+    import hashlib
+    required_deps = dep_map.get(adu_id, [])
+    terminal_states = {"evidenced", "canceled"}
+    
+    for dep_id in required_deps:
+        dep_adu = next((a for a in adu_data["adus"] if a["id"] == dep_id), None)
+        if not dep_adu:
+            return {"status": "blocked", "reason": f"Dependency {dep_id} not found."}
+            
+        if dep_adu.get("state") not in terminal_states:
+            # Normal wait
+            return {"status": "waiting", "reason": f"Dependency {dep_id} is in state {dep_adu.get('state')}."}
+            
+        if dep_adu.get("state") == "canceled":
+            # Canceled dependency blocks execution
+            return {"status": "blocked", "reason": f"Dependency {dep_id} was canceled."}
+            
+        # Manifest check
+        manifest_path = Path(repo_root) / ".ai-agent" / "evidence" / f"{dep_id}-manifest.json"
+        if not manifest_path.exists():
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest is missing."
+            }
+            
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception as e:
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest failed to parse: {e}."
+            }
+            
+        delivery_commit = manifest.get("delivery_commit")
+        if not delivery_commit:
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest is missing delivery_commit."
+            }
+            
+        # Check commit reachability
+        proc = subprocess.run(["git", "merge-base", "--is-ancestor", delivery_commit, "HEAD"], cwd=repo_root, capture_output=True)
+        if proc.returncode != 0:
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} delivery commit {delivery_commit[:7]} is not reachable from HEAD."
+            }
+            
+        # Check outputs existence and hash
+        outputs_hash = manifest.get("outputs_hash", {})
+        for fpath, expected_hash in outputs_hash.items():
+            full_path = Path(repo_root) / fpath
+            if not full_path.is_file():
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} deliverable file is missing: {fpath}."
+                }
+            # Check SHA-256
+            hasher = hashlib.sha256()
+            with open(full_path, "rb") as f:
+                while chunk := f.read(8192):
+                    hasher.update(chunk)
+            if hasher.hexdigest() != expected_hash:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} deliverable file hash mismatch: {fpath}."
+                }
+                
+    return {"status": "healthy"}
+
+
 def get_runnable_child(epic: dict, repo_root: str) -> str | None:
     """Find the first runnable child ADU respecting DAG dependencies (serial MVP)."""
     adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
@@ -368,7 +448,7 @@ def get_runnable_child(epic: dict, repo_root: str) -> str | None:
         if child.get("paused"):
             continue
 
-        # Check dependencies are all evidenced
+        # Check dependencies are all evidenced and healthy
         required_deps = dep_map.get(child_id, [])
         all_deps_met = True
         for dep_id in required_deps:
@@ -377,7 +457,11 @@ def get_runnable_child(epic: dict, repo_root: str) -> str | None:
                 all_deps_met = False
                 break
 
-        if all_deps_met:
+        if not all_deps_met:
+            continue
+
+        health_info = check_dependency_health(child_id, adu_data, dep_map, repo_root)
+        if health_info["status"] == "healthy":
             return child_id
 
     return None
@@ -514,7 +598,50 @@ def step_epic(epic: dict, project_id: str, repo_root: str) -> dict:
                 epic["state"] = new_state
                 broadcast_event("epic_state_changed", {"epicId": epic["id"], "state": new_state})
         else:
-            # No runnable child — check if all done
+            # Check if any uncompleted child is blocked by dependency drift
+            adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+            child_ids = epic.get("child_adus", [])
+            deps = epic.get("dependencies", [])
+
+            # Build dependency map: child_id -> [depends_on_ids]
+            dep_map = {}
+            for dep in deps:
+                to_id = dep.get("to")
+                from_id = dep.get("from")
+                if to_id not in dep_map:
+                    dep_map[to_id] = []
+                dep_map[to_id].append(from_id)
+
+            terminal_states = {"evidenced", "canceled"}
+
+            drifted_blocked = False
+            for child_id in child_ids:
+                child = next((a for a in adu_data["adus"] if a["id"] == child_id), None)
+                if not child or child.get("state") in terminal_states or child.get("state") == "human_gate" or child.get("paused"):
+                    continue
+                health_info = check_dependency_health(child_id, adu_data, dep_map, repo_root)
+                if health_info["status"] == "drifted":
+                    # Transition this child to human_gate
+                    child["pre_gate_state"] = child["state"]
+                    child["state"] = "human_gate"
+                    child["gate_type"] = health_info["gate_type"]
+                    child["human_gate_required"] = True
+                    save_json_direct(REGISTRY / "adu.json", adu_data)
+                    
+                    broadcast_event("epic_state_changed", {
+                        "epicId": epic["id"],
+                        "aduId": child_id,
+                        "state": "child_adus_blocked",
+                        "action": "dependency_delivery_missing"
+                    })
+                    epic["state"] = "child_adus_blocked"
+                    drifted_blocked = True
+                    break
+            
+            if drifted_blocked:
+                return {"result": "blocked", "error": "Child ADU blocked by dependency drift"}
+                
+            # Re-aggregate
             new_state = aggregate_epic_state(epic)
             if new_state != state:
                 epic["state"] = new_state

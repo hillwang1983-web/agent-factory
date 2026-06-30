@@ -410,12 +410,101 @@ def test_c_runner_artifact_gating():
     teardown_temp(tmp_dir)
 
 
+def test_d_dependency_drift_blocks_execution():
+    """step_epic blocks and transitions child to human_gate when dependency is drifted."""
+    import importlib.util as iu
+
+    tmp = tempfile.mkdtemp(prefix="epic-drift-test-")
+    registry = Path(tmp) / "registry"
+    registry.mkdir(parents=True)
+
+    # Setup an epic with dependency ADU-TEST-001 -> ADU-TEST-002
+    epics_data = {
+        "version": 1,
+        "epics": [{
+            "id": "EPIC-TEST-0001",
+            "project_id": "test-project",
+            "repo_path": str(tmp),
+            "title": "Test Epic",
+            "source_requirement": "Test requirement",
+            "state": "child_adus_running",
+            "risk": "low",
+            "target_level": "mvp",
+            "language": "zh",
+            "child_adus": ["ADU-TEST-002", "ADU-TEST-001"],
+            "dependencies": [
+                {"from": "ADU-TEST-002", "to": "ADU-TEST-001"}
+            ],
+            "created_at": "2026-06-11T00:00:00.000Z",
+            "updated_at": "2026-06-11T00:00:00.000Z",
+        }]
+    }
+    (registry / "epics.json").write_text(json.dumps(epics_data, indent=2))
+
+    adu_data = {
+        "version": 1,
+        "adus": [
+            {
+                "id": "ADU-TEST-002",
+                "project_id": "test-project",
+                "repo_path": str(tmp),
+                "title": "Dep ADU",
+                "goal": "Test",
+                "state": "evidenced",
+                "parent_epic_id": "EPIC-TEST-0001",
+            },
+            {
+                "id": "ADU-TEST-001",
+                "project_id": "test-project",
+                "repo_path": str(tmp),
+                "title": "Child ADU",
+                "goal": "Test",
+                "state": "implemented",
+                "parent_epic_id": "EPIC-TEST-0001",
+            }
+        ]
+    }
+    (registry / "adu.json").write_text(json.dumps(adu_data, indent=2))
+    (registry / "runs.json").write_text(json.dumps({"version": 1, "runs": []}))
+
+    os.environ["AGENT_FACTORY_REGISTRY_DIR"] = str(registry)
+    os.environ["AGENT_FACTORY_PROJECTS_REGISTRY"] = str(registry / "projects.json")
+
+    spec = iu.spec_from_file_location(
+        "hermes_epic_orchestrator",
+        str(SCRIPTS / "hermes_epic_orchestrator.py")
+    )
+    orch = iu.module_from_spec(spec)
+    spec.loader.exec_module(orch)
+
+    try:
+        # Since manifest for ADU-TEST-002 is missing, check_dependency_health will return drifted
+        result = orch.step_epic(epics_data["epics"][0], "test-project", tmp)
+        
+        assert result.get("result") == "blocked", f"Expected result to be blocked, got: {result}"
+        assert epics_data["epics"][0]["state"] == "child_adus_blocked", f"Expected epic state child_adus_blocked, got {epics_data['epics'][0]['state']}"
+        
+        # Verify the child ADU-TEST-001 in registry was transitioned to human_gate
+        updated_adus = json.loads((registry / "adu.json").read_text())["adus"]
+        child_adu = next(a for a in updated_adus if a["id"] == "ADU-TEST-001")
+        assert child_adu.get("state") == "human_gate", f"Expected child state human_gate, got {child_adu.get('state')}"
+        assert child_adu.get("gate_type") == "dependency_delivery_missing", f"Expected gate_type dependency_delivery_missing, got {child_adu.get('gate_type')}"
+        assert child_adu.get("human_gate_required") is True, "Expected human_gate_required to be True"
+        assert child_adu.get("pre_gate_state") == "implemented", f"Expected pre_gate_state implemented, got {child_adu.get('pre_gate_state')}"
+
+    finally:
+        teardown_temp(tmp)
+        os.environ.pop("AGENT_FACTORY_REGISTRY_DIR", None)
+        os.environ.pop("AGENT_FACTORY_PROJECTS_REGISTRY", None)
+
+
 def main():
     print("── Epic Orchestrator Integration Tests ──\n")
 
     assert_test("run_child_adu returns failed on non-zero exit", test_a_child_failure_detection)
     assert_test("step_epic returns blocked on child ADU failure", test_b_step_epic_blocked_on_failure)
     assert_test("runner fails when agent success but artifact missing", test_c_runner_artifact_gating)
+    assert_test("step_epic blocks and transitions child to human_gate on dependency drift", test_d_dependency_drift_blocks_execution)
 
     print(f"\n── Results: {passed} passed, {failed} failed ──")
     sys.exit(0 if failed == 0 else 1)
