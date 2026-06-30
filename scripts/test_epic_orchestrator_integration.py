@@ -498,6 +498,132 @@ def test_d_dependency_drift_blocks_execution():
         os.environ.pop("AGENT_FACTORY_PROJECTS_REGISTRY", None)
 
 
+def test_e_dependency_delivery_verification():
+    """Verify that check_dependency_health correctly validates all four drift scenarios."""
+    import tempfile
+    import shutil
+    import importlib.util as iu
+    
+    spec = iu.spec_from_file_location(
+        "hermes_epic_orchestrator",
+        str(SCRIPTS / "hermes_epic_orchestrator.py")
+    )
+    orch = iu.module_from_spec(spec)
+    spec.loader.exec_module(orch)
+    
+    tmp = tempfile.mkdtemp(prefix="epic-delivery-test-")
+    try:
+        # Initialize Git repo in tmp to test merge-base
+        subprocess.run(["git", "init"], cwd=tmp, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp)
+        
+        # Initial commit
+        test_file = Path(tmp) / "init.txt"
+        test_file.write_text("initial")
+        subprocess.run(["git", "add", "init.txt"], cwd=tmp, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=tmp, stdout=subprocess.DEVNULL)
+        
+        # Base commit
+        proc_base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True)
+        base_commit = proc_base.stdout.strip()
+        
+        # Upstream output file creation
+        out_file = Path(tmp) / "ogs-license.c"
+        out_file.write_text("license data")
+        subprocess.run(["git", "add", "ogs-license.c"], cwd=tmp, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "commit", "-m", "add license"], cwd=tmp, stdout=subprocess.DEVNULL)
+        
+        # Delivery commit
+        proc_delivery = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True)
+        delivery_commit = proc_delivery.stdout.strip()
+        
+        # Setup registry
+        registry = Path(tmp) / "registry"
+        registry.mkdir(parents=True)
+        
+        # Mock Epic
+        epics_data = {
+            "version": 1,
+            "epics": [{
+                "id": "EPIC-TEST-1351",
+                "project_id": "test-project",
+                "repo_path": tmp,
+                "title": "Test Epic",
+                "state": "child_adus_running",
+                "child_adus": ["ADU-001", "ADU-002"],
+                "dependencies": [{"from": "ADU-001", "to": "ADU-002"}]
+            }]
+        }
+        (registry / "epics.json").write_text(json.dumps(epics_data, indent=2))
+        
+        # Mock ADUs
+        adu_data = {
+            "version": 1,
+            "adus": [
+                {
+                    "id": "ADU-001",
+                    "project_id": "test-project",
+                    "repo_path": tmp,
+                    "title": "Upstream",
+                    "state": "evidenced",
+                    "depends_on": []
+                },
+                {
+                    "id": "ADU-002",
+                    "project_id": "test-project",
+                    "repo_path": tmp,
+                    "title": "Downstream",
+                    "state": "created",
+                    "depends_on": ["ADU-001"]
+                }
+            ]
+        }
+        (registry / "adu.json").write_text(json.dumps(adu_data, indent=2))
+        
+        # Mock Manifest for ADU-001
+        manifest = {
+            "adu_id": "ADU-001",
+            "base_commit": base_commit,
+            "delivery_commit": delivery_commit,
+            "required_outputs": ["ogs-license.c"],
+            "outputs_hash": {"ogs-license.c": "0129e0a22032113110ea1f7844aa94e1d1c63b4cacc3be164e8142ee0fd20cb8"}, # SHA-256 of "license data"
+            "created_files": ["ogs-license.c"],
+            "modified_files": [],
+            "deleted_files": []
+        }
+        evidence_dir = Path(tmp) / ".ai-agent" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "ADU-001-manifest.json").write_text(json.dumps(manifest, indent=2))
+        
+        # 1. Healthy state check
+        dep_map = {"ADU-002": ["ADU-001"]}
+        health = orch.check_dependency_health("ADU-002", adu_data, dep_map, tmp)
+        assert health["status"] == "healthy", f"Expected healthy dependency, got {health}"
+        
+        # 2. Missing deliverable file check
+        out_file.unlink()
+        health = orch.check_dependency_health("ADU-002", adu_data, dep_map, tmp)
+        assert health["status"] == "drifted" and "missing" in health["reason"], f"Expected drifted missing, got {health}"
+        
+        # 3. Hash mismatch check
+        out_file.write_text("different data")
+        health = orch.check_dependency_health("ADU-002", adu_data, dep_map, tmp)
+        assert health["status"] == "drifted" and "hash mismatch" in health["reason"], f"Expected drifted hash mismatch, got {health}"
+        
+        # Restore file
+        out_file.write_text("license data")
+        
+        # 4. Unreachable commit check
+        # Reset head to base commit (so delivery_commit is not reachable from HEAD)
+        subprocess.run(["git", "reset", "--hard", base_commit], cwd=tmp, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        health = orch.check_dependency_health("ADU-002", adu_data, dep_map, tmp)
+        assert health["status"] == "drifted" and "not reachable" in health["reason"], f"Expected drifted unreachable, got {health}"
+        
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     print("── Epic Orchestrator Integration Tests ──\n")
 
@@ -505,6 +631,7 @@ def main():
     assert_test("step_epic returns blocked on child ADU failure", test_b_step_epic_blocked_on_failure)
     assert_test("runner fails when agent success but artifact missing", test_c_runner_artifact_gating)
     assert_test("step_epic blocks and transitions child to human_gate on dependency drift", test_d_dependency_drift_blocks_execution)
+    assert_test("check_dependency_health validates all drift scenarios", test_e_dependency_delivery_verification)
 
     print(f"\n── Results: {passed} passed, {failed} failed ──")
     sys.exit(0 if failed == 0 else 1)
