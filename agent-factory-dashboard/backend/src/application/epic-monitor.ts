@@ -35,6 +35,7 @@ export class EpicMonitor {
     };
   }> {
     const epics = await this.repo.readEpics();
+    const allAdus = await this.repo.readAdus();
 
     const epicViews: AgentFactoryEpicView[] = [];
     let activeCount = 0;
@@ -53,10 +54,9 @@ export class EpicMonitor {
       const childAduViews: AgentFactoryAduView[] = [];
       for (const childId of epic.child_adus) {
         try {
-          const adu = await this.repo.getAduById(childId);
+          const adu = allAdus.find(a => a.id === childId);
           if (adu) {
-            const allAdus = await this.repo.readAdus(); // Read all to find dependencies
-            const depHealth = checkDependencyHealthTS(adu, allAdus, epic.repo_path);
+            const depHealth = checkDependencyHealthTS(adu, allAdus, epic.repo_path || this.repo.getWorkspaceRoot());
             let displayStatusKind = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'completed' :
                                     (adu.state === 'human_gate') ? 'blocked' : 'active';
             let displayStatusLabel = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'Completed' :
@@ -237,7 +237,7 @@ export class EpicMonitor {
           }
         } catch (_) {}
 
-        const depHealth = checkDependencyHealthTS(adu, children, epic.repo_path);
+        const depHealth = checkDependencyHealthTS(adu, children, epic.repo_path || this.repo.getWorkspaceRoot());
         if (isEvidenced || isWaived) {
           if (depHealth.status === 'delivery_drifted') {
             blockedCount++;

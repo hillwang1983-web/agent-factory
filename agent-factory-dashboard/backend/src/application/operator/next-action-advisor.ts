@@ -183,6 +183,9 @@ export class NextActionAdvisor {
             type: 'text',
             required: false,
           });
+        } else if (adu.gate_type === 'dependency_delivery_missing') {
+          recommended_action = null;
+          reason = 'Dependency deliverables missing or drifted. Resolve the file mismatch or merge the required commit.';
         } else {
           recommended_action = null;
           reason = `Human intervention required: ${adu.gate_type || 'Unknown Block'}.`;

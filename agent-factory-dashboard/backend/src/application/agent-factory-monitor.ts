@@ -14,13 +14,21 @@ import fs from 'fs';
 import path from 'path';
 
 export function checkDependencyHealthTS(adu: any, adus: any[], repoRoot: string): { status: string; reasons: string[]; gate_type?: string } {
+  if (!repoRoot || typeof repoRoot !== 'string') {
+    return { status: 'healthy', reasons: [] };
+  }
+
   const dependsOn = adu.depends_on || [];
   const reasons: string[] = [];
   let isDrifted = false;
 
   for (const depId of dependsOn) {
     const depAdu = adus.find(a => a.id === depId);
-    if (!depAdu) continue;
+    if (!depAdu) {
+      isDrifted = true;
+      reasons.push(`Dependency ${depId} not found.`);
+      continue;
+    }
     if (depAdu.state !== 'evidenced' && depAdu.state !== 'mvp_ready') continue;
 
     const manifestPath = path.join(repoRoot, '.ai-agent', 'evidence', `${depId}-manifest.json`);
@@ -32,6 +40,9 @@ export function checkDependencyHealthTS(adu: any, adus: any[], repoRoot: string)
 
     try {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+        throw new Error('Manifest is not a dictionary object.');
+      }
       const deliveryCommit = manifest.delivery_commit;
       if (!deliveryCommit) {
         isDrifted = true;
@@ -52,9 +63,26 @@ export function checkDependencyHealthTS(adu: any, adus: any[], repoRoot: string)
       const outputsHash = manifest.outputs_hash || {};
       for (const [fpath, expectedHash] of Object.entries(outputsHash)) {
         const fullPath = path.join(repoRoot, fpath as string);
+        
+        // Prevent path traversal
+        const relative = path.relative(repoRoot, fullPath);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file path traversal detected: ${fpath}.`);
+          continue;
+        }
+
         if (!fs.existsSync(fullPath)) {
           isDrifted = true;
           reasons.push(`Dependency ${depId} deliverable file is missing: ${fpath}.`);
+          continue;
+        }
+
+        // Limit file size to prevent OOM
+        const stats = fs.statSync(fullPath);
+        if (stats.size > 50 * 1024 * 1024) { // 50MB
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file ${fpath} is too large to hash safely.`);
           continue;
         }
 
