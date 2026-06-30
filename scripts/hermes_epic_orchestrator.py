@@ -346,14 +346,11 @@ def check_dependency_health(adu_id: str, adu_data: dict, dep_map: dict, repo_roo
             return {"status": "blocked", "reason": f"Dependency {dep_id} not found."}
             
         if dep_adu.get("state") not in terminal_states:
-            # Normal wait
             return {"status": "waiting", "reason": f"Dependency {dep_id} is in state {dep_adu.get('state')}."}
             
         if dep_adu.get("state") == "canceled":
-            # Canceled dependency blocks execution
             return {"status": "blocked", "reason": f"Dependency {dep_id} was canceled."}
             
-        # Manifest check
         manifest_path = Path(repo_root) / ".ai-agent" / "evidence" / f"{dep_id}-manifest.json"
         if not manifest_path.exists():
             return {
@@ -365,11 +362,13 @@ def check_dependency_health(adu_id: str, adu_data: dict, dep_map: dict, repo_roo
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
+            if not isinstance(manifest, dict):
+                raise ValueError("Manifest JSON is not a dictionary object.")
         except Exception as e:
             return {
                 "status": "drifted",
                 "gate_type": "dependency_delivery_missing",
-                "reason": f"Dependency {dep_id} manifest failed to parse: {e}."
+                "reason": f"Dependency {dep_id} manifest failed to parse or is malformed: {e}."
             }
             
         delivery_commit = manifest.get("delivery_commit")
@@ -380,35 +379,63 @@ def check_dependency_health(adu_id: str, adu_data: dict, dep_map: dict, repo_roo
                 "reason": f"Dependency {dep_id} manifest is missing delivery_commit."
             }
             
-        # Check commit reachability
-        proc = subprocess.run(["git", "merge-base", "--is-ancestor", delivery_commit, "HEAD"], cwd=repo_root, capture_output=True)
-        if proc.returncode != 0:
+        # Check commit reachability safely
+        try:
+            proc = subprocess.run(["git", "merge-base", "--is-ancestor", delivery_commit, "HEAD"], cwd=repo_root, capture_output=True)
+            if proc.returncode != 0:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} delivery commit {delivery_commit[:7]} is not reachable from HEAD."
+                }
+        except Exception as e:
             return {
                 "status": "drifted",
                 "gate_type": "dependency_delivery_missing",
-                "reason": f"Dependency {dep_id} delivery commit {delivery_commit[:7]} is not reachable from HEAD."
+                "reason": f"Failed to check git ancestor reachability for {dep_id}: {e}"
             }
             
-        # Check outputs existence and hash
+        # Check outputs existence and hash safely
         outputs_hash = manifest.get("outputs_hash", {})
+        if not isinstance(outputs_hash, dict):
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest outputs_hash is malformed."
+            }
+            
         for fpath, expected_hash in outputs_hash.items():
-            full_path = Path(repo_root) / fpath
+            normalized_path = normalize_repo_relative_path(fpath)
+            if not normalized_path:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} deliverable path is invalid or unsafe: {fpath}."
+                }
+            full_path = Path(repo_root) / normalized_path
             if not full_path.is_file():
                 return {
                     "status": "drifted",
                     "gate_type": "dependency_delivery_missing",
                     "reason": f"Dependency {dep_id} deliverable file is missing: {fpath}."
                 }
-            # Check SHA-256
-            hasher = hashlib.sha256()
-            with open(full_path, "rb") as f:
-                while chunk := f.read(8192):
-                    hasher.update(chunk)
-            if hasher.hexdigest() != expected_hash:
+                
+            try:
+                hasher = hashlib.sha256()
+                with open(full_path, "rb") as f:
+                    while chunk := f.read(8192):
+                        hasher.update(chunk)
+                if hasher.hexdigest() != expected_hash:
+                    return {
+                        "status": "drifted",
+                        "gate_type": "dependency_delivery_missing",
+                        "reason": f"Dependency {dep_id} deliverable file hash mismatch: {fpath}."
+                    }
+            except Exception as e:
                 return {
                     "status": "drifted",
                     "gate_type": "dependency_delivery_missing",
-                    "reason": f"Dependency {dep_id} deliverable file hash mismatch: {fpath}."
+                    "reason": f"Failed to read/hash deliverable file {fpath}: {e}."
                 }
                 
     return {"status": "healthy"}
