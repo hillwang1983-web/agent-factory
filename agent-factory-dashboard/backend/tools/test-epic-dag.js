@@ -215,7 +215,7 @@ async function main() {
         stdio: 'pipe',
         timeout: 30000,
       }).toString();
-      if (!out.includes('Results: 3 passed, 0 failed')) {
+      if (!out.includes('Results: 4 passed, 0 failed')) {
         throw new Error(`Integration tests did not all pass:\n${out}`);
       }
     } catch (e) {

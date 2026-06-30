@@ -8,6 +8,74 @@ import {
   AgentFactoryRun,
   AgentFactoryWorkflowStep,
 } from '../domain/agent-factory';
+import crypto from 'crypto';
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+
+export function checkDependencyHealthTS(adu: any, adus: any[], repoRoot: string): { status: string; reasons: string[]; gate_type?: string } {
+  const dependsOn = adu.depends_on || [];
+  const reasons: string[] = [];
+  let isDrifted = false;
+
+  for (const depId of dependsOn) {
+    const depAdu = adus.find(a => a.id === depId);
+    if (!depAdu) continue;
+    if (depAdu.state !== 'evidenced' && depAdu.state !== 'mvp_ready') continue;
+
+    const manifestPath = path.join(repoRoot, '.ai-agent', 'evidence', `${depId}-manifest.json`);
+    if (!fs.existsSync(manifestPath)) {
+      isDrifted = true;
+      reasons.push(`Dependency ${depId} manifest is missing.`);
+      continue;
+    }
+
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const deliveryCommit = manifest.delivery_commit;
+      if (!deliveryCommit) {
+        isDrifted = true;
+        reasons.push(`Dependency ${depId} manifest is missing delivery_commit.`);
+        continue;
+      }
+
+      // Check commit reachability via git
+      try {
+        execSync(`git merge-base --is-ancestor ${deliveryCommit} HEAD`, { cwd: repoRoot, stdio: 'ignore' });
+      } catch (err) {
+        isDrifted = true;
+        reasons.push(`Dependency ${depId} delivery commit ${deliveryCommit.substring(0, 7)} is not reachable from HEAD.`);
+        continue;
+      }
+
+      // Check outputs existence and hash
+      const outputsHash = manifest.outputs_hash || {};
+      for (const [fpath, expectedHash] of Object.entries(outputsHash)) {
+        const fullPath = path.join(repoRoot, fpath as string);
+        if (!fs.existsSync(fullPath)) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file is missing: ${fpath}.`);
+          continue;
+        }
+
+        const fileBuffer = fs.readFileSync(fullPath);
+        const hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        if (hash !== expectedHash) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file hash mismatch: ${fpath}.`);
+        }
+      }
+    } catch (e: any) {
+      isDrifted = true;
+      reasons.push(`Dependency ${depId} manifest check failed: ${e.message}`);
+    }
+  }
+
+  if (isDrifted) {
+    return { status: 'delivery_drifted', reasons, gate_type: 'dependency_delivery_missing' };
+  }
+  return { status: 'healthy', reasons: [] };
+}
 
 const WORKFLOW_STEPS_CONFIG = [
   { state: 'created', label: 'Created', agent: 'requirement-analyst' },
@@ -73,6 +141,7 @@ export class AgentFactoryMonitorUseCase {
   }
 
   async getDashboard(activeOrchestrators?: Set<string>): Promise<AgentFactoryDashboard> {
+    const repoPath = this.repo.getWorkspaceRoot();
     let adusRaw: AgentFactoryAdu[] = [];
     let agentsRaw: Record<string, AgentFactoryAgentConfig> = {};
     let runsRaw: AgentFactoryRun[] = [];
@@ -212,7 +281,11 @@ export class AgentFactoryMonitorUseCase {
       let healthStatus: AgentFactoryAduView['health']['status'] = 'active';
       const reasons: string[] = [];
 
-      if (activeOrchestrators && activeOrchestrators.has(adu.id)) {
+      const depHealth = checkDependencyHealthTS(adu, adus, adu.repo_path || repoPath);
+      if (depHealth.status === 'delivery_drifted') {
+        healthStatus = 'delivery_drifted' as any;
+        reasons.push(...depHealth.reasons);
+      } else if (activeOrchestrators && activeOrchestrators.has(adu.id)) {
         healthStatus = 'running';
         reasons.push('ADU is currently running/executing in the Agent factory.');
       } else if (isTerminal) {

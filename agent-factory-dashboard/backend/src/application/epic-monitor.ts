@@ -2,6 +2,7 @@ import { AgentFactoryRepository } from '../domain/agent-factory-repository';
 import { AgentFactoryEpic, AgentFactoryEpicState, AgentFactoryEpicView, AgentFactoryAduView } from '../domain/agent-factory';
 import fs from 'fs';
 import path from 'path';
+import { checkDependencyHealthTS } from './agent-factory-monitor';
 
 const EPIC_STATE_LABELS: Record<string, string> = {
   created: 'Created',
@@ -54,6 +55,29 @@ export class EpicMonitor {
         try {
           const adu = await this.repo.getAduById(childId);
           if (adu) {
+            const allAdus = await this.repo.readAdus(); // Read all to find dependencies
+            const depHealth = checkDependencyHealthTS(adu, allAdus, epic.repo_path);
+            let displayStatusKind = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'completed' :
+                                    (adu.state === 'human_gate') ? 'blocked' : 'active';
+            let displayStatusLabel = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'Completed' :
+                                     (adu.state === 'human_gate') ? 'Blocked' : 'Active';
+            let displayStatusReason = `ADU is in state ${adu.state}`;
+            
+            let healthStatus: any = 'active';
+            let healthReasons: string[] = [];
+            
+            if (depHealth.status === 'delivery_drifted') {
+              displayStatusKind = 'blocked';
+              displayStatusLabel = 'Blocked';
+              displayStatusReason = depHealth.reasons.join(' ');
+              healthStatus = 'delivery_drifted';
+              healthReasons = depHealth.reasons;
+            } else {
+              healthStatus = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'healthy' :
+                             (adu.state === 'human_gate') ? 'blocked' : 'active';
+              healthReasons = [`ADU is in state ${adu.state}`];
+            }
+
             childAduViews.push({
               ...adu,
               next_agent: null,
@@ -61,13 +85,11 @@ export class EpicMonitor {
               runs: [],
               workflow: [],
               artifact_status: [],
-              health: { status: 'active', reasons: [] },
+              health: { status: healthStatus, reasons: healthReasons },
               display_status: {
-                kind: (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'completed' :
-                      (adu.state === 'human_gate') ? 'blocked' : 'active',
-                label: (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'Completed' :
-                       (adu.state === 'human_gate') ? 'Blocked' : 'Active',
-                reason: `ADU is in state ${adu.state}`
+                kind: displayStatusKind as any,
+                label: displayStatusLabel,
+                reason: displayStatusReason
               }
             });
           }
@@ -198,9 +220,10 @@ export class EpicMonitor {
     let anyProgress = false;
     const terminalStates = new Set(['evidenced', 'canceled']);
 
+    const children = await this.repo.readAdus();
     for (const childId of childIds) {
       try {
-        const adu = await this.repo.getAduById(childId);
+        const adu = children.find(c => c.id === childId);
         if (!adu) continue;
 
         const isEvidenced = adu.state === 'evidenced' || adu.state === 'mvp_ready';
@@ -214,9 +237,14 @@ export class EpicMonitor {
           }
         } catch (_) {}
 
+        const depHealth = checkDependencyHealthTS(adu, children, epic.repo_path);
         if (isEvidenced || isWaived) {
-          evidencedCount++;
-        } else if (adu.state === 'human_gate') {
+          if (depHealth.status === 'delivery_drifted') {
+            blockedCount++;
+          } else {
+            evidencedCount++;
+          }
+        } else if (adu.state === 'human_gate' || depHealth.status === 'delivery_drifted') {
           blockedCount++;
         } else if (adu.state === 'created') {
           createdCount++;
