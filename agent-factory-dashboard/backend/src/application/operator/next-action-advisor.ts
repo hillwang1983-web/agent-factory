@@ -183,9 +183,11 @@ export class NextActionAdvisor {
             type: 'text',
             required: false,
           });
-        } else if (adu.gate_type === 'dependency_delivery_missing') {
+        } else if (adu.gate_type === 'dependency_delivery_missing' || adu.gate_type === 'dependency_blocked') {
           recommended_action = null;
-          reason = 'Dependency deliverables missing or drifted. Resolve the file mismatch or merge the required commit.';
+          reason = adu.gate_type === 'dependency_delivery_missing'
+            ? 'Dependency deliverables missing or drifted. Resolve the file mismatch or merge the required commit.'
+            : 'Dependency is blocked or canceled. Address the dependency status first.';
         } else {
           recommended_action = null;
           reason = `Human intervention required: ${adu.gate_type || 'Unknown Block'}.`;

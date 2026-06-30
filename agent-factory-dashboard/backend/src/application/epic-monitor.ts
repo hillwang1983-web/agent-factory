@@ -66,11 +66,11 @@ export class EpicMonitor {
             let healthStatus: any = 'active';
             let healthReasons: string[] = [];
             
-            if (depHealth.status === 'delivery_drifted') {
+            if (depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
               displayStatusKind = 'blocked';
               displayStatusLabel = 'Blocked';
               displayStatusReason = depHealth.reasons.join(' ');
-              healthStatus = 'delivery_drifted';
+              healthStatus = depHealth.status;
               healthReasons = depHealth.reasons;
             } else {
               healthStatus = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'healthy' :
@@ -239,12 +239,12 @@ export class EpicMonitor {
 
         const depHealth = checkDependencyHealthTS(adu, children, epic.repo_path || this.repo.getWorkspaceRoot());
         if (isEvidenced || isWaived) {
-          if (depHealth.status === 'delivery_drifted') {
+          if (depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
             blockedCount++;
           } else {
             evidencedCount++;
           }
-        } else if (adu.state === 'human_gate' || depHealth.status === 'delivery_drifted') {
+        } else if (adu.state === 'human_gate' || depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
           blockedCount++;
         } else if (adu.state === 'created') {
           createdCount++;

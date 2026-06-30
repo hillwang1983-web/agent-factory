@@ -343,13 +343,13 @@ def check_dependency_health(adu_id: str, adu_data: dict, dep_map: dict, repo_roo
     for dep_id in required_deps:
         dep_adu = next((a for a in adu_data["adus"] if a["id"] == dep_id), None)
         if not dep_adu:
-            return {"status": "blocked", "reason": f"Dependency {dep_id} not found."}
+            return {"status": "blocked", "gate_type": "dependency_blocked", "reason": f"Dependency {dep_id} not found."}
             
         if dep_adu.get("state") not in terminal_states:
             return {"status": "waiting", "reason": f"Dependency {dep_id} is in state {dep_adu.get('state')}."}
             
         if dep_adu.get("state") == "canceled":
-            return {"status": "blocked", "reason": f"Dependency {dep_id} was canceled."}
+            return {"status": "blocked", "gate_type": "dependency_blocked", "reason": f"Dependency {dep_id} was canceled."}
             
         manifest_path = Path(repo_root) / ".ai-agent" / "evidence" / f"{dep_id}-manifest.json"
         if not manifest_path.exists():
@@ -647,11 +647,11 @@ def step_epic(epic: dict, project_id: str, repo_root: str) -> dict:
                 if not child or child.get("state") in terminal_states or child.get("state") == "human_gate" or child.get("paused"):
                     continue
                 health_info = check_dependency_health(child_id, adu_data, dep_map, repo_root)
-                if health_info["status"] == "drifted":
+                if health_info["status"] in {"drifted", "blocked"}:
                     # Transition this child to human_gate
                     child["pre_gate_state"] = child["state"]
                     child["state"] = "human_gate"
-                    child["gate_type"] = health_info["gate_type"]
+                    child["gate_type"] = health_info.get("gate_type") or "dependency_blocked"
                     child["human_gate_required"] = True
                     save_json_direct(REGISTRY / "adu.json", adu_data)
                     
@@ -659,14 +659,14 @@ def step_epic(epic: dict, project_id: str, repo_root: str) -> dict:
                         "epicId": epic["id"],
                         "aduId": child_id,
                         "state": "child_adus_blocked",
-                        "action": "dependency_delivery_missing"
+                        "action": "dependency_delivery_missing" if health_info["status"] == "drifted" else "dependency_blocked"
                     })
                     epic["state"] = "child_adus_blocked"
                     drifted_blocked = True
                     break
             
             if drifted_blocked:
-                return {"result": "blocked", "error": "Child ADU blocked by dependency drift"}
+                return {"result": "blocked", "error": "Child ADU blocked by dependency drift or block"}
                 
             # Re-aggregate
             new_state = aggregate_epic_state(epic)

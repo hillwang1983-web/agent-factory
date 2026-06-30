@@ -310,8 +310,8 @@ export class AgentFactoryMonitorUseCase {
       const reasons: string[] = [];
 
       const depHealth = checkDependencyHealthTS(adu, adus, adu.repo_path || repoPath);
-      if (depHealth.status === 'delivery_drifted') {
-        healthStatus = 'delivery_drifted' as any;
+      if (depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
+        healthStatus = depHealth.status as any;
         reasons.push(...depHealth.reasons);
       } else if (activeOrchestrators && activeOrchestrators.has(adu.id)) {
         healthStatus = 'running';
