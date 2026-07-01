@@ -180,8 +180,10 @@ export class HumanGateService {
       const available_actions: HumanGate['available_actions'] = [];
       if (input.gate_type === 'environment_verification_required') {
         available_actions.push('submit_runtime_result', 'approve_waiver', 'request_rework');
-      } else if (input.gate_type === 'token_budget_approval') {
+      } else if (['token_budget_approval', 'dependency_delivery_missing'].includes(input.gate_type)) {
         available_actions.push('approve', 'cancel');
+      } else if (input.gate_type === 'dependency_blocked') {
+        available_actions.push('cancel');
       } else if (['analysis_review', 'design_review'].includes(input.gate_type)) {
         available_actions.push('approve', 'request_rework');
       } else {
@@ -456,45 +458,91 @@ export class HumanGateService {
   }
 
   async approveGate(gateId: string, comment?: string): Promise<void> {
+    // 1. Snapshot inside lock
+    const { gate, adu, adus, dependencyFingerprint } = await RegistryLock.runLocked(() => {
+      const gates = this.readGates();
+      const targetGate = gates.find(g => g.gate_id === gateId);
+      if (!targetGate) throw new Error(`Gate ${gateId} not found`);
+      if (targetGate.status !== 'pending') throw new Error(`Gate is already resolved: ${targetGate.status}`);
+
+      let targetAdu: any = null;
+      let aduList: any[] = [];
+      if (targetGate.scope === 'adu') {
+        aduList = this.readAdus();
+        targetAdu = aduList.find(a => a.id === targetGate.target_id);
+      }
+
+      // Generate fingerprint of all ADUs and their manifests
+      const dependencyFingerprint = this.getDependencyFingerprint(aduList);
+
+      return { gate: { ...targetGate }, adu: targetAdu ? { ...targetAdu } : null, adus: aduList.map(a => ({ ...a })), dependencyFingerprint };
+    });
+
+    // 2. Perform heavy validation (Git / file IO) outside RegistryLock
+    if (gate.gate_type === 'dependency_delivery_missing') {
+      if (!adu) throw new Error(`Target ADU ${gate.target_id} not found`);
+
+      const repoRoot = this.getRepoRoot(adu);
+      const { checkDependencyHealthTS } = require('./agent-factory-monitor');
+      const depHealth = checkDependencyHealthTS(adu, adus, repoRoot);
+
+      if (depHealth.status !== 'healthy') {
+        throw new Error(`Dependency health check is still failing: ${depHealth.reasons.join(' ')}`);
+      }
+    } else if (gate.gate_type === 'dependency_blocked') {
+      throw new Error(`dependency_blocked gates cannot be approved manually because the upstream dependency is canceled. The ADU must be canceled.`);
+    }
+
+    // 3. Update inside lock (Compare-And-Swap check on status and dependency state fingerprint)
     return RegistryLock.runLocked(() => {
       const gates = this.readGates();
-      const gate = gates.find(g => g.gate_id === gateId);
-      if (!gate) throw new Error(`Gate ${gateId} not found`);
-      if (gate.status !== 'pending') throw new Error(`Gate is already resolved: ${gate.status}`);
+      const targetGate = gates.find(g => g.gate_id === gateId);
+      if (!targetGate) throw new Error(`Gate ${gateId} not found`);
+      if (targetGate.status !== 'pending') throw new Error(`Gate status changed while validating: ${targetGate.status}`);
 
-      gate.status = 'approved';
-      gate.resolved_at = new Date().toISOString();
-      gate.resolution = { Action: 'approve', comment };
+      // Verify fingerprint hasn't changed since the snapshot (CAS)
+      if (targetGate.scope === 'adu') {
+        const currentAdus = this.readAdus();
+        const currentFingerprint = this.getDependencyFingerprint(currentAdus);
+
+        if (JSON.stringify(dependencyFingerprint) !== JSON.stringify(currentFingerprint)) {
+          throw new Error('Dependency state or manifest files changed while validating approval. Re-run validation.');
+        }
+      }
+
+      targetGate.status = 'approved';
+      targetGate.resolved_at = new Date().toISOString();
+      targetGate.resolution = { Action: 'approve', comment };
       this.writeGates(gates);
 
       // Progress target to next state
       let targetState = 'completed';
-      if (gate.gate_type === 'analysis_review') {
+      if (targetGate.gate_type === 'analysis_review') {
         targetState = 'analyzed';
-      } else if (gate.gate_type === 'design_review') {
+      } else if (targetGate.gate_type === 'design_review') {
         targetState = 'designed';
-      } else if (gate.gate_type === 'token_budget_approval') {
-        targetState = gate.pre_gate_state || 'created';
+      } else if (['token_budget_approval', 'dependency_delivery_missing', 'dependency_blocked'].includes(targetGate.gate_type)) {
+        targetState = targetGate.pre_gate_state || 'created';
       }
 
-      if (gate.scope === 'adu') {
+      if (targetGate.scope === 'adu') {
         const adus = this.readAdus();
-        const adu = adus.find(a => a.id === gate.target_id);
-        if (adu) {
-          adu.state = targetState;
-          adu.human_gate_required = false;
+        const aduToUpdate = adus.find(a => a.id === targetGate.target_id);
+        if (aduToUpdate) {
+          aduToUpdate.state = targetState;
+          aduToUpdate.human_gate_required = false;
           this.writeAdus(adus);
         }
-      } else if (gate.scope === 'epic') {
+      } else if (targetGate.scope === 'epic') {
         const epics = this.readEpics();
-        const epic = epics.find(e => e.id === gate.target_id);
-        if (epic) {
-          epic.state = targetState;
+        const epicToUpdate = epics.find(e => e.id === targetGate.target_id);
+        if (epicToUpdate) {
+          epicToUpdate.state = targetState;
           this.writeEpics(epics);
         }
       }
 
-      this.closeActiveOperation(gate.target_id, 'completed');
+      this.closeActiveOperation(targetGate.target_id, 'completed');
 
       broadcastOrchestratorEvent({
         type: 'agentFactoryEvent',
@@ -544,5 +592,69 @@ export class HumanGateService {
         status: 'rework_requested'
       });
     });
+  }
+
+  private getDependencyFingerprint(adus: any[]): any[] {
+    const crypto = require('crypto');
+    return adus.map(a => {
+      const repoRoot = this.getRepoRoot(a);
+      const manifestPath = path.join(repoRoot, '.ai-agent', 'evidence', `${a.id}-manifest.json`);
+      let manifestHash = '';
+      let outputFingerprints: any[] = [];
+      try {
+        if (fs.existsSync(manifestPath)) {
+          const content = fs.readFileSync(manifestPath);
+          manifestHash = crypto.createHash('sha256').update(content).digest('hex');
+
+          const manifest = JSON.parse(content.toString('utf-8'));
+          const reqOutputs = manifest.required_outputs || [];
+          for (const f of reqOutputs) {
+            const fpath = path.join(repoRoot, f);
+            if (fs.existsSync(fpath)) {
+              const stat = fs.statSync(fpath);
+              let fileHash = '';
+              if (stat.size < 1024 * 1024) { // only hash files < 1MB to keep lock speed fast
+                const fContent = fs.readFileSync(fpath);
+                fileHash = crypto.createHash('sha256').update(fContent).digest('hex');
+              }
+              outputFingerprints.push({
+                file: f,
+                size: stat.size,
+                mtime: stat.mtimeMs,
+                hash: fileHash
+              });
+            } else {
+              outputFingerprints.push({ file: f, exists: false });
+            }
+          }
+        }
+      } catch (_) {}
+      return {
+        id: a.id,
+        state: a.state,
+        manifestHash,
+        outputs: outputFingerprints
+      };
+    });
+  }
+
+  private getRepoRoot(adu: any): string {
+    let repoRoot = adu.repo_path;
+    if (!repoRoot && adu.project_id) {
+      const config = loadAppConfig();
+      const projectsFile = config.projectsRegistryPath;
+      if (fs.existsSync(projectsFile)) {
+        const projects = JSON.parse(fs.readFileSync(projectsFile, 'utf-8')).projects || [];
+        const project = projects.find((p: any) => p.project_id === adu.project_id);
+        if (project && project.repo_path) {
+          repoRoot = project.repo_path;
+        }
+      }
+    }
+    if (!repoRoot) {
+      const config = loadAppConfig();
+      repoRoot = config.workspaceRoot;
+    }
+    return repoRoot;
   }
 }

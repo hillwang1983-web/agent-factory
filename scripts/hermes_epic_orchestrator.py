@@ -180,6 +180,9 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
             existing = next((a for a in adu_data.get("adus", []) if a["id"] == child_id), None)
             if existing:
                 existing["depends_on"] = [d["from"] for d in deps if d.get("to") == child_id]
+                existing["codeless"] = child_def.get("codeless") is True
+                safe_req_deliv = [normalize_repo_relative_path(p) for p in child_def.get("required_deliverables", [])] if isinstance(child_def.get("required_deliverables"), list) else None
+                existing["required_deliverables"] = [p for p in safe_req_deliv if p is not None] if safe_req_deliv is not None else None
                 created_ids.append(child_id)
                 continue
 
@@ -193,6 +196,7 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
                 ".ai-agent/runs/",
             ])
 
+            safe_req_deliv = [normalize_repo_relative_path(p) for p in child_def.get("required_deliverables", [])] if isinstance(child_def.get("required_deliverables"), list) else None
             child_adu = {
                 "id": child_id,
                 "project_id": epic.get("project_id"),
@@ -213,6 +217,8 @@ def materialize_child_adus(epic: dict, repo_root: str) -> dict:
                     safe_write_paths  # write paths must also be readable
                 )),
                 "allowed_write_paths": safe_write_paths,
+                "codeless": child_def.get("codeless") is True,
+                "required_deliverables": [p for p in safe_req_deliv if p is not None] if safe_req_deliv is not None else None,
                 "required_commands": child_def.get("required_commands", []),
                 "required_evidence": [f".ai-agent/evidence/{child_id}.md"],
                 "artifacts": [],
@@ -287,6 +293,124 @@ def normalize_repo_relative_path(value: str) -> str | None:
     return path_value
 
 
+def check_dependency_health(adu_id: str, adu_data: dict, dep_map: dict, repo_root: str) -> dict:
+    """Check health of dependencies for a child ADU. Returns a status dict."""
+    import hashlib
+    required_deps = dep_map.get(adu_id, [])
+    terminal_states = {"evidenced", "canceled"}
+
+    for dep_id in required_deps:
+        dep_adu = next((a for a in adu_data["adus"] if a["id"] == dep_id), None)
+        if not dep_adu:
+            return {"status": "blocked", "gate_type": "dependency_blocked", "reason": f"Dependency {dep_id} not found."}
+
+        if dep_adu.get("state") not in terminal_states:
+            return {"status": "waiting", "reason": f"Dependency {dep_id} is in state {dep_adu.get('state')}."}
+
+        if dep_adu.get("state") == "canceled":
+            return {"status": "blocked", "gate_type": "dependency_blocked", "reason": f"Dependency {dep_id} was canceled."}
+
+        # Manifest check
+        manifest_path = Path(repo_root) / ".ai-agent" / "evidence" / f"{dep_id}-manifest.json"
+        if not manifest_path.exists():
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest is missing."
+            }
+
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            if not isinstance(manifest, dict):
+                raise ValueError("Manifest JSON is not a dictionary object.")
+        except Exception as e:
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest failed to parse or is malformed: {e}."
+            }
+
+        delivery_commit = manifest.get("delivery_commit")
+        if not delivery_commit:
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest is missing delivery_commit."
+            }
+
+        # Check commit reachability safely
+        try:
+            proc = subprocess.run(["git", "merge-base", "--is-ancestor", delivery_commit, "HEAD"], cwd=repo_root, capture_output=True)
+            if proc.returncode != 0:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} delivery commit {delivery_commit[:7]} is not reachable from HEAD."
+                }
+        except Exception as e:
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Failed to check git ancestor reachability for {dep_id}: {e}"
+            }
+
+        # Verify outputs_hash contains all required_outputs (required_outputs ⊆ outputs_hash)
+        required_outputs = manifest.get("required_outputs", [])
+        outputs_hash = manifest.get("outputs_hash", {})
+        if not isinstance(outputs_hash, dict) or not isinstance(required_outputs, list):
+            return {
+                "status": "drifted",
+                "gate_type": "dependency_delivery_missing",
+                "reason": f"Dependency {dep_id} manifest data structure is malformed."
+            }
+
+        for fpath in required_outputs:
+            if fpath not in outputs_hash:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} required deliverable file is missing from manifest outputs_hash: {fpath}."
+                }
+
+        # Check outputs existence and hash safely
+        for fpath, expected_hash in outputs_hash.items():
+            normalized_path = normalize_repo_relative_path(fpath)
+            if not normalized_path:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} deliverable path is invalid or unsafe: {fpath}."
+                }
+            full_path = Path(repo_root) / normalized_path
+            if not full_path.is_file():
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Dependency {dep_id} deliverable file is missing from disk: {fpath}."
+                }
+
+            try:
+                hasher = hashlib.sha256()
+                with open(full_path, "rb") as f:
+                    while chunk := f.read(8192):
+                        hasher.update(chunk)
+                if hasher.hexdigest() != expected_hash:
+                    return {
+                        "status": "drifted",
+                        "gate_type": "dependency_delivery_missing",
+                        "reason": f"Dependency {dep_id} deliverable file hash mismatch: {fpath}."
+                    }
+            except Exception as e:
+                return {
+                    "status": "drifted",
+                    "gate_type": "dependency_delivery_missing",
+                    "reason": f"Failed to read/hash deliverable file {fpath}: {e}."
+                }
+
+    return {"status": "healthy"}
+
+
 BLOCKED_COMMAND_FRAGMENTS = [
     "rm -rf", "sudo ", "curl ", "wget ", "ssh ", "scp ", "rsync ",
     "chmod -R 777", "> /dev/", "dd ", "mkfs", "launchctl",
@@ -331,6 +455,37 @@ def validate_child_adu_def(child_def: dict, index: int, epic_id: str) -> list[st
     if not child_def.get("goal", "").strip():
         errors.append(f"Child ADU {child_id}: goal must not be empty")
 
+    # Codeless vs required_deliverables checks
+    is_codeless = child_def.get("codeless") is True
+    req_deliverables = child_def.get("required_deliverables")
+    if is_codeless:
+        if req_deliverables:
+            errors.append(f"Child ADU {child_id} is codeless but has required_deliverables defined")
+    else:
+        if req_deliverables is not None and not isinstance(req_deliverables, list):
+            errors.append(f"Child ADU {child_id}: required_deliverables must be an array")
+        elif not req_deliverables or len(req_deliverables) == 0:
+            errors.append(f"Child ADU {child_id} must specify either 'codeless': true OR a non-empty list of 'required_deliverables'")
+        else:
+            for j, p in enumerate(req_deliverables):
+                if not isinstance(p, str):
+                    errors.append(f"Child ADU {child_id}: required deliverable path at index {j} is not a string")
+                    continue
+                normalized = normalize_repo_relative_path(p)
+                if normalized is None:
+                    errors.append(f"Child ADU {child_id}: invalid required deliverable path at index {j}: {p}")
+                else:
+                    if normalized != p:
+                        child_def["required_deliverables"][j] = normalized
+                    # Check that it falls under allowed_write_paths
+                    matched = False
+                    for wp in write_paths:
+                        if normalized == wp or normalized.startswith(wp.rstrip("/") + "/"):
+                            matched = True
+                            break
+                    if not matched:
+                        errors.append(f"Child ADU {child_id}: required deliverable '{normalized}' is not in allowed_write_paths")
+
     return errors
 
 
@@ -368,16 +523,9 @@ def get_runnable_child(epic: dict, repo_root: str) -> str | None:
         if child.get("paused"):
             continue
 
-        # Check dependencies are all evidenced
-        required_deps = dep_map.get(child_id, [])
-        all_deps_met = True
-        for dep_id in required_deps:
-            dep_adu = next((a for a in adu_data["adus"] if a["id"] == dep_id), None)
-            if not dep_adu or dep_adu.get("state") not in terminal_states:
-                all_deps_met = False
-                break
-
-        if all_deps_met:
+        # Check dependency health
+        health_info = check_dependency_health(child_id, adu_data, dep_map, repo_root)
+        if health_info["status"] == "healthy":
             return child_id
 
     return None
@@ -514,7 +662,86 @@ def step_epic(epic: dict, project_id: str, repo_root: str) -> dict:
                 epic["state"] = new_state
                 broadcast_event("epic_state_changed", {"epicId": epic["id"], "state": new_state})
         else:
-            # No runnable child — check if all done
+            # Check if any uncompleted child is blocked by dependency drift or block
+            adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+            child_ids = epic.get("child_adus", [])
+            deps = epic.get("dependencies", [])
+
+            # Build dependency map: child_id -> [depends_on_ids]
+            dep_map = {}
+            for dep in deps:
+                to_id = dep.get("to")
+                from_id = dep.get("from")
+                if to_id not in dep_map:
+                    dep_map[to_id] = []
+                dep_map[to_id].append(from_id)
+
+            terminal_states = {"evidenced", "canceled"}
+
+            drifted_blocked = False
+            for child_id in child_ids:
+                # Check health outside lock first (reachability/merge-base can take a split second)
+                health_info = check_dependency_health(child_id, adu_data, dep_map, repo_root)
+                if health_info["status"] in {"drifted", "blocked"}:
+                    with registry_lock(REGISTRY):
+                        # Reload adu_data under lock for atomic RMW transaction consistency
+                        adu_data = load_json(REGISTRY / "adu.json")
+                        child = next((a for a in adu_data["adus"] if a["id"] == child_id), None)
+                        if not child or child.get("state") in terminal_states or child.get("state") == "human_gate" or child.get("paused"):
+                            continue
+
+                        # Transition this child to human_gate
+                        child["pre_gate_state"] = child["state"]
+                        child["state"] = "human_gate"
+                        gate_type = health_info.get("gate_type") or "dependency_blocked"
+                        child["gate_type"] = gate_type
+                        child["human_gate_required"] = True
+                        save_json_direct(REGISTRY / "adu.json", adu_data)
+
+                        # Create record in human-gates.json
+                        gates_path = REGISTRY / "human-gates.json"
+                        gates_reg = {"version": 1, "gates": []}
+                        if gates_path.exists():
+                            try:
+                                gates_reg = load_json(gates_path)
+                            except Exception as e:
+                                raise RuntimeError(f"Failed to parse human-gates.json: {e}. Registry corrupted, failing closed.")
+
+                        gate_id = f"gate-{child_id}-{gate_type}-{int(time.time() * 1000)}"
+                        new_gate = {
+                            "gate_id": gate_id,
+                            "scope": "adu",
+                            "target_id": child_id,
+                            "epic_id": epic["id"],
+                            "project_id": project_id,
+                            "gate_type": gate_type,
+                            "status": "pending",
+                            "title": "Dependency Blocked Gate" if gate_type == "dependency_blocked" else "Dependency Delivery Missing Gate",
+                            "reason": health_info.get("reason") or f"Dependency health is {health_info['status']}.",
+                            "pre_gate_state": child["pre_gate_state"],
+                            "available_actions": ["cancel"] if gate_type == "dependency_blocked" else ["approve", "cancel"],
+                            "created_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "") + "Z"
+                        }
+                        existing_gates = gates_reg.get("gates", [])
+                        existing_gates = [g for g in existing_gates if not (g.get("target_id") == child_id and g.get("gate_type") == gate_type and g.get("status") == "pending")]
+                        existing_gates.append(new_gate)
+                        gates_reg["gates"] = existing_gates
+                        save_json_direct(gates_path, gates_reg)
+
+                    broadcast_event("epic_state_changed", {
+                        "epicId": epic["id"],
+                        "aduId": child_id,
+                        "state": "child_adus_blocked",
+                        "action": "dependency_delivery_missing" if health_info["status"] == "drifted" else "dependency_blocked"
+                    })
+                    epic["state"] = "child_adus_blocked"
+                    drifted_blocked = True
+                    break
+
+            if drifted_blocked:
+                return {"result": "blocked", "error": "Child ADU blocked by dependency drift or block"}
+
+            # Re-aggregate
             new_state = aggregate_epic_state(epic)
             if new_state != state:
                 epic["state"] = new_state

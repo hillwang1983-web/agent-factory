@@ -52,6 +52,7 @@ A readable split plan including:
       "goal": "What this child ADU must achieve",
       "scope": "Module and responsibility boundaries",
       "allowed_write_paths": ["lib/module/file.c", "lib/module/file.h"],
+      "required_deliverables": ["lib/module/file.c", "lib/module/file.h"],
       "required_commands": ["meson compile -C build"],
       "acceptance_summary": "How to verify this child ADU independently"
     }
@@ -113,3 +114,4 @@ A readable split plan including:
 - If a child ADU modifies project profile high-risk paths, it must provide a `"risk_justification"`.
 - The dependency graph must be acyclic.
 - Each child ADU must be independently verifiable via its `required_commands`. All paths listed in `required_commands` must be present in the read/write paths of the same ADU.
+- Each child ADU must specify either `"codeless": true` (boolean value) OR a non-empty list of `"required_deliverables"` representing the files that MUST be created/modified by the ADU.

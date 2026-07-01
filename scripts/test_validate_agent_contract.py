@@ -37,7 +37,7 @@ def write_json(path, data):
     p.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def make_adu(adu_id, repo_path, command_policy=None):
+def make_adu(adu_id, repo_path, command_policy=None, required_deliverables=None):
     adu = {
         "id": adu_id,
         "project_id": "test-proj",
@@ -48,6 +48,8 @@ def make_adu(adu_id, repo_path, command_policy=None):
     }
     if command_policy is not None:
         adu["command_policy"] = command_policy
+    if required_deliverables is not None:
+        adu["required_deliverables"] = required_deliverables
     return adu
 
 
@@ -223,6 +225,38 @@ with tempfile.TemporaryDirectory() as tmp:
         ok("T08: evidence requirement may reference negative assertion id → pass")
     else:
         fail("T08: evidence requirement may reference negative assertion id → pass", f"rc={rc} err={err.strip()!r}")
+
+# ── T09: contract deletes ADU required deliverables → rejected ────────────────
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp) / "repo"
+    reg = Path(tmp) / "registry"
+    write_json(reg / "adu.json", {"version": 1, "adus": [make_adu(ADU_ID, repo, ALLOWLIST_POLICY, ["lib/module1/file.c"])]})
+    contract = make_contract(ADU_ID, verification_command="meson test -C build")
+    # Contract allowed_write_paths must contain scope of files
+    contract["scope"]["allowed_write_paths"] = [".ai-agent/", "lib/module1/file.c"]
+    # Deletes lib/module1/file.c by omitting required_deliverables key or setting it to empty/different list
+    contract["required_deliverables"] = []
+    write_json(repo / ".ai-agent" / "contracts" / f"{ADU_ID}.json", contract)
+    rc, out, err = run_validator(ADU_ID, repo, reg)
+    if rc != 0 and "cannot delete required deliverable" in err:
+        ok("T09: contract deletes ADU required deliverables → rejected")
+    else:
+        fail("T09: contract deletes ADU required deliverables → rejected", f"rc={rc} err={err.strip()!r}")
+
+# ── T10: non-list required_deliverables → rejected ────────────────────────────
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp) / "repo"
+    reg = Path(tmp) / "registry"
+    write_json(reg / "adu.json", {"version": 1, "adus": [make_adu(ADU_ID, repo, ALLOWLIST_POLICY, ["lib/module1/file.c"])]})
+    contract = make_contract(ADU_ID, verification_command="meson test -C build")
+    contract["scope"]["allowed_write_paths"] = [".ai-agent/", "lib/module1/file.c"]
+    contract["required_deliverables"] = "not-a-list"
+    write_json(repo / ".ai-agent" / "contracts" / f"{ADU_ID}.json", contract)
+    rc, out, err = run_validator(ADU_ID, repo, reg)
+    if rc != 0 and "is not an array" in err:
+        ok("T10: non-list required_deliverables → rejected")
+    else:
+        fail("T10: non-list required_deliverables → rejected", f"rc={rc} err={err.strip()!r}")
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 print(f"\n{passed + failed} tests: {passed} passed, {failed} failed")

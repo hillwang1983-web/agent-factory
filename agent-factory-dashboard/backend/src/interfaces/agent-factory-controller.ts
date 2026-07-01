@@ -355,25 +355,26 @@ export function createAgentFactoryRouter(
           const adu = await monitor.repo.getAduById(targetId);
           if (!adu) throw Object.assign(new Error(`ADU ${targetId} not found`), { status: 404 });
 
-          let gate: 'analysis' | 'design' | 'token_budget' | null = null;
+          let gate: 'analysis' | 'design' | 'token_budget' | 'dependency' | null = null;
           if (adu.state === 'analysis_review') gate = 'analysis';
           else if (adu.state === 'design_review') gate = 'design';
           else if (adu.state === 'human_gate' && adu.gate_type === 'token_budget_approval') gate = 'token_budget';
+          else if (adu.state === 'human_gate' && ['dependency_delivery_missing', 'dependency_blocked'].includes(adu.gate_type || '')) gate = 'dependency';
 
           if (!gate) {
             throw Object.assign(new Error(`State ${adu.state} does not support review approval/rework`), { status: 400 });
           }
 
-          if (gate === 'token_budget') {
+          if (gate === 'token_budget' || gate === 'dependency') {
             const HumanGateService = (await import('../application/human-gate-service')).HumanGateService;
             const humanGateService = HumanGateService.getInstance();
             const activeGates = await humanGateService.listGates();
-            const targetGate = activeGates.find((g: any) => g.target_id === targetId && g.gate_type === 'token_budget_approval' && g.status === 'pending');
+            const targetGate = activeGates.find((g: any) => g.target_id === targetId && g.gate_type === adu.gate_type && g.status === 'pending');
 
             if (action.action === 'approve_review') {
               await humanGateService.approveGate(targetGate?.gate_id || '', comment);
             } else {
-              await humanGateService.cancelGate(targetGate?.gate_id || '', comment || 'Rejected budget');
+              await humanGateService.cancelGate(targetGate?.gate_id || '', comment || 'Rejected/Canceled dependency block');
             }
             return { success: true };
           } else {

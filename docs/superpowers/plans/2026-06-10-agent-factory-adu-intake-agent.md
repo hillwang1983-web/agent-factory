@@ -4,7 +4,7 @@
 
 **Goal:** Implement the ADU Intake Agent feature to generate project-aware ADU drafts from raw text and uploaded requirement documents, allowing human review before formal registration.
 
-**Architecture:** 
+**Architecture:**
 - Add new domain types for Drafts and Intake sources.
 - Create an `AduIntake` use case in the backend to handle draft creation and file uploads (saved to project-local `.ai-agent/intake/`).
 - Create a new `adu-intake-agent` prompt and a python script to run it.
@@ -196,10 +196,10 @@ export class AduIntake {
       const safeName = f.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
       const filename = `${fileId}-${safeName}`;
       const destPath = path.join(uploadDir, filename);
-      
+
       const fileBuffer = await fs.readFile(f.path);
       if (fileBuffer.includes(0x00)) throw new Error(`File ${f.originalname} contains NUL bytes`);
-      
+
       await fs.writeFile(destPath, fileBuffer);
       const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
@@ -301,10 +301,10 @@ export class AduIntake {
 
       const draftPath = path.join(meta.repo_path, meta.draft_path);
       const draft = JSON.parse(await fs.readFile(draftPath, 'utf-8'));
-      
+
       const updatedDraft = { ...draft, ...updates, updated_at: new Date().toISOString() };
       await fs.writeFile(draftPath, JSON.stringify(updatedDraft, null, 2), 'utf-8');
-      
+
       meta.title = updatedDraft.title;
       meta.updated_at = updatedDraft.updated_at;
       await fs.writeFile(regPath, JSON.stringify(registry, null, 2), 'utf-8');
@@ -543,7 +543,7 @@ if args.intake_draft:
     intake_dir = os.path.join(args.repo_root, ".ai-agent", "intake", draft_id)
     with open(os.path.join(intake_dir, "raw-input.json")) as f:
         raw_input = json.load(f)
-    
+
     # ... load profile, load knowledge ...
     # ... render adu-intake-agent.md prompt ...
     # call hermes cli

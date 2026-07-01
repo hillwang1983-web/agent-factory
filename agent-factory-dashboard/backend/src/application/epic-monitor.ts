@@ -2,6 +2,7 @@ import { AgentFactoryRepository } from '../domain/agent-factory-repository';
 import { AgentFactoryEpic, AgentFactoryEpicState, AgentFactoryEpicView, AgentFactoryAduView } from '../domain/agent-factory';
 import fs from 'fs';
 import path from 'path';
+import { checkDependencyHealthTS } from './agent-factory-monitor';
 
 const EPIC_STATE_LABELS: Record<string, string> = {
   created: 'Created',
@@ -34,6 +35,7 @@ export class EpicMonitor {
     };
   }> {
     const epics = await this.repo.readEpics();
+    const adus = await this.repo.readAdus();
 
     const epicViews: AgentFactoryEpicView[] = [];
     let activeCount = 0;
@@ -52,8 +54,30 @@ export class EpicMonitor {
       const childAduViews: AgentFactoryAduView[] = [];
       for (const childId of epic.child_adus) {
         try {
-          const adu = await this.repo.getAduById(childId);
+          const adu = adus.find(a => a.id === childId);
           if (adu) {
+            const depHealth = checkDependencyHealthTS(adu, adus, epic.repo_path || this.repo.getWorkspaceRoot());
+
+            let displayStatusKind: any = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'completed' :
+                                        (adu.state === 'human_gate') ? 'blocked' : 'active';
+            let displayStatusLabel = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'Completed' :
+                                     (adu.state === 'human_gate') ? 'Blocked' : 'Active';
+            let displayStatusReason = `ADU is in state ${adu.state}`;
+            let healthStatus: any = 'active';
+            let healthReasons: string[] = [];
+
+            if (depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
+              displayStatusKind = 'blocked';
+              displayStatusLabel = 'Blocked';
+              displayStatusReason = depHealth.reasons.join(' ');
+              healthStatus = depHealth.status;
+              healthReasons = depHealth.reasons;
+            } else {
+              healthStatus = (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'healthy' :
+                             (adu.state === 'human_gate') ? 'blocked' : 'active';
+              healthReasons = [displayStatusReason];
+            }
+
             childAduViews.push({
               ...adu,
               next_agent: null,
@@ -61,13 +85,11 @@ export class EpicMonitor {
               runs: [],
               workflow: [],
               artifact_status: [],
-              health: { status: 'active', reasons: [] },
+              health: { status: healthStatus, reasons: healthReasons },
               display_status: {
-                kind: (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'completed' :
-                      (adu.state === 'human_gate') ? 'blocked' : 'active',
-                label: (adu.state === 'evidenced' || adu.state === 'mvp_ready') ? 'Completed' :
-                       (adu.state === 'human_gate') ? 'Blocked' : 'Active',
-                reason: `ADU is in state ${adu.state}`
+                kind: displayStatusKind,
+                label: displayStatusLabel,
+                reason: displayStatusReason
               }
             });
           }
@@ -198,9 +220,11 @@ export class EpicMonitor {
     let anyProgress = false;
     const terminalStates = new Set(['evidenced', 'canceled']);
 
+    const adus = await this.repo.readAdus();
+
     for (const childId of childIds) {
       try {
-        const adu = await this.repo.getAduById(childId);
+        const adu = adus.find(a => a.id === childId);
         if (!adu) continue;
 
         const isEvidenced = adu.state === 'evidenced' || adu.state === 'mvp_ready';
@@ -214,9 +238,14 @@ export class EpicMonitor {
           }
         } catch (_) {}
 
+        const depHealth = checkDependencyHealthTS(adu, adus, epic.repo_path || this.repo.getWorkspaceRoot());
         if (isEvidenced || isWaived) {
-          evidencedCount++;
-        } else if (adu.state === 'human_gate') {
+          if (depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
+            blockedCount++;
+          } else {
+            evidencedCount++;
+          }
+        } else if (adu.state === 'human_gate' || depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
           blockedCount++;
         } else if (adu.state === 'created') {
           createdCount++;
