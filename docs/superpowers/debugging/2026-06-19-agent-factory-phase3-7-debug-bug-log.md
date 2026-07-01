@@ -786,7 +786,7 @@ health=Child ADUs are executing
 - Operation：`op-ADU-1351-001-1781871846132`
 - Agent：`requirement-analyst`
 - 严重级别：P1
-- 当前状态：Open
+- 当前状态：Verified
 
 ### 现象
 
@@ -865,7 +865,7 @@ open5gs/.ai-agent/analysis/ADU-1351-001.md
 - 发现步骤：步骤 6 异常执行恢复
 - 关联 ADU：`ADU-1351-001`
 - 严重级别：P2
-- 当前状态：Open
+- 当前状态：Verified
 
 ### 现象
 

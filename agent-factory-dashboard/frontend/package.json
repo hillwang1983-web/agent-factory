@@ -10,6 +10,7 @@
     "test:navigation": "node tools/test-navigation.mjs",
     "test:agent-runtime-view": "vitest run --environment jsdom tools/test-agent-runtime-view.test.tsx",
     "test:artifact-drawer": "vitest run --environment jsdom tools/test-artifact-drawer.test.tsx",
+    "test:review-gate-draft": "vitest run --environment jsdom tools/test-review-gate-draft.test.tsx",
     "test:websocket-url": "vitest run tools/test-websocket-url.test.ts"
   },
   "dependencies": {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, MessageSquare, CornerUpLeft, History, CheckCircle, AlertOctagon } from 'lucide-react';
 import { useAgentFactoryStore } from '../../stores/agentFactory';
 import { EditableArtifactTabs } from './EditableArtifactTabs';
@@ -24,16 +24,40 @@ export function ReviewGatePanel({ aduId }: ReviewGatePanelProps): JSX.Element {
   const [questionSubmitting, setQuestionSubmitting] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dirtyAnswerIds = useRef<Set<string>>(new Set());
+  const previousAduId = useRef<string | null>(null);
+
+  const clarificationQuestions = adu?.clarification_questions || [];
+  const clarificationRevision = JSON.stringify(
+    clarificationQuestions.map((q) => [q.id, q.status, q.answer || ''])
+  );
 
   useEffect(() => {
-    if (adu?.clarification_questions) {
-      const initial: Record<string, string> = {};
-      adu.clarification_questions.forEach((q) => {
-        initial[q.id] = q.answer || '';
-      });
-      setAnswers(initial);
+    const switchedAdu = previousAduId.current !== aduId;
+    previousAduId.current = aduId;
+    if (switchedAdu) {
+      dirtyAnswerIds.current.clear();
     }
-  }, [adu]);
+
+    const activeQuestionIds = new Set(clarificationQuestions.map((q) => q.id));
+    for (const questionId of dirtyAnswerIds.current) {
+      if (!activeQuestionIds.has(questionId)) {
+        dirtyAnswerIds.current.delete(questionId);
+      }
+    }
+
+    setAnswers((current) => {
+      const next: Record<string, string> = {};
+      clarificationQuestions.forEach((q) => {
+        const preserveDraft = !switchedAdu && q.status === 'pending' && dirtyAnswerIds.current.has(q.id);
+        next[q.id] = preserveDraft ? (current[q.id] ?? q.answer ?? '') : (q.answer || '');
+        if (q.status !== 'pending') {
+          dirtyAnswerIds.current.delete(q.id);
+        }
+      });
+      return next;
+    });
+  }, [aduId, clarificationRevision]);
 
   if (!adu) return <></>;
 
@@ -54,6 +78,7 @@ export function ReviewGatePanel({ aduId }: ReviewGatePanelProps): JSX.Element {
         return;
       }
       await useAgentFactoryStore.getState().answerClarification(aduId, qId, answerText, status);
+      dirtyAnswerIds.current.delete(qId);
     } catch (e: any) {
       setError(e.message || '提交回答失败');
     } finally {
@@ -175,7 +200,10 @@ export function ReviewGatePanel({ aduId }: ReviewGatePanelProps): JSX.Element {
                         <div className="space-y-2">
                           <textarea
                             value={answers[q.id] || ''}
-                            onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                            onChange={(e) => {
+                              dirtyAnswerIds.current.add(q.id);
+                              setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }));
+                            }}
                             className="w-full h-16 bg-slate-950 text-slate-100 text-xs p-2.5 rounded border border-slate-800 focus:ring-1 focus:ring-amber-500 focus:outline-none resize-none"
                             placeholder="请提供明确、具体的事实答案作为后续步骤的硬性约束..."
                           />
