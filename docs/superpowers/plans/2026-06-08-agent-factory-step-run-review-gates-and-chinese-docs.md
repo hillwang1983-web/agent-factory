@@ -1,7 +1,7 @@
 # Agent Factory 单步执行、审核门与中文过程文档开发设计
 
-> **For agentic workers:** REQUIRED SUB-SKILL: 使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans` 执行本文档。按本文档的任务清单逐项实现、验证并更新状态。  
-> **目标读者:** Antigravity / AI Agent 开发执行器  
+> **For agentic workers:** REQUIRED SUB-SKILL: 使用 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans` 执行本文档。按本文档的任务清单逐项实现、验证并更新状态。
+> **目标读者:** Antigravity / AI Agent 开发执行器
 > **适用范围:** `/Users/hill/open5gs` 下的 Agent Factory；当前可先落在 `open5gs-nms` 已集成看板，后续若按独立看板方案解耦，应将同一套后端能力迁移到独立 `agent-factory-dashboard` 服务。
 
 ## 1. 背景与目标

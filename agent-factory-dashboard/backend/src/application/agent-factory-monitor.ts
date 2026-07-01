@@ -1,3 +1,7 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import { execFileSync } from 'child_process';
 import { AgentFactoryRepository } from '../domain/agent-factory-repository';
 import {
   AgentFactoryDashboard,
@@ -240,7 +244,11 @@ export class AgentFactoryMonitorUseCase {
       let healthStatus: AgentFactoryAduView['health']['status'] = 'active';
       const reasons: string[] = [];
 
-      if (activeOrchestrators && activeOrchestrators.has(adu.id)) {
+      const depHealth = checkDependencyHealthTS(adu, adus, adu.repo_path || this.repo.getWorkspaceRoot());
+      if (depHealth.status === 'delivery_drifted' || depHealth.status === 'blocked') {
+        healthStatus = depHealth.status as any;
+        reasons.push(...depHealth.reasons);
+      } else if (activeOrchestrators && activeOrchestrators.has(adu.id)) {
         healthStatus = 'running';
         reasons.push('ADU is currently running/executing in the Agent factory.');
       } else if (isTerminal) {
@@ -771,4 +779,143 @@ export class AgentFactoryMonitorUseCase {
       reason: `ADU is in state ${adu.state}.`,
     };
   }
+}
+
+
+export function checkDependencyHealthTS(adu: any, adus: any[], repoRoot: string): { status: string; reasons: string[]; gate_type?: string } {
+  if (!repoRoot || typeof repoRoot !== 'string') {
+    return { status: 'healthy', reasons: [] };
+  }
+
+  const dependsOn = adu.depends_on || [];
+  const reasons: string[] = [];
+  let isDrifted = false;
+  let isBlocked = false;
+
+  for (const depId of dependsOn) {
+    const depAdu = adus.find(a => a.id === depId);
+    if (!depAdu) {
+      isBlocked = true;
+      reasons.push(`Dependency ${depId} not found.`);
+      continue;
+    }
+    if (depAdu.state === 'canceled') {
+      isBlocked = true;
+      reasons.push(`Dependency ${depId} was canceled.`);
+      continue;
+    }
+    if (depAdu.state !== 'evidenced' && depAdu.state !== 'mvp_ready') continue;
+
+    const manifestPath = path.join(repoRoot, '.ai-agent', 'evidence', `${depId}-manifest.json`);
+    if (!fs.existsSync(manifestPath)) {
+      isDrifted = true;
+      reasons.push(`Dependency ${depId} manifest is missing.`);
+      continue;
+    }
+
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+        throw new Error('Manifest is not a dictionary object.');
+      }
+      const deliveryCommit = manifest.delivery_commit;
+      if (!deliveryCommit) {
+        isDrifted = true;
+        reasons.push(`Dependency ${depId} manifest is missing delivery_commit.`);
+        continue;
+      }
+
+      // Check commit format safely before git query to prevent shell injection
+      if (!/^[a-fA-F0-9]{7,64}$/.test(deliveryCommit)) {
+        isDrifted = true;
+        reasons.push(`Dependency ${depId} manifest contains invalid delivery_commit hash format.`);
+        continue;
+      }
+
+      try {
+        execFileSync('git', ['merge-base', '--is-ancestor', deliveryCommit, 'HEAD'], { cwd: repoRoot, stdio: 'ignore' });
+      } catch (err) {
+        isDrifted = true;
+        reasons.push(`Dependency ${depId} delivery commit ${deliveryCommit.substring(0, 7)} is not reachable from HEAD.`);
+        continue;
+      }
+
+      // Verify outputs_hash contains all required_outputs (required_outputs ⊆ outputs_hash)
+      const requiredOutputs = manifest.required_outputs || [];
+      const outputsHash = manifest.outputs_hash || {};
+      if (!Array.isArray(requiredOutputs) || typeof outputsHash !== 'object' || Array.isArray(outputsHash)) {
+        isDrifted = true;
+        reasons.push(`Dependency ${depId} manifest data structure is malformed.`);
+        continue;
+      }
+
+      let subsetCheckPassed = true;
+      for (const fpath of requiredOutputs) {
+        if (!(fpath in outputsHash)) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} required deliverable file is missing from manifest outputs_hash: ${fpath}.`);
+          subsetCheckPassed = false;
+        }
+      }
+      if (!subsetCheckPassed) {
+        continue;
+      }
+
+      // Check outputs existence and hash
+      for (const [fpath, expectedHash] of Object.entries(outputsHash)) {
+        const fullPath = path.join(repoRoot, fpath as string);
+
+        // Prevent path traversal
+        const relative = path.relative(repoRoot, fullPath);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file path traversal detected: ${fpath}.`);
+          continue;
+        }
+
+        // Check if prefix is blocked (similar to normalized checks)
+        const blockedPrefixes = [
+          '.git/', '.agent-factory/', '.ai-agent/registry/', '~/',
+          '/Users/', '/home/', '/etc/', '/tmp/', '/var/',
+        ];
+        if (blockedPrefixes.some(prefix => fpath.startsWith(prefix) || fpath.replace(/^\/+/, '').startsWith(prefix.replace(/^\/+/, '')))) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable path is invalid or unsafe: ${fpath}.`);
+          continue;
+        }
+
+        if (!fs.existsSync(fullPath)) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file is missing from disk: ${fpath}.`);
+          continue;
+        }
+
+        // Limit file size to prevent OOM
+        const stats = fs.statSync(fullPath);
+        if (stats.size > 50 * 1024 * 1024) { // 50MB
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file ${fpath} is too large to hash safely.`);
+          continue;
+        }
+
+        const fileBuffer = fs.readFileSync(fullPath);
+        const hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        if (hash !== expectedHash) {
+          isDrifted = true;
+          reasons.push(`Dependency ${depId} deliverable file hash mismatch: ${fpath}.`);
+        }
+      }
+    } catch (e: any) {
+      isDrifted = true;
+      reasons.push(`Dependency ${depId} manifest check failed: ${e.message}`);
+    }
+  }
+
+  if (isBlocked) {
+    return { status: 'blocked', reasons, gate_type: 'dependency_blocked' };
+  }
+  if (isDrifted) {
+    return { status: 'delivery_drifted', reasons, gate_type: 'dependency_delivery_missing' };
+  }
+  return { status: 'healthy', reasons: [] };
 }

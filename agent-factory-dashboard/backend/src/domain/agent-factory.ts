@@ -50,6 +50,8 @@ export interface AgentFactoryAdu {
   allowed_write_paths: string[];
   required_commands: string[];
   required_evidence: string[];
+  required_deliverables?: string[];
+  codeless?: boolean;
   artifacts: string[];
   human_gate_required: boolean;
   paused?: boolean;
@@ -185,7 +187,7 @@ export interface AgentFactoryAduView extends AgentFactoryAdu {
   workflow: AgentFactoryWorkflowStep[];
   artifact_status: AgentFactoryArtifact[];
   health: {
-    status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
+    status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running' | 'delivery_drifted';
     reasons: string[];
   };
   display_status: {
@@ -489,7 +491,7 @@ export interface AgentFactoryEpicView extends AgentFactoryEpic {
   child_adu_views?: AgentFactoryAduView[];
   next_agent: string | null;
   health: {
-    status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running';
+    status: 'healthy' | 'active' | 'blocked' | 'stale' | 'failed' | 'running' | 'delivery_drifted';
     reasons: string[];
   };
   progress: {

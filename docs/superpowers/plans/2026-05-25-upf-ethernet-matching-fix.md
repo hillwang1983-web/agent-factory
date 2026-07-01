@@ -4,7 +4,7 @@
 
 **Goal:** Fix the UPF PDR matching logic to correctly handle Ethernet frames in Ethernet PDU sessions, ensuring PRP (redundancy) packets are properly matched and non-IP traffic is supported.
 
-**Architecture:** 
+**Architecture:**
 1. Modify `src/upf/n4-handler.c` to ensure the `is_ethernet_pdu` flag is set when either `vngroup` or `pair` metadata is found in the DNN.
 2. Refactor `lib/pfcp/rule-match.c` to allow non-IP packets to match "Match-All" rules in Ethernet PDU sessions.
 3. Re-run integration tests to verify.

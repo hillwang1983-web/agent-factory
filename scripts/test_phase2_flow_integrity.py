@@ -219,7 +219,9 @@ try:
         design.write_text("# Old design", encoding="utf-8")
         old_ns = time.time_ns() - 10_000_000_000
         os.utime(design, ns=(old_ns, old_ns))
+        time.sleep(0.02)
         run_started_ns = time.time_ns()
+        time.sleep(0.02)
 
         stale_errors = run_mod.validate_declared_changes(
             {
