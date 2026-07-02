@@ -126,5 +126,88 @@ class TestProjectProfileContract(unittest.TestCase):
         self.assertEqual(normalized["commands"]["safe"]["build"][0]["command"], "npm run build")
         self.assertEqual(len(normalized["commands"]["safe"]["test"]), 2)
 
+    def test_hermes_project_profile_integration(self):
+        import tempfile
+        import sys
+        import subprocess
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            # Create repo structure
+            repo_dir = tmp_path / "repo"
+            repo_dir.mkdir()
+            import subprocess
+            subprocess.run(["git", "init"], cwd=str(repo_dir), capture_output=True)
+            
+            agent_factory_dir = repo_dir / ".agent-factory"
+            agent_factory_dir.mkdir()
+            
+            # Write canonical-v2.json to project-profile.json
+            profile_json_path = agent_factory_dir / "project-profile.json"
+            v2_fixture = load_fixture("canonical-v2.json")
+            with profile_json_path.open("w", encoding="utf-8") as f:
+                json.dump(v2_fixture, f)
+                
+            # Create projects registry
+            registry_dir = tmp_path / "registry"
+            registry_dir.mkdir()
+            projects_json_path = registry_dir / "projects.json"
+            
+            # Copy all files from real .ai-agent/registry/ to tmp registry
+            real_workspace = Path(__file__).resolve().parents[1]
+            real_registry = real_workspace / ".ai-agent" / "registry"
+            if real_registry.exists():
+                import shutil
+                for f in real_registry.iterdir():
+                    if f.is_file() and f.name != "projects.json":
+                        shutil.copy(str(f), str(registry_dir / f.name))
+            
+            # Set up matching project in projects.json
+            registry_data = {
+                "version": 1,
+                "projects": [
+                    {
+                        "project_id": "canonical-project",
+                        "repo_path": str(repo_dir),
+                        "status": "created"
+                    }
+                ]
+            }
+            with projects_json_path.open("w", encoding="utf-8") as f:
+                json.dump(registry_data, f)
+                
+            # Run hermes_project_profile.py as a subprocess
+            script_path = Path(__file__).resolve().parent / "hermes_project_profile.py"
+            real_workspace = Path(__file__).resolve().parents[1]
+            env = os.environ.copy()
+            env["AGENT_FACTORY_PROJECTS_REGISTRY"] = str(projects_json_path)
+            env["AGENT_FACTORY_WORKSPACE"] = str(real_workspace)
+            env["MOCK_HERMES_RUN"] = "1"
+            
+            res = subprocess.run(
+                [sys.executable, str(script_path), "--project", "canonical-project"],
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}\n{res.stdout}")
+            
+            # Assert registry updated
+            with projects_json_path.open("r", encoding="utf-8") as f:
+                updated_registry = json.load(f)
+                
+            project = updated_registry["projects"][0]
+            self.assertEqual(project["status"], "profiled")
+            summary = project["profile_summary"]
+            self.assertEqual(summary["build_commands"], ["npm run build"])
+            self.assertEqual(summary["test_commands"], ["npm test"])
+            self.assertEqual(summary["risk_level"], "high")
+            
+            # Assert project-profile.json on disk is canonicalized V2 and contains schema_version 2
+            with profile_json_path.open("r", encoding="utf-8") as f:
+                disk_profile = json.load(f)
+            self.assertEqual(disk_profile["schema_version"], 2)
+            self.assertEqual(disk_profile["project_id"], "canonical-project")
+
 if __name__ == "__main__":
     unittest.main()

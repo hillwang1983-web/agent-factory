@@ -70,7 +70,7 @@ def capture_repository_baseline(
     except Exception:
         head = None
 
-    status_out = run_git(["status", "--porcelain", "-z"], repo_root)
+    status_out = run_git(["status", "--porcelain", "-uall", "-z"], repo_root)
     dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
     pre_dirty_hashes = {}
@@ -113,7 +113,7 @@ def capture_repository_baseline(
     }
 
 def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
-    status_out = run_git(["status", "--porcelain", "-z"], repo_root)
+    status_out = run_git(["status", "--porcelain", "-uall", "-z"], repo_root)
     dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
     created = set()
@@ -133,7 +133,8 @@ def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
         if "D" in xy:
             deleted.add(p)
         elif "A" in xy:
-            created.add(p)
+            if full_path.is_file() and not full_path.is_symlink():
+                created.add(p)
         else:
             # M, R, C, etc.
             if p in pre_dirty_hashes:
@@ -164,13 +165,12 @@ def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
     for p in untracked_entries:
         seen_untracked.add(p)
         full_path = repo_root / p
+        if not full_path.is_file() or full_path.is_symlink():
+            continue
         if p in untracked_hashes:
-            if full_path.is_file() and not full_path.is_symlink():
-                current_hash = sha256_file(full_path)
-                if current_hash != untracked_hashes[p]:
-                    modified.add(p)
-            else:
-                deleted.add(p)
+            current_hash = sha256_file(full_path)
+            if current_hash != untracked_hashes[p]:
+                modified.add(p)
         else:
             created.add(p)
 
