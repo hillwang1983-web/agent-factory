@@ -108,23 +108,27 @@ def build_agent_write_policy(
             raise WritePolicyError("Developer allowed write paths cannot be empty.")
         for p in adu_allowed_write_paths:
             try:
+                if not isinstance(p, str):
+                    raise WritePolicyError(f"Allowed path must be a string, got {type(p).__name__}")
                 norm = normalize_repo_path(p)
-            except WritePolicyError as e:
-                # '.' or empty is forbidden
+                if p.endswith("/"):
+                    # Must ensure suffix / is retained in prefix matching
+                    directory_prefixes.append(norm + "/")
+                else:
+                    exact_paths.add(norm)
+            except Exception as e:
+                if isinstance(e, WritePolicyError):
+                    raise e
                 raise WritePolicyError(f"Invalid developer allowed write path '{p}': {e}")
-
-            if p.endswith("/"):
-                # Must ensure suffix / is retained in prefix matching
-                directory_prefixes.append(norm + "/")
-            else:
-                exact_paths.add(norm)
     else:
         # For non-developer agents, only allow the exact paths from agent_target_files
         for f in agent_target_files:
             try:
+                if not isinstance(f, str):
+                    continue
                 norm = normalize_repo_path(f)
                 exact_paths.add(norm)
-            except WritePolicyError:
+            except Exception:
                 pass
 
         if not exact_paths:

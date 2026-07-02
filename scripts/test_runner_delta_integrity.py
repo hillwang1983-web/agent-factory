@@ -313,5 +313,94 @@ sys.exit(0)
         res = self.run_runner("developer", completion)
         self.assertNotEqual(res.returncode, 0)
 
+    def test_profiler_undeclared_ignored_file_fails(self):
+        completion = {
+            "result": "success",
+            "next_state": "project_profiled",
+            "changed_files": [
+                ".agent-factory/project-profile.json",
+                ".agent-factory/knowledge/project-summary.md",
+                ".agent-factory/knowledge/module-map.md",
+                ".agent-factory/knowledge/test-strategy.md",
+                ".agent-factory/knowledge/risk-map.md"
+            ],
+            "artifacts": [
+                ".agent-factory/project-profile.json",
+                ".agent-factory/knowledge/project-summary.md",
+                ".agent-factory/knowledge/module-map.md",
+                ".agent-factory/knowledge/test-strategy.md",
+                ".agent-factory/knowledge/risk-map.md"
+            ]
+        }
+        res = self.run_runner(
+            "project-profiler",
+            completion,
+            actual_files_to_touch=[
+                ".agent-factory/project-profile.json",
+                ".agent-factory/knowledge/project-summary.md",
+                ".agent-factory/knowledge/module-map.md",
+                ".agent-factory/knowledge/test-strategy.md",
+                ".agent-factory/knowledge/risk-map.md",
+                ".agent-factory/config.json"
+            ]
+        )
+        self.assertNotEqual(res.returncode, 0)
+        record = self.get_last_run_record()
+        self.assertEqual(record["result"], "failed")
+
+    def test_ignored_git_subscan_fail_closed(self):
+        mock_git_path = self.bin_dir / "git"
+        mock_git_content = """#!/usr/bin/env python3
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+args = sys.argv[1:]
+if "--ignored" in args:
+    sys.exit(1)
+
+real_git = "git"
+cur_bin = Path(__file__).parent.resolve()
+for part in os.environ.get("PATH", "").split(os.path.pathsep):
+    if part:
+        p_path = Path(part).resolve()
+        if p_path != cur_bin:
+            candidate = p_path / "git"
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                real_git = str(candidate)
+                break
+
+res = subprocess.run([real_git] + args)
+sys.exit(res.returncode)
+"""
+        try:
+            mock_git_path.write_text(mock_git_content, encoding="utf-8")
+            mock_git_path.chmod(0o755)
+
+            completion = {
+                "result": "success",
+                "next_state": "project_profiled",
+                "changed_files": [
+                    ".agent-factory/project-profile.json",
+                    ".agent-factory/knowledge/project-summary.md",
+                    ".agent-factory/knowledge/module-map.md",
+                    ".agent-factory/knowledge/test-strategy.md",
+                    ".agent-factory/knowledge/risk-map.md"
+                ],
+                "artifacts": [
+                    ".agent-factory/project-profile.json",
+                    ".agent-factory/knowledge/project-summary.md",
+                    ".agent-factory/knowledge/module-map.md",
+                    ".agent-factory/knowledge/test-strategy.md",
+                    ".agent-factory/knowledge/risk-map.md"
+                ]
+            }
+            res = self.run_runner("project-profiler", completion)
+            self.assertNotEqual(res.returncode, 0)
+        finally:
+            if mock_git_path.exists():
+                mock_git_path.unlink()
+
 if __name__ == "__main__":
     unittest.main()

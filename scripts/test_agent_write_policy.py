@@ -190,5 +190,23 @@ class TestAgentWritePolicy(unittest.TestCase):
         self.assertEqual(result.error_code, "unauthorized_write_path")
         self.assertIn("123", result.unauthorized_paths)
 
+    def test_non_string_allowed_paths_raise_policy_error(self):
+        with self.assertRaises(WritePolicyError):
+            build_agent_write_policy(
+                agent_name="developer",
+                target_id="ADU-1",
+                is_epic=False,
+                adu_allowed_write_paths=[123],
+                agent_target_files=[]
+            )
+        with self.assertRaises(WritePolicyError):
+            build_agent_write_policy(
+                agent_name="developer",
+                target_id="ADU-1",
+                is_epic=False,
+                adu_allowed_write_paths=[{"path": "src"}],
+                agent_target_files=[]
+            )
+
 if __name__ == "__main__":
     unittest.main()
