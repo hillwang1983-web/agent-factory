@@ -1,0 +1,10 @@
+{
+  "project_id": "legacy-project",
+  "project_type": "node-app",
+  "detected_stack": ["javascript"],
+  "commands": {
+    "build": "npm run build",
+    "test": { "unit": "npm test", "e2e": "npm run test:e2e" }
+  },
+  "risk_level": "medium"
+}

@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProjectProfile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_id",
+    "project_type",
+    "detected_stack",
+    "commands",
+    "risk_profile"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detected_stack": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["language", "percentage"],
+        "additionalProperties": false,
+        "properties": {
+          "language": { "type": "string", "minLength": 1 },
+          "percentage": { "type": "number", "minimum": 0, "maximum": 100 }
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "required": ["safe", "ambiguous", "unsafe"],
+      "additionalProperties": false,
+      "properties": {
+        "safe": {
+          "type": "object",
+          "required": ["build", "test"],
+          "additionalProperties": false,
+          "properties": {
+            "build": { "$ref": "#/$defs/commandList" },
+            "test": { "$ref": "#/$defs/commandList" }
+          }
+        },
+        "ambiguous": { "$ref": "#/$defs/commandList" },
+        "unsafe": { "$ref": "#/$defs/commandList" }
+      }
+    },
+    "risk_profile": {
+      "type": "object",
+      "required": ["risk_level", "reasons"],
+      "additionalProperties": false,
+      "properties": {
+        "risk_level": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "unknown"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "scan_summary": {
+      "type": "object",
+      "required": ["total_files", "lines_of_code"],
+      "additionalProperties": false,
+      "properties": {
+        "total_files": { "type": "integer", "minimum": 0 },
+        "lines_of_code": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "command": {
+      "type": "object",
+      "required": ["id", "command", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "commandList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/command" }
+    }
+  }
+}

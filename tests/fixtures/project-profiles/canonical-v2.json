@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "project_id": "canonical-project",
+  "project_type": "node-app",
+  "detected_stack": [
+    { "language": "typescript", "percentage": 100 }
+  ],
+  "commands": {
+    "safe": {
+      "build": [
+        { "id": "build", "command": "npm run build", "source": "package.json" }
+      ],
+      "test": [
+        { "id": "test_unit", "command": "npm test", "source": "package.json" }
+      ]
+    },
+    "ambiguous": [],
+    "unsafe": [
+      { "id": "deploy", "command": "npm run deploy", "source": "package.json" }
+    ]
+  },
+  "risk_profile": {
+    "risk_level": "high",
+    "reasons": ["deployment scripts are present"]
+  },
+  "scan_summary": {
+    "total_files": 120,
+    "lines_of_code": 9000
+  }
+}
