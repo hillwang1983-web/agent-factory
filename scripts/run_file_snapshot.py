@@ -4,6 +4,7 @@ import sys
 import json
 import hashlib
 import argparse
+import subprocess
 from pathlib import Path
 
 def sha256_file(path: Path) -> str:
@@ -13,104 +14,208 @@ def sha256_file(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-def is_safe_and_inside(path: Path, root: Path) -> bool:
+def normalize_repo_path(p: str) -> str:
+    return os.path.normpath(p.replace("\\", "/")).replace("\\", "/")
+
+def run_git(args: list[str], cwd: Path) -> str:
+    res = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"Git command failed: {res.stderr}")
+    return res.stdout
+
+def get_git_root(repo_root: Path) -> Path:
     try:
-        resolved_path = path.resolve()
-        resolved_root = root.resolve()
-        # Containment check: resolved_path must start with resolved_root
-        if not str(resolved_path).startswith(str(resolved_root)):
-            return False
+        out = run_git(["rev-parse", "--show-toplevel"], repo_root)
+        return Path(out.strip())
+    except Exception as e:
+        raise RuntimeError(f"Not a git repository: {e}")
 
-        # Check if the path or any of its parents up to repo_root is a symlink
-        curr = path
-        while curr != root and curr != curr.parent:
-            if curr.is_symlink():
-                return False
-            curr = curr.parent
+def parse_porcelain_status(status_out: str) -> tuple[set[tuple[str, str]], set[str]]:
+    entries = status_out.split("\x00") if status_out else []
+    dirty_tracked = set()
+    untracked = set()
+    
+    idx = 0
+    while idx < len(entries):
+        entry = entries[idx]
+        if not entry:
+            idx += 1
+            continue
+        xy = entry[:2]
+        path_str = entry[3:]
+        
+        # If renamed/copied
+        if "R" in xy or "C" in xy:
+            idx += 1
+            if idx < len(entries):
+                dest_path = entries[idx]
+                dirty_tracked.add((xy, dest_path))
+            dirty_tracked.add((xy, path_str))
+        elif xy == "??":
+            untracked.add(path_str)
+        else:
+            dirty_tracked.add((xy, path_str))
+        idx += 1
+    return dirty_tracked, untracked
 
-        return True
+def capture_repository_baseline(
+    repo_root: Path,
+    exact_ignored_targets: list[str],
+    sensitive_targets: list[str],
+) -> dict:
+    git_root = get_git_root(repo_root)
+    
+    try:
+        head = run_git(["rev-parse", "HEAD"], repo_root).strip()
     except Exception:
-        return False
+        head = None
 
-def expand_allowed_files(repo_root: Path, allowed_paths: list[str]) -> list[tuple[str, Path]]:
-    results = []
-    for allowed in allowed_paths:
-        allowed = allowed.replace("\\", "/").strip()
-        if not allowed:
-            continue
-        parts = allowed.split("/")
-        if ".." in parts or allowed.startswith("/"):
-            # Reject absolute paths and path traversal to prevent escape
-            continue
+    status_out = run_git(["status", "--porcelain", "-z"], repo_root)
+    dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
-        full_path = repo_root / allowed
+    pre_dirty_hashes = {}
+    for xy, p in dirty_tracked_entries:
+        full_path = repo_root / p
+        if full_path.is_file() and not full_path.is_symlink():
+            pre_dirty_hashes[p] = sha256_file(full_path)
 
-        # Check if it is a symlink
-        if full_path.is_symlink():
-            continue
+    untracked_hashes = {}
+    for p in untracked_entries:
+        full_path = repo_root / p
+        if full_path.is_file() and not full_path.is_symlink():
+            untracked_hashes[p] = sha256_file(full_path)
 
-        # Root containment check
-        if not is_safe_and_inside(full_path, repo_root):
-            continue
+    exact_target_hashes = {}
+    for p in exact_ignored_targets:
+        norm_p = normalize_repo_path(p)
+        full_path = repo_root / norm_p
+        if full_path.is_file() and not full_path.is_symlink():
+            exact_target_hashes[norm_p] = sha256_file(full_path)
+        else:
+            exact_target_hashes[norm_p] = None
 
-        if full_path.is_file():
-            results.append((allowed, full_path))
-        elif full_path.is_dir():
-            for root, dirs, files in os.walk(full_path, followlinks=False):
-                # Ensure no directories in the traversal are symlinks
-                skip_subdir = False
-                curr_dir = Path(root)
-                while curr_dir != full_path and curr_dir != curr_dir.parent:
-                    if curr_dir.is_symlink():
-                        skip_subdir = True
-                        break
-                    curr_dir = curr_dir.parent
-                if skip_subdir:
-                    continue
+    sensitive_hashes = {}
+    for p in sensitive_targets:
+        norm_p = normalize_repo_path(p)
+        full_path = repo_root / norm_p
+        if full_path.is_file() and not full_path.is_symlink():
+            sensitive_hashes[norm_p] = sha256_file(full_path)
+        else:
+            sensitive_hashes[norm_p] = None
 
-                for file in files:
-                    file_path = Path(root) / file
-                    if file_path.is_symlink():
-                        continue
-                    if not is_safe_and_inside(file_path, repo_root):
-                        continue
-                    try:
-                        relative = str(file_path.relative_to(repo_root)).replace("\\", "/")
-                        results.append((relative, file_path))
-                    except ValueError:
-                        pass
-    return results
-
-def snapshot_allowed_files(repo_root: Path, allowed_paths: list[str]) -> dict[str, dict]:
-    results = {}
-    for relative, path in expand_allowed_files(repo_root, allowed_paths):
-        if path.is_file():
-            sha = sha256_file(path)
-            results[relative] = {"sha256": sha, "exists": True}
-    return results
-
-def diff_snapshots(before: dict, after: dict) -> dict[str, list[str]]:
-    keys = set(before) | set(after)
-    created = []
-    modified = []
-    deleted = []
-    for k in keys:
-        b_exists = before.get(k, {}).get("exists", False)
-        a_exists = after.get(k, {}).get("exists", False)
-        if not b_exists and a_exists:
-            created.append(k)
-        elif b_exists and not a_exists:
-            deleted.append(k)
-        elif b_exists and a_exists:
-            if before[k]["sha256"] != after[k]["sha256"]:
-                modified.append(k)
     return {
-        "created": sorted(created),
-        "modified": sorted(modified),
-        "deleted": sorted(deleted),
+        "git_root": str(git_root),
+        "head": head,
+        "pre_dirty_hashes": pre_dirty_hashes,
+        "untracked_hashes": untracked_hashes,
+        "exact_target_hashes": exact_target_hashes,
+        "sensitive_hashes": sensitive_hashes
+    }
+
+def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
+    status_out = run_git(["status", "--porcelain", "-z"], repo_root)
+    dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
+
+    created = set()
+    modified = set()
+    deleted = set()
+
+    # Tracked files handling
+    pre_dirty_hashes = baseline.get("pre_dirty_hashes", {})
+    
+    # We also keep track of what files were seen in git status
+    seen_in_status = set()
+
+    for xy, p in dirty_tracked_entries:
+        seen_in_status.add(p)
+        full_path = repo_root / p
+        
+        if "D" in xy:
+            deleted.add(p)
+        elif "A" in xy:
+            created.add(p)
+        else:
+            # M, R, C, etc.
+            if p in pre_dirty_hashes:
+                if full_path.is_file() and not full_path.is_symlink():
+                    current_hash = sha256_file(full_path)
+                    if current_hash != pre_dirty_hashes[p]:
+                        modified.add(p)
+                else:
+                    deleted.add(p)
+            else:
+                if full_path.is_file() and not full_path.is_symlink():
+                    # It was clean tracked before and is now modified/created
+                    modified.add(p)
+                else:
+                    deleted.add(p)
+
+    # Check if any pre_dirty_hashes are now deleted (not in status but no longer exists)
+    for p in pre_dirty_hashes:
+        if p not in seen_in_status:
+            full_path = repo_root / p
+            if not full_path.exists():
+                deleted.add(p)
+
+    # Untracked files handling
+    untracked_hashes = baseline.get("untracked_hashes", {})
+    seen_untracked = set()
+
+    for p in untracked_entries:
+        seen_untracked.add(p)
+        full_path = repo_root / p
+        if p in untracked_hashes:
+            if full_path.is_file() and not full_path.is_symlink():
+                current_hash = sha256_file(full_path)
+                if current_hash != untracked_hashes[p]:
+                    modified.add(p)
+            else:
+                deleted.add(p)
+        else:
+            created.add(p)
+
+    for p in untracked_hashes:
+        if p not in seen_untracked:
+            full_path = repo_root / p
+            if not full_path.exists():
+                deleted.add(p)
+
+    # Exact ignored targets handling
+    exact_target_hashes = baseline.get("exact_target_hashes", {})
+    for p, old_hash in exact_target_hashes.items():
+        full_path = repo_root / p
+        if full_path.is_file() and not full_path.is_symlink():
+            current_hash = sha256_file(full_path)
+            if old_hash is None:
+                created.add(p)
+            elif current_hash != old_hash:
+                modified.add(p)
+        else:
+            if old_hash is not None:
+                deleted.add(p)
+
+    # Sensitive targets handling
+    sensitive_hashes = baseline.get("sensitive_hashes", {})
+    for p, old_hash in sensitive_hashes.items():
+        full_path = repo_root / p
+        if full_path.is_file() and not full_path.is_symlink():
+            current_hash = sha256_file(full_path)
+            if old_hash is None:
+                created.add(p)
+            elif current_hash != old_hash:
+                modified.add(p)
+        else:
+            if old_hash is not None:
+                deleted.add(p)
+
+    return {
+        "created": sorted(list(created)),
+        "modified": sorted(list(modified)),
+        "deleted": sorted(list(deleted))
     }
 
 def main():
+    # Keep main CLI signature for compatibility or print warning
     parser = argparse.ArgumentParser(description="Create or diff repo file snapshots.")
     parser.add_argument("--repo-root", required=True, help="Path to repo root")
     parser.add_argument("--allowed-paths", required=True, help="Comma-separated allowed write paths")
@@ -119,35 +224,26 @@ def main():
     parser.add_argument("--diff", help="Path to diff JSON to save")
     args = parser.parse_args()
 
+    # Fallback simulation of old behavior
     repo_root = Path(args.repo_root)
     allowed_paths = [p.strip() for p in args.allowed_paths.split(",") if p.strip()]
 
     if args.before and not args.after and not args.diff:
-        # Just create the before snapshot
-        snapshot = snapshot_allowed_files(repo_root, allowed_paths)
+        baseline = capture_repository_baseline(repo_root, allowed_paths, [])
         with open(args.before, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
+            json.dump(baseline, f, ensure_ascii=False, indent=2)
             f.write("\n")
-        print(f"Created snapshot at {args.before}")
     elif args.before and args.after and args.diff:
-        # Create after snapshot and compute diff
         before_path = Path(args.before)
-        if not before_path.is_file():
-            print(f"Error: Before snapshot file not found at {before_path}")
-            sys.exit(1)
         with open(before_path, "r", encoding="utf-8") as f:
             before = json.load(f)
-
-        after = snapshot_allowed_files(repo_root, allowed_paths)
+        delta = calculate_repository_delta(repo_root, before)
         with open(args.after, "w", encoding="utf-8") as f:
-            json.dump(after, f, ensure_ascii=False, indent=2)
+            json.dump(capture_repository_baseline(repo_root, allowed_paths, []), f, indent=2)
             f.write("\n")
-
-        diff = diff_snapshots(before, after)
         with open(args.diff, "w", encoding="utf-8") as f:
-            json.dump(diff, f, ensure_ascii=False, indent=2)
+            json.dump(delta, f, indent=2)
             f.write("\n")
-        print(f"Created diff at {args.diff}")
 
 if __name__ == "__main__":
     main()
