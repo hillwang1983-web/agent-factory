@@ -314,6 +314,10 @@ sys.exit(0)
         self.assertNotEqual(res.returncode, 0)
 
     def test_profiler_undeclared_ignored_file_fails(self):
+        (self.workspace_root / ".gitignore").write_text(".agent-factory/\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(self.workspace_root), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "ignore profiler artifacts"], cwd=str(self.workspace_root), check=True, capture_output=True)
+
         completion = {
             "result": "success",
             "next_state": "project_profiled",
