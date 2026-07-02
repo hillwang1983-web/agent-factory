@@ -21,7 +21,10 @@ SENSITIVE_MONITORED_PATHS = [
     ".ai-agent/registry/operator-overrides.json",
     ".ai-agent/registry/write-path-expansion-requests.json",
     ".ai-agent/registry/artifact-edits.json",
-    ".ai-agent/registry/agent-model-settings.json"
+    ".ai-agent/registry/agent-model-settings.json",
+    ".ai-agent/registry/evidence-waivers.json",
+    ".ai-agent/registry/human-gates.json",
+    ".ai-agent/registry/intake-operations.json"
 ]
 
 FORBIDDEN_PREFIXES = (
@@ -154,25 +157,31 @@ def authorize_declared_and_actual_changes(
     declared = set()
     for p in declared_paths:
         try:
+            if not isinstance(p, str):
+                raise WritePolicyError(f"Path must be a string: {p}")
             norm = normalize_repo_path(p)
             declared.add(norm)
-        except WritePolicyError:
-            unauthorized.add(p)
+        except Exception:
+            unauthorized.add(str(p))
 
     actual = set()
     for key in ("created", "modified", "deleted"):
         for p in actual_delta.get(key, []):
             try:
+                if not isinstance(p, str):
+                    raise WritePolicyError(f"Path must be a string: {p}")
                 norm = normalize_repo_path(p)
                 actual.add(norm)
-            except WritePolicyError:
-                unauthorized.add(p)
+            except Exception:
+                unauthorized.add(str(p))
 
     runner_owned = set()
     for p in runner_owned_paths:
         try:
+            if not isinstance(p, str):
+                continue
             runner_owned.add(normalize_repo_path(p))
-        except WritePolicyError:
+        except Exception:
             pass
 
     agent_declared_runner = declared & runner_owned

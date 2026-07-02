@@ -34,6 +34,14 @@ class TestRunnerRetry(unittest.TestCase):
         # Create allowed directory
         (self.repo_root / "webui").mkdir()
 
+        import subprocess
+        subprocess.run(["git", "init"], cwd=str(self.repo_root), capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.repo_root), capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.repo_root), capture_output=True)
+        (self.repo_root / "dummy.txt").write_text("dummy", encoding="utf-8")
+        subprocess.run(["git", "add", "dummy.txt"], cwd=str(self.repo_root), capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=str(self.repo_root), capture_output=True)
+
         # Create prompts directory and a dummy prompt file inside our temp repo
         prompts_dir = self.repo_root / ".ai-agent" / "prompts"
         prompts_dir.mkdir(parents=True)
@@ -250,13 +258,13 @@ class TestRunnerRetry(unittest.TestCase):
 
                 mock_execute.side_effect = execute_side_effect
 
-                original_diff = run_file_snapshot.diff_snapshots
-                def mock_diff(before, after):
+                original_delta = run_file_snapshot.calculate_repository_delta
+                def mock_delta(repo_root, baseline):
                     if len(calls) == 1:
                         return {"created": [], "modified": [], "deleted": []}
-                    return original_diff(before, after)
+                    return original_delta(repo_root, baseline)
 
-                with patch.object(run_file_snapshot, "diff_snapshots", mock_diff):
+                with patch.object(run_file_snapshot, "calculate_repository_delta", mock_delta):
                     test_args = ["hermes_agent_run.py", "--adu", "REQ-RETRY-001", "--agent", "developer"]
                     with patch.object(sys, "argv", test_args):
                         try:
@@ -536,7 +544,8 @@ class TestRunnerRetry(unittest.TestCase):
                     "repo_path": str(self.repo_root),
                     "artifacts": [],
                     "latest_agent": "testwriter",
-                    "latest_run_timestamp": "20260621-110000"
+                    "latest_run_timestamp": "20260621-110000",
+                    "allowed_write_paths": ["webui/"]
                 }
             ]
         }

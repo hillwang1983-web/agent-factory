@@ -172,5 +172,23 @@ class TestAgentWritePolicy(unittest.TestCase):
         )
         self.assertTrue(result.allowed)
 
+    def test_non_string_paths_rejected(self):
+        policy = build_agent_write_policy(
+            agent_name="developer",
+            target_id="ADU-1",
+            is_epic=False,
+            adu_allowed_write_paths=["src/allowed.c"],
+            agent_target_files=[]
+        )
+        result = authorize_declared_and_actual_changes(
+            policy=policy,
+            declared_paths=[123, {"path": "src/allowed.c"}],
+            actual_delta={"modified": [], "created": [], "deleted": []},
+            runner_owned_paths=[],
+        )
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.error_code, "unauthorized_write_path")
+        self.assertIn("123", result.unauthorized_paths)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1625,13 +1625,53 @@ def main():
         except ValueError:
             pass
 
-    write_policy = agent_write_policy.build_agent_write_policy(
-        agent_name=args.agent,
-        target_id=adu["id"],
-        is_epic=is_epic_run,
-        adu_allowed_write_paths=adu.get("allowed_write_paths") or [],
-        agent_target_files=relative_targets
-    )
+    try:
+        write_policy = agent_write_policy.build_agent_write_policy(
+            agent_name=args.agent,
+            target_id=adu["id"],
+            is_epic=is_epic_run,
+            adu_allowed_write_paths=adu.get("allowed_write_paths") or [],
+            agent_target_files=relative_targets
+        )
+    except agent_write_policy.WritePolicyError as e:
+        run_record = {
+            "timestamp": timestamp,
+            "adu_id": adu["id"],
+            "project_id": project_id,
+            "workspace_root": str(project_repo_path),
+            "agent": args.agent,
+            "returncode": 1,
+            "result": "failed",
+            "run_dir": "",
+            "parsed_result": {
+                "result": "failed",
+                "error": f"Write policy initialization failed: {e}"
+            },
+            "token_usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "totalTokens": 0,
+                "usageSource": "estimated"
+            }
+        }
+        with registry_lock(REGISTRY):
+            fresh_runs = load_json(REGISTRY / "runs.json") if (REGISTRY / "runs.json").exists() else {"runs": []}
+            fresh_runs["runs"].append(run_record)
+            save_json_direct(REGISTRY / "runs.json", fresh_runs)
+
+            if adu_data:
+                fresh_adu_data = load_json(REGISTRY / "adu.json") if (REGISTRY / "adu.json").exists() else {"adus": []}
+                fresh_adu = next((a for a in fresh_adu_data.get("adus", []) if a.get("id") == adu["id"]), None)
+                if fresh_adu:
+                    fresh_adu["state"] = "failed"
+                    fresh_adu["latest_agent"] = args.agent
+                    fresh_adu["latest_run_timestamp"] = timestamp
+                    fresh_adu["last_result"] = "failed"
+                    import datetime as dt_mod
+                    fresh_adu["updated_at"] = dt_mod.datetime.now(dt_mod.timezone.utc).isoformat()
+                    save_json_direct(REGISTRY / "adu.json", fresh_adu_data)
+        print(json.dumps(run_record, ensure_ascii=False, indent=2))
+        sys.exit(1)
 
     baseline = run_file_snapshot.capture_repository_baseline(
         project_repo_path,

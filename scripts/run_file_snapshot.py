@@ -74,7 +74,19 @@ def capture_repository_baseline(
     except Exception:
         head = None
 
-    status_out = run_git(["status", "--porcelain", "--ignored", "-uall", "-z"], repo_root)
+    status_out1 = run_git(["status", "--porcelain", "-uall", "-z"], repo_root)
+    status_out2 = ""
+    paths_to_check = []
+    if (repo_root / ".agent-factory").exists():
+        paths_to_check.append(".agent-factory")
+    if (repo_root / ".ai-agent").exists():
+        paths_to_check.append(".ai-agent")
+    if paths_to_check:
+        try:
+            status_out2 = run_git(["status", "--porcelain", "--ignored", "-uall", "-z", "--"] + paths_to_check, repo_root)
+        except Exception:
+            pass
+    status_out = (status_out1 or "") + (status_out2 or "")
     dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
     pre_dirty_hashes = {}
@@ -117,7 +129,19 @@ def capture_repository_baseline(
     }
 
 def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
-    status_out = run_git(["status", "--porcelain", "--ignored", "-uall", "-z"], repo_root)
+    status_out1 = run_git(["status", "--porcelain", "-uall", "-z"], repo_root)
+    status_out2 = ""
+    paths_to_check = []
+    if (repo_root / ".agent-factory").exists():
+        paths_to_check.append(".agent-factory")
+    if (repo_root / ".ai-agent").exists():
+        paths_to_check.append(".ai-agent")
+    if paths_to_check:
+        try:
+            status_out2 = run_git(["status", "--porcelain", "--ignored", "-uall", "-z", "--"] + paths_to_check, repo_root)
+        except Exception:
+            pass
+    status_out = (status_out1 or "") + (status_out2 or "")
     dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
     created = set()
