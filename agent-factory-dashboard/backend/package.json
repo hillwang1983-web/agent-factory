@@ -25,7 +25,7 @@
     "test:agent-runtime-status": "npm run build && node tools/test-agent-runtime-status.js && node tools/test-runtime-isolation.js",
     "test:adu1351-regressions": "node tools/test-adu1351-regressions.js",
     "test:adu-flow-reliability": "npm run build && node tools/test-adu-flow-reliability.js && npm run test:write-policy",
-    "test:write-policy": "python3 ../../scripts/test_agent_write_policy.py && python3 ../../scripts/test_run_file_snapshot.py && python3 ../../scripts/test_runner_delta_integrity.py && python3 ../../scripts/test_phase2_flow_integrity.py",
+    "test:write-policy": "python3 ../../scripts/test_agent_write_policy.py && python3 ../../scripts/test_file_declarations.py && python3 ../../scripts/test_run_file_snapshot.py && python3 ../../scripts/test_runner_delta_integrity.py && python3 ../../scripts/test_phase2_flow_integrity.py",
     "test:project-profile-parser": "npm run build && node tools/test-project-profile-parser.js",
     "test:project-profile-contract": "npm run test:project-profile-parser && python3 ../../scripts/test_project_profile_contract.py && node tools/test-project-onboarding.js"
   },

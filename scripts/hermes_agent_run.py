@@ -1123,6 +1123,18 @@ def validate_agent_file_declarations(agent_name, result, repo_root, run_started_
     if not isinstance(declared, list):
         return {"errors": ["changed_files must be an array"]}
 
+    profiler_exact_paths = set()
+    if agent_name == "project-profiler":
+        for target in get_agent_target_files(
+            agent_name, {"id": "project-profiler"}, repo_root
+        ):
+            try:
+                profiler_exact_paths.add(
+                    str(Path(target).relative_to(repo_root)).replace("\\", "/")
+                )
+            except ValueError:
+                continue
+
     valid_changed_files = []
     runtime_managed_files = []
     generated_files = []
@@ -1151,10 +1163,17 @@ def validate_agent_file_declarations(agent_name, result, repo_root, run_started_
                 errors.append(f"evidence_agent_declared_source_change: {normalized}")
                 continue
 
+        if agent_name == "project-profiler" and normalized not in profiler_exact_paths:
+            errors.append(
+                f"illegal_write_path_escape: agent {agent_name} attempted to write "
+                f"outside its project profile contract: {normalized}"
+            )
+            continue
+
         # Role-based write policy: only developer/buildfix-debugger may modify production source.
         # testwriter may write to .ai-agent/ and tests/.
         # All other agents are restricted to .ai-agent/ paths.
-        if agent_name not in ALLOWED_WRITE_AGENTS and agent_name != "evidence":
+        if agent_name not in ALLOWED_WRITE_AGENTS and agent_name not in {"evidence", "project-profiler"}:
             if agent_name == "testwriter":
                 if not (normalized.startswith(".ai-agent/") or normalized.startswith("tests/")):
                     errors.append(f"illegal_write_path_escape: agent {agent_name} attempted to write outside .ai-agent/ or tests/: {normalized}")

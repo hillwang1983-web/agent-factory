@@ -42,6 +42,19 @@ def make_repo():
     build_file.parent.mkdir(parents=True)
     build_file.write_text("build rule\n")
 
+    profiler_files = [
+        ".agent-factory/project-profile.json",
+        ".agent-factory/knowledge/project-summary.md",
+        ".agent-factory/knowledge/module-map.md",
+        ".agent-factory/knowledge/test-strategy.md",
+        ".agent-factory/knowledge/risk-map.md",
+        ".agent-factory/config.json",
+    ]
+    for relative_path in profiler_files:
+        profiler_file = tmp / relative_path
+        profiler_file.parent.mkdir(parents=True, exist_ok=True)
+        profiler_file.write_text("{}\n" if profiler_file.suffix == ".json" else "# Test\n")
+
     return tmp
 
 
@@ -148,6 +161,47 @@ def test_evidence_only_no_errors():
         raise AssertionError(f"Evidence-only should have no errors: {decl}")
 
 
+def test_project_profiler_exact_artifacts_are_valid():
+    """Project profiler may declare exactly its five contract artifacts."""
+    repo = make_repo()
+    paths = [
+        ".agent-factory/project-profile.json",
+        ".agent-factory/knowledge/project-summary.md",
+        ".agent-factory/knowledge/module-map.md",
+        ".agent-factory/knowledge/test-strategy.md",
+        ".agent-factory/knowledge/risk-map.md",
+    ]
+    now_ns = time.time_ns()
+    time.sleep(0.01)
+    for relative_path in paths:
+        (repo / relative_path).touch()
+    decl = validate_agent_file_declarations(
+        "project-profiler", {"changed_files": paths}, repo, now_ns
+    )
+    teardown(repo)
+    if decl.get("errors"):
+        raise AssertionError(f"Profiler contract artifacts should be valid: {decl}")
+    if sorted(decl.get("valid_changed_files", [])) != sorted(paths):
+        raise AssertionError(f"Expected all profiler artifacts to be valid: {decl}")
+
+
+def test_project_profiler_extra_artifact_is_rejected():
+    """Project profiler cannot expand its write contract."""
+    repo = make_repo()
+    now_ns = time.time_ns()
+    time.sleep(0.01)
+    (repo / ".agent-factory" / "config.json").touch()
+    decl = validate_agent_file_declarations(
+        "project-profiler",
+        {"changed_files": [".agent-factory/config.json"]},
+        repo,
+        now_ns,
+    )
+    teardown(repo)
+    if not any("illegal_write_path_escape" in error for error in decl.get("errors", [])):
+        raise AssertionError(f"Unexpected profiler file should be rejected: {decl}")
+
+
 def main():
     print("── Evidence File Declaration Tests ──\n")
     assert_test("evidence source path → evidence_agent_declared_source_change", test_evidence_source_path)
@@ -157,6 +211,8 @@ def main():
     assert_test("mixed → correct classification", test_mixed_declarations)
     assert_test("evidence + registry → runtime_managed no error", test_evidence_registry_no_error)
     assert_test("evidence only → no errors", test_evidence_only_no_errors)
+    assert_test("project profiler exact artifacts → valid", test_project_profiler_exact_artifacts_are_valid)
+    assert_test("project profiler extra artifact → rejected", test_project_profiler_extra_artifact_is_rejected)
     print(f"\n── Results: {passed} passed, {failed} failed ──")
     sys.exit(0 if failed == 0 else 1)
 
