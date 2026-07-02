@@ -58,11 +58,11 @@ A readable split plan including:
     }
   ],
   "dependencies": [
-    { 
-      "from": "ADU-XXX-001", 
-      "to": "ADU-XXX-002", 
+    {
+      "from": "ADU-XXX-001",
+      "to": "ADU-XXX-002",
       "semantics": "prerequisite_to_dependent",
-      "reason": "CLI depends on DBI helpers" 
+      "reason": "CLI depends on DBI helpers"
     }
   ],
   "acceptance_coverage": [

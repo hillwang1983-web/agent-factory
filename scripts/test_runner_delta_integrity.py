@@ -16,16 +16,16 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.workspace_root = Path(self.tmpdir.name)
-        
+
         # Initialize Git repo
         subprocess.run(["git", "init"], cwd=str(self.workspace_root), capture_output=True)
         subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.workspace_root), capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.workspace_root), capture_output=True)
-        
+
         # Create Registry dir
         self.registry_dir = self.workspace_root / ".ai-agent" / "registry"
         self.registry_dir.mkdir(parents=True)
-        
+
         # Copy real registry config to mock
         real_registry = Path(__file__).resolve().parents[1] / ".ai-agent" / "registry"
         for f in real_registry.iterdir():
@@ -67,9 +67,83 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         src_dir.mkdir(exist_ok=True)
         allowed_file = src_dir / "allowed.c"
         allowed_file.write_text("// initial allowed", encoding="utf-8")
-        
+
         subprocess.run(["git", "add", "src/allowed.c"], cwd=str(self.workspace_root), capture_output=True)
         subprocess.run(["git", "commit", "-m", "initial commit"], cwd=str(self.workspace_root), capture_output=True)
+
+        self.bin_dir = Path(self.tmpdir.name) / "bin"
+        self.bin_dir.mkdir(parents=True, exist_ok=True)
+
+        mock_hermes_content = """#!/usr/bin/env python3
+import os
+import sys
+import json
+from pathlib import Path
+
+repo_path = Path(os.getcwd())
+runs_dir = repo_path / ".ai-agent" / "runs"
+latest_run_dir = None
+if runs_dir.exists():
+    subdirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    if subdirs:
+        latest_run_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
+
+mock_comp_env = os.environ.get("MOCK_COMPLETION_RESULT")
+mock_touch_env = os.environ.get("MOCK_TOUCH_FILES")
+
+if latest_run_dir:
+    if mock_comp_env:
+        completion_result = json.loads(mock_comp_env)
+        completion_data = {
+            "version": 1,
+            "status": completion_result.get("status") or completion_result.get("result") or "success",
+            "result": completion_result
+        }
+    else:
+        completion_data = {
+            "version": 1,
+            "status": "success",
+            "result": {
+                "result": "success",
+                "next_state": "implemented",
+                "changed_files": [],
+                "artifacts": [],
+                "next_agent": None,
+                "commands_run": [],
+                "risks": []
+            }
+        }
+
+    if completion_data["status"] == "success":
+        res_obj = completion_data["result"]
+        res_obj.setdefault("result", "success")
+        res_obj.setdefault("next_state", "implemented")
+        res_obj.setdefault("changed_files", [])
+        res_obj.setdefault("artifacts", [])
+        res_obj.setdefault("next_agent", None)
+        res_obj.setdefault("commands_run", [])
+        res_obj.setdefault("risks", [])
+
+    completion_file = latest_run_dir / "completion_att1.json"
+    with open(completion_file, "w", encoding="utf-8") as f:
+        json.dump(completion_data, f, indent=2)
+
+    files_to_touch = []
+    if mock_touch_env:
+        files_to_touch = json.loads(mock_touch_env)
+    elif mock_comp_env:
+        files_to_touch = completion_data["result"].get("changed_files", [])
+
+    for f in files_to_touch:
+        p = repo_path / f
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("mock content created by mock hermes", encoding="utf-8")
+
+sys.exit(0)
+"""
+        mock_file = self.bin_dir / "hermes"
+        mock_file.write_text(mock_hermes_content, encoding="utf-8")
+        mock_file.chmod(0o755)
 
     def tearDown(self):
         self.tmpdir.cleanup()
@@ -81,12 +155,12 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
 
     def run_runner(self, agent_name, completion_result, actual_files_to_touch=None):
         script_path = Path(__file__).resolve().parent / "hermes_agent_run.py"
-        
+
         env = os.environ.copy()
         env["AGENT_FACTORY_PROJECTS_REGISTRY"] = str(self.registry_dir / "projects.json")
         env["AGENT_FACTORY_WORKSPACE"] = str(self.workspace_root)
-        env["MOCK_HERMES_RUN"] = "1"
         env["MOCK_COMPLETION_RESULT"] = json.dumps(completion_result)
+        env["PATH"] = str(self.bin_dir) + os.path.pathsep + env.get("PATH", "")
 
         if actual_files_to_touch:
             env["MOCK_TOUCH_FILES"] = json.dumps(actual_files_to_touch)
@@ -115,7 +189,7 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         }
         res = self.run_runner("developer", completion)
         self.assertNotEqual(res.returncode, 0)
-        
+
         record = self.get_last_run_record()
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["parsed_result"]["error_code"], "unauthorized_write_path")
@@ -130,7 +204,7 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         # Developer declared src/allowed.c, but also modified include/header.h (which is authorized by include/ prefix but undeclared)
         res = self.run_runner("developer", completion, actual_files_to_touch=["include/header.h"])
         self.assertNotEqual(res.returncode, 0)
-        
+
         record = self.get_last_run_record()
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["parsed_result"]["error_code"], "undeclared_actual_changes")
@@ -146,7 +220,7 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         }
         res = self.run_runner("buildfix-debugger", completion)
         self.assertNotEqual(res.returncode, 0)
-        
+
         record = self.get_last_run_record()
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["parsed_result"]["error_code"], "unauthorized_write_path")
@@ -161,7 +235,7 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         }
         res = self.run_runner("requirement-analyst", completion)
         self.assertNotEqual(res.returncode, 0)
-        
+
         record = self.get_last_run_record()
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["parsed_result"]["error_code"], "unauthorized_write_path")
@@ -187,7 +261,7 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         }
         res = self.run_runner("project-profiler", completion)
         self.assertEqual(res.returncode, 0)
-        
+
         record = self.get_last_run_record()
         self.assertEqual(record["result"], "success")
 
@@ -214,7 +288,7 @@ class TestRunnerDeltaIntegrity(unittest.TestCase):
         }
         res = self.run_runner("project-profiler", completion)
         self.assertNotEqual(res.returncode, 0)
-        
+
         record = self.get_last_run_record()
         self.assertEqual(record["result"], "failed")
         self.assertEqual(record["parsed_result"]["error_code"], "unauthorized_write_path")

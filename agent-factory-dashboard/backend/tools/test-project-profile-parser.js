@@ -26,7 +26,7 @@ try {
   console.log('Testing canonical-v2.json...');
   const canonicalData = readFixture('canonical-v2.json');
   const canonical = parseProjectProfileSummary(canonicalData);
-  
+
   assert.deepStrictEqual(canonical.build_commands, ['npm run build']);
   assert.deepStrictEqual(canonical.test_commands, ['npm test']);
   assert.strictEqual(canonical.risk_level, 'high');
@@ -38,7 +38,7 @@ try {
   console.log('Testing legacy-flat.json...');
   const legacyData = readFixture('legacy-flat.json');
   const legacy = parseProjectProfileSummary(legacyData);
-  
+
   assert.deepStrictEqual(legacy.build_commands, ['npm run build']);
   assert.deepStrictEqual(legacy.test_commands, ['npm test', 'npm run test:e2e']);
   assert.strictEqual(legacy.risk_level, 'medium');
@@ -48,7 +48,7 @@ try {
   console.log('Testing unsafe-command.json...');
   const unsafeData = readFixture('unsafe-command.json');
   const unsafe = parseProjectProfileSummary(unsafeData);
-  
+
   assert.deepStrictEqual(unsafe.build_commands, []);
   assert.deepStrictEqual(unsafe.test_commands, []);
   console.log('OK  unsafe-command.json');
@@ -57,13 +57,21 @@ try {
   console.log('Testing invalid commands format throwing...');
   const badData = JSON.parse(JSON.stringify(canonicalData));
   badData.commands.safe.build = "not an array";
-  
+
   assert.throws(() => {
     parseProjectProfileSummary(badData);
   }, ProjectProfileParseError);
   console.log('OK  invalid v2 commands checks');
 
-  console.log('\n── Results: All 4 parser tests passed ──');
+  // 5. Test Bare V2 Profile throwing
+  console.log('Testing bare V2 profile throwing...');
+  const bareV2 = { schema_version: 2 };
+  assert.throws(() => {
+    parseProjectProfileSummary(bareV2);
+  }, ProjectProfileParseError);
+  console.log('OK  bare v2 profile check');
+
+  console.log('\n── Results: All 5 parser tests passed ──');
   process.exit(0);
 } catch (err) {
   console.error('\nFAIL:', err);

@@ -44,11 +44,11 @@ def validate_code_review(report, adu_id, run_dir=None, json_mode=False):
                 verification_results = json.loads(verification_path.read_text(encoding="utf-8"))
             except Exception as e:
                 return fail("code-review", adu_id, "verification_parse_error", f"Failed to parse verification-results.json: {e}", json_mode=json_mode)
-            
+
             # Import and call validate_fact_consistency
             sys.path.append(str(Path(__file__).resolve().parent))
             from code_review_fact_gate import validate_fact_consistency
-            
+
             fact_res = validate_fact_consistency(verification_results, report)
             if not fact_res["valid"]:
                 err_msg = "; ".join(fact_res["errors"])

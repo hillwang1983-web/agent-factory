@@ -7,10 +7,21 @@ class WritePolicyError(ValueError):
 
 SENSITIVE_MONITORED_PATHS = [
     ".ai-agent/registry/projects.json",
-    ".ai-agent/registry/adus.json",
+    ".ai-agent/registry/adu.json",
     ".ai-agent/registry/agents.json",
     ".ai-agent/registry/runs.json",
-    ".ai-agent/registry/overrides.json"
+    ".ai-agent/registry/epics.json",
+    ".ai-agent/registry/operations.json",
+    ".ai-agent/registry/reviews.json",
+    ".ai-agent/registry/events.json",
+    ".ai-agent/registry/token-budget.json",
+    ".ai-agent/registry/intake-drafts.json",
+    ".ai-agent/registry/operator-actions.json",
+    ".ai-agent/registry/operator-audit-logs.json",
+    ".ai-agent/registry/operator-overrides.json",
+    ".ai-agent/registry/write-path-expansion-requests.json",
+    ".ai-agent/registry/artifact-edits.json",
+    ".ai-agent/registry/agent-model-settings.json"
 ]
 
 FORBIDDEN_PREFIXES = (
@@ -27,23 +38,23 @@ FORBIDDEN_PREFIXES = (
 def normalize_repo_path(path_value: str) -> str:
     if not path_value:
         raise WritePolicyError("Path cannot be empty.")
-    
+
     # Check for absolute path
     if path_value.startswith("/") or os.path.isabs(path_value):
         raise WritePolicyError(f"Absolute paths are forbidden: {path_value}")
-        
+
     # Replace backslashes
     cleaned = path_value.replace("\\", "/")
-    
+
     # Check for directory traversal / escape
     parts = cleaned.split("/")
     if ".." in parts:
         raise WritePolicyError(f"Path traversal '..' is forbidden: {path_value}")
-        
+
     norm = os.path.normpath(cleaned).replace("\\", "/")
     if norm == "." or norm == "":
         raise WritePolicyError(f"Root path '.' or empty is forbidden: {path_value}")
-        
+
     return norm
 
 @dataclass(frozen=True)
@@ -98,7 +109,7 @@ def build_agent_write_policy(
             except WritePolicyError as e:
                 # '.' or empty is forbidden
                 raise WritePolicyError(f"Invalid developer allowed write path '{p}': {e}")
-            
+
             if p.endswith("/"):
                 # Must ensure suffix / is retained in prefix matching
                 directory_prefixes.append(norm + "/")
@@ -139,20 +150,23 @@ def authorize_declared_and_actual_changes(
     actual_delta: dict,
     runner_owned_paths: list[str],
 ) -> WriteAuthorizationResult:
+    unauthorized = set()
     declared = set()
     for p in declared_paths:
         try:
-            declared.add(normalize_repo_path(p))
+            norm = normalize_repo_path(p)
+            declared.add(norm)
         except WritePolicyError:
-            pass
+            unauthorized.add(p)
 
     actual = set()
     for key in ("created", "modified", "deleted"):
         for p in actual_delta.get(key, []):
             try:
-                actual.add(normalize_repo_path(p))
+                norm = normalize_repo_path(p)
+                actual.add(norm)
             except WritePolicyError:
-                pass
+                unauthorized.add(p)
 
     runner_owned = set()
     for p in runner_owned_paths:
@@ -164,7 +178,6 @@ def authorize_declared_and_actual_changes(
     agent_declared_runner = declared & runner_owned
     agent_actual = actual - runner_owned
 
-    unauthorized = set()
     for p in declared | agent_actual:
         if not policy.allows(p):
             unauthorized.add(p)

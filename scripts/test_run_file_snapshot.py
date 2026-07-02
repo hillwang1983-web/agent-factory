@@ -18,7 +18,7 @@ class TestRunFileSnapshot(unittest.TestCase):
         # We create a temporary Git repository for each test
         self.tmpdir = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.tmpdir.name)
-        
+
         # Initialize Git repo
         subprocess.run(["git", "init"], cwd=str(self.repo_root), capture_output=True)
         # Git config
@@ -34,7 +34,7 @@ class TestRunFileSnapshot(unittest.TestCase):
         b_file = self.repo_root / "b.txt"
         a_file.write_text("initial a", encoding="utf-8")
         b_file.write_text("initial b", encoding="utf-8")
-        
+
         subprocess.run(["git", "add", "a.txt", "b.txt"], cwd=str(self.repo_root), capture_output=True)
         subprocess.run(["git", "commit", "-m", "initial"], cwd=str(self.repo_root), capture_output=True)
 
@@ -44,7 +44,7 @@ class TestRunFileSnapshot(unittest.TestCase):
         # 3. Perform modifications (modify a, delete b, create c)
         a_file.write_text("modified a", encoding="utf-8")
         b_file.unlink()
-        
+
         c_file = self.repo_root / "c.txt"
         c_file.write_text("created c", encoding="utf-8")
         subprocess.run(["git", "add", "c.txt"], cwd=str(self.repo_root), capture_output=True)
@@ -98,12 +98,12 @@ class TestRunFileSnapshot(unittest.TestCase):
         # 1. Setup gitignore to ignore .agent-factory/
         gitignore = self.repo_root / ".gitignore"
         gitignore.write_text(".agent-factory/\n", encoding="utf-8")
-        
+
         subprocess.run(["git", "add", ".gitignore"], cwd=str(self.repo_root), capture_output=True)
         subprocess.run(["git", "commit", "-m", "ignore agent-factory"], cwd=str(self.repo_root), capture_output=True)
 
         target = ".agent-factory/project-profile.json"
-        
+
         # 2. Capture baseline with target specified
         baseline = run_file_snapshot.capture_repository_baseline(self.repo_root, [target], [])
         self.assertIn(target, baseline["exact_target_hashes"])
@@ -139,7 +139,7 @@ class TestRunFileSnapshot(unittest.TestCase):
         def mock_sha(path):
             called_paths.append(str(path))
             return original_sha(path)
-        
+
         run_file_snapshot.sha256_file = mock_sha
         try:
             # 4. Capture baseline
@@ -155,7 +155,7 @@ class TestRunFileSnapshot(unittest.TestCase):
         reg_file = self.repo_root / ".ai-agent" / "registry" / "adus.json"
         reg_file.parent.mkdir(parents=True, exist_ok=True)
         reg_file.write_text("{}", encoding="utf-8")
-        
+
         subprocess.run(["git", "add", ".ai-agent/registry/adus.json"], cwd=str(self.repo_root), capture_output=True)
         subprocess.run(["git", "commit", "-m", "init registry"], cwd=str(self.repo_root), capture_output=True)
 

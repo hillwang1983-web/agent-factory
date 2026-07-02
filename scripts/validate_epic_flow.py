@@ -40,7 +40,7 @@ def is_read_only_operation(op: dict) -> bool:
 def check_clarification_consistency(data: dict, clarifications: list):
     # 1. Answered clarifications
     answered_clarifications = [c for c in clarifications if c.get("status") == "answered"]
-    
+
     # 2. SHA-256 helper
     import hashlib
     def get_sha256(text: str) -> str:
@@ -59,7 +59,7 @@ def check_clarification_consistency(data: dict, clarifications: list):
     # Check 2: answered clarifications must have traceability
     traceability = data.get("clarification_traceability", [])
     trace_hashes = {t.get("question_hash") for t in traceability if t.get("question_hash")}
-    
+
     for cq in answered_clarifications:
         cq_hash = get_sha256(cq["question"])
         if cq_hash not in trace_hashes:
@@ -68,7 +68,7 @@ def check_clarification_consistency(data: dict, clarifications: list):
     # Validate applied_to targets in traceability
     op_ids = {op.get("id") for op in data.get("business_operations", [])}
     acceptance_pts = data.get("acceptance_points", [])
-    
+
     for t in traceability:
         applied = t.get("applied_to", [])
         if not isinstance(applied, list) or len(applied) == 0:
@@ -168,7 +168,7 @@ def main():
         script_dir.parent / ".ai-agent" / "registry" / "epics.json",
         Path.cwd() / ".ai-agent" / "registry" / "epics.json",
     ]
-    
+
     epics_data = None
     for path in registry_candidates:
         if path.exists():

@@ -1664,87 +1664,14 @@ def main():
         except ValueError:
             pass
 
-        if os.environ.get("MOCK_HERMES_RUN") == "1":
-            mock_comp_env = os.environ.get("MOCK_COMPLETION_RESULT")
-            if mock_comp_env:
-                completion_result_custom = json.loads(mock_comp_env)
-                completion_data = {
-                    "version": 1,
-                    "status": completion_result_custom.get("status") or completion_result_custom.get("result") or "success",
-                    "result": completion_result_custom
-                }
-            else:
-                completion_data = {
-                    "version": 1,
-                    "status": "success",
-                    "result": {
-                        "result": "success",
-                        "next_state": "project_profiled" if args.agent == "project-profiler" else "implemented",
-                        "changed_files": [
-                            str(Path(f).relative_to(project_repo_path)).replace("\\", "/")
-                            for f in target_files
-                        ],
-                        "artifacts": [
-                            str(Path(f).relative_to(project_repo_path)).replace("\\", "/")
-                            for f in target_files
-                        ],
-                        "next_agent": None
-                    }
-                }
-            with completion_file.open("w", encoding="utf-8") as cf:
-                json.dump(completion_data, cf, indent=2)
-            
-            # Write files declared in changed_files relative to repo
-            for relative_file in completion_data["result"].get("changed_files", []):
-                p = project_repo_path / relative_file
-                p.parent.mkdir(parents=True, exist_ok=True)
-                if p.name == "project-profile.json":
-                    profile_content = {
-                        "schema_version": 2,
-                        "project_id": adu["id"],
-                        "project_type": "node-app",
-                        "detected_stack": [{"language": "typescript", "percentage": 100}],
-                        "commands": {
-                            "safe": {
-                                "build": [{"id": "build", "command": "npm run build", "source": "package.json"}],
-                                "test": [{"id": "test", "command": "npm test", "source": "package.json"}]
-                            },
-                            "ambiguous": [],
-                            "unsafe": []
-                        },
-                        "risk_profile": {"risk_level": "high", "reasons": []}
-                    }
-                    with p.open("w", encoding="utf-8") as pf:
-                        json.dump(profile_content, pf, indent=2)
-                else:
-                    p.write_text("mock content", encoding="utf-8")
-            # Touch files specified in MOCK_TOUCH_FILES to simulate actual changes
-            touch_env = os.environ.get("MOCK_TOUCH_FILES")
-            if touch_env:
-                for f in json.loads(touch_env):
-                    p = project_repo_path / f
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_text("modified during mock run", encoding="utf-8")
-
-            class MockProc:
-                stdout = "mock stdout"
-                stderr = "mock stderr"
-                returncode = 0
-                completion_status = "valid"
-                completion_result = completion_data["result"]
-                termination_reason = "completion_signal"
-                pid = 99999
-                target_files_changed = True
-            proc = MockProc()
-        else:
-            proc = agent_run_policy.execute_controlled_process(
-                attempt_cmd,
-                cwd_path,
-                attempt_env,
-                policy,
-                target_files=target_files,
-                completion_file=completion_file
-            )
+        proc = agent_run_policy.execute_controlled_process(
+            attempt_cmd,
+            cwd_path,
+            attempt_env,
+            policy,
+            target_files=target_files,
+            completion_file=completion_file
+        )
 
         delta = run_file_snapshot.calculate_repository_delta(project_repo_path, baseline)
         snapshot_after = run_file_snapshot.capture_repository_baseline(
@@ -1971,7 +1898,7 @@ def main():
                 run_result = "failed"
                 result["result"] = "failed"
                 result["error_code"] = authorization.error_code
-                
+
                 # Format error messages for compatibility with expected outputs
                 errs = []
                 if authorization.error_code == "unauthorized_write_path":
@@ -1986,13 +1913,13 @@ def main():
                 elif authorization.error_code == "agent_declared_runner_owned_path":
                     for p in authorization.unauthorized_paths:
                         errs.append(f"agent declared runner owned path: {p}")
-                        
+
                 result["error"] = "; ".join(errs)
                 result["file_declaration_errors"] = errs
                 result["undeclared_paths"] = list(authorization.undeclared_paths)
                 result["unchanged_declarations"] = list(authorization.unchanged_declarations)
                 result["unauthorized_paths"] = list(authorization.unauthorized_paths)
-                
+
                 with (run_dir / "stderr.md").open("a", encoding="utf-8") as stderr_file:
                     stderr_file.write("\n".join(errs))
                     stderr_file.write("\n")

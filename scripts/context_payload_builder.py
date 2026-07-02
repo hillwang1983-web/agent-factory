@@ -15,7 +15,7 @@ CONTEXT_LEVELS = {
 def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max_prompt_bytes):
     # Dynamic imports to avoid circular dependency
     import hermes_agent_run
-    
+
     profile = hermes_agent_run.load_project_profile(repo_path) if repo_path else {}
     knowledge = hermes_agent_run.load_knowledge_pack(repo_path) if repo_path else {}
 
@@ -24,7 +24,7 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
         profile_path = repo_path / ".agent-factory" / "project-profile.json"
         if profile_path.exists():
             sources.append({"path": ".agent-factory/project-profile.json", "bytes": profile_path.stat().st_size})
-        
+
         k_dir = repo_path / ".agent-factory" / "knowledge"
         if k_dir.exists():
             for f in k_dir.glob("**/*"):
@@ -36,7 +36,7 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
                         pass
 
     level = CONTEXT_LEVELS.get(agent_name, "focused")
-    
+
     payload = {
         "agent": agent_name,
         "adu": adu,
@@ -48,7 +48,7 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
             pruned_profile["tech_stack"] = profile.get("tech_stack", {})
             pruned_profile["build_commands"] = profile.get("build_commands", [])
             pruned_profile["test_commands"] = profile.get("test_commands", [])
-            
+
             allowed_paths = adu.get("allowed_write_paths", []) + adu.get("allowed_read_paths", [])
             module_map = profile.get("module_map", {})
             pruned_modules = {}
@@ -64,7 +64,7 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
                 if matched:
                     pruned_modules[mod_name] = mod_info
             pruned_profile["module_map"] = pruned_modules
-            
+
             risk_paths = profile.get("risk_paths", {})
             pruned_risks = {}
             for rp, risk_info in risk_paths.items():
@@ -73,7 +73,7 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
                         pruned_risks[rp] = risk_info
                         break
             pruned_profile["risk_paths"] = pruned_risks
-        
+
         payload["project_profile"] = pruned_profile
 
         pruned_knowledge = {}
@@ -89,10 +89,10 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
                         if k_stem in ap.lower():
                             relates = True
                             break
-                
+
                 if relates:
                     pruned_knowledge[k] = v[:2000] if isinstance(v, str) else v
-            
+
         payload["knowledge_pack"] = pruned_knowledge
     else:
         payload["project_profile"] = profile
@@ -100,9 +100,9 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
 
     # Deduplicate: do not duplicate allowed paths in payload["artifact_paths"]
     # We will only put unique keys or omit payload["artifact_paths"] duplication
-    
+
     payload_str = json.dumps(payload, ensure_ascii=False)
-    
+
     # Watchdog on payload size (hard gate)
     if len(payload_str) > max_prompt_bytes:
         # Step 1: Compress knowledge pack further to 500 chars
@@ -111,19 +111,19 @@ def build_focused_payload(agent_name, adu, project_info, repo_path, run_dir, max
                 if isinstance(payload["knowledge_pack"][k], str):
                     payload["knowledge_pack"][k] = payload["knowledge_pack"][k][:500]
         payload_str = json.dumps(payload, ensure_ascii=False)
-        
+
         if len(payload_str) > max_prompt_bytes:
             # Step 2: Remove module_map and risk_paths
             if "project_profile" in payload:
                 payload["project_profile"].pop("module_map", None)
                 payload["project_profile"].pop("risk_paths", None)
             payload_str = json.dumps(payload, ensure_ascii=False)
-            
+
             if len(payload_str) > max_prompt_bytes:
                 # Step 3: Remove knowledge_pack entirely
                 payload.pop("knowledge_pack", None)
                 payload_str = json.dumps(payload, ensure_ascii=False)
-                
+
                 if len(payload_str) > max_prompt_bytes:
                     print(f"CONTEXT_BUDGET_EXCEEDED: payload size ({len(payload_str)} bytes) exceeds policy max limit ({max_prompt_bytes})", file=sys.stderr)
                     raise RuntimeError("CONTEXT_BUDGET_EXCEEDED")

@@ -115,6 +115,10 @@ class TestProjectProfileContract(unittest.TestCase):
         self.assertEqual(normalized["project_id"], "canonical-project")
         self.assertEqual(normalized["risk_profile"]["risk_level"], "high")
 
+    def test_normalize_profile_document_v2_invalid(self):
+        with self.assertRaises(ProjectProfileContractError):
+            normalize_profile_document({"schema_version": 2})
+
     def test_normalize_profile_document_legacy(self):
         legacy_raw = load_fixture("legacy-flat.json")
         normalized = normalize_profile_document(legacy_raw)
@@ -130,7 +134,7 @@ class TestProjectProfileContract(unittest.TestCase):
         import tempfile
         import sys
         import subprocess
-        
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             # Create repo structure
@@ -138,21 +142,21 @@ class TestProjectProfileContract(unittest.TestCase):
             repo_dir.mkdir()
             import subprocess
             subprocess.run(["git", "init"], cwd=str(repo_dir), capture_output=True)
-            
+
             agent_factory_dir = repo_dir / ".agent-factory"
             agent_factory_dir.mkdir()
-            
+
             # Write canonical-v2.json to project-profile.json
             profile_json_path = agent_factory_dir / "project-profile.json"
             v2_fixture = load_fixture("canonical-v2.json")
             with profile_json_path.open("w", encoding="utf-8") as f:
                 json.dump(v2_fixture, f)
-                
+
             # Create projects registry
             registry_dir = tmp_path / "registry"
             registry_dir.mkdir()
             projects_json_path = registry_dir / "projects.json"
-            
+
             # Copy all files from real .ai-agent/registry/ to tmp registry
             real_workspace = Path(__file__).resolve().parents[1]
             real_registry = real_workspace / ".ai-agent" / "registry"
@@ -161,7 +165,7 @@ class TestProjectProfileContract(unittest.TestCase):
                 for f in real_registry.iterdir():
                     if f.is_file() and f.name != "projects.json":
                         shutil.copy(str(f), str(registry_dir / f.name))
-            
+
             # Set up matching project in projects.json
             registry_data = {
                 "version": 1,
@@ -173,17 +177,76 @@ class TestProjectProfileContract(unittest.TestCase):
                     }
                 ]
             }
+            # Create a bin folder with mock hermes script
+            bin_dir = tmp_path / "bin"
+            bin_dir.mkdir()
+            mock_hermes_path = bin_dir / "hermes"
+
+            mock_hermes_content = """#!/usr/bin/env python3
+import os
+import sys
+import json
+from pathlib import Path
+
+repo_path = Path(os.getcwd())
+runs_dir = repo_path / ".ai-agent" / "runs"
+latest_run_dir = None
+if runs_dir.exists():
+    subdirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    if subdirs:
+        latest_run_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
+
+if latest_run_dir:
+    completion_data = {
+        "version": 1,
+        "status": "success",
+        "result": {
+            "result": "success",
+            "next_state": "project_profiled",
+            "changed_files": [
+                ".agent-factory/project-profile.json",
+                ".agent-factory/knowledge/project-summary.md",
+                ".agent-factory/knowledge/module-map.md",
+                ".agent-factory/knowledge/test-strategy.md",
+                ".agent-factory/knowledge/risk-map.md"
+            ],
+            "artifacts": [],
+            "next_agent": None,
+            "commands_run": [],
+            "risks": []
+        }
+    }
+    with open(latest_run_dir / "completion_att1.json", "w", encoding="utf-8") as f:
+        json.dump(completion_data, f, indent=2)
+
+    profile_data = json.loads(os.environ.get("MOCK_PROFILE_DATA", "{}"))
+    p_path = repo_path / ".agent-factory" / "project-profile.json"
+    p_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(p_path, "w", encoding="utf-8") as f:
+        json.dump(profile_data, f, indent=2)
+
+    k_dir = repo_path / ".agent-factory" / "knowledge"
+    k_dir.mkdir(parents=True, exist_ok=True)
+    for doc in ["project-summary.md", "module-map.md", "test-strategy.md", "risk-map.md"]:
+        (k_dir / doc).write_text("mock document", encoding="utf-8")
+
+sys.exit(0)
+"""
+            mock_hermes_path.write_text(mock_hermes_content, encoding="utf-8")
+            mock_hermes_path.chmod(0o755)
+
             with projects_json_path.open("w", encoding="utf-8") as f:
                 json.dump(registry_data, f)
-                
+
             # Run hermes_project_profile.py as a subprocess
             script_path = Path(__file__).resolve().parent / "hermes_project_profile.py"
             real_workspace = Path(__file__).resolve().parents[1]
             env = os.environ.copy()
             env["AGENT_FACTORY_PROJECTS_REGISTRY"] = str(projects_json_path)
             env["AGENT_FACTORY_WORKSPACE"] = str(real_workspace)
-            env["MOCK_HERMES_RUN"] = "1"
-            
+            env["MOCK_PROFILE_DATA"] = json.dumps(v2_fixture)
+            env["PATH"] = str(bin_dir) + os.path.pathsep + env.get("PATH", "")
+
             res = subprocess.run(
                 [sys.executable, str(script_path), "--project", "canonical-project"],
                 env=env,
@@ -191,18 +254,18 @@ class TestProjectProfileContract(unittest.TestCase):
                 text=True
             )
             self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}\n{res.stdout}")
-            
+
             # Assert registry updated
             with projects_json_path.open("r", encoding="utf-8") as f:
                 updated_registry = json.load(f)
-                
+
             project = updated_registry["projects"][0]
             self.assertEqual(project["status"], "profiled")
             summary = project["profile_summary"]
             self.assertEqual(summary["build_commands"], ["npm run build"])
             self.assertEqual(summary["test_commands"], ["npm test"])
             self.assertEqual(summary["risk_level"], "high")
-            
+
             # Assert project-profile.json on disk is canonicalized V2 and contains schema_version 2
             with profile_json_path.open("r", encoding="utf-8") as f:
                 disk_profile = json.load(f)

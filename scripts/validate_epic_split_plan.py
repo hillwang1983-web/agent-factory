@@ -80,7 +80,7 @@ def check_split_semantics(data: dict, profile_data: dict, system_flow_data: dict
     coverage = data.get("acceptance_coverage", [])
     if not isinstance(coverage, list):
         fail("acceptance_coverage must be an array")
-        
+
     covered_ids = set()
     for idx, cov in enumerate(coverage):
         acc_id = cov.get("acceptance_id")
@@ -93,7 +93,7 @@ def check_split_semantics(data: dict, profile_data: dict, system_flow_data: dict
             if adu_id not in adu_ids:
                 fail(f"acceptance_coverage[{idx}] references unknown child ADU: {adu_id}")
         covered_ids.add(acc_id)
-        
+
     if system_flow_data:
         sf_pts = system_flow_data.get("acceptance_points", [])
         for pt in sf_pts:
@@ -167,7 +167,7 @@ def check_split_semantics(data: dict, profile_data: dict, system_flow_data: dict
                         break
                 if hit_risk:
                     break
-                    
+
             if hit_risk:
                 justification = adu.get("risk_justification")
                 if not justification or justification.strip() == "":

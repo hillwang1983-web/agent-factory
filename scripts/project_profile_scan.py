@@ -87,15 +87,15 @@ def scan_repo(project_id, repo_path):
     source_dirs = set()
     test_dirs = set()
     risk_paths = []
-    
+
     total_files = 0
     total_lines_of_code = 0
-    
+
     # Simple walk
     for root, dirs, files in os.walk(repo_path):
         # Filter ignored directories in-place to avoid descending
         dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
-        
+
         # Determine relative folder from repo root
         rel_folder = os.path.relpath(root, repo_path)
         if rel_folder == ".":
@@ -127,7 +127,7 @@ def scan_repo(project_id, repo_path):
                                 pkg_mgr = "pnpm"
                             elif os.path.exists(os.path.join(repo_path, "yarn.lock")):
                                 pkg_mgr = "yarn"
-                            
+
                             run_cmd = f"{pkg_mgr} run {s_name}" if s_name not in ("test", "start", "install") else f"{pkg_mgr} {s_name}"
                             if s_name == "build":
                                 discovered_commands["build"].append(run_cmd)
@@ -262,7 +262,7 @@ def main():
     args = parser.parse_args()
 
     result = scan_repo(args.project_id, args.repo)
-    
+
     # Write output JSON
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

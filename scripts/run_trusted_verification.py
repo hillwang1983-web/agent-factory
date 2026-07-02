@@ -110,15 +110,15 @@ def main():
     for idx, (cmd, decision) in enumerate(evaluated):
         record = commands_records[idx]
         record["started_at"] = iso_now()
-        
+
         argv = shlex.split(decision.normalized_command)
-        
+
         stdout_rel = f"verification/command-{idx+1:03d}.stdout.log"
         stderr_rel = f"verification/command-{idx+1:03d}.stderr.log"
-        
+
         stdout_file = run_dir / stdout_rel
         stderr_file = run_dir / stderr_rel
-        
+
         try:
             completed = subprocess.run(
                 argv,
@@ -146,16 +146,16 @@ def main():
         record["finished_at"] = iso_now()
         record["exit_code"] = exit_code
         record["timed_out"] = timed_out
-        
+
         # Write outputs
         stdout_file.write_text(stdout_text, encoding="utf-8")
         stderr_file.write_text(stderr_text, encoding="utf-8")
-        
+
         record["stdout_path"] = stdout_rel
         record["stderr_path"] = stderr_rel
         record["stdout_sha256"] = compute_sha256(stdout_text)
         record["stderr_sha256"] = compute_sha256(stderr_text)
-        
+
         if exit_code != 0:
             final_exit_code = 1
             # Write final results and stop executing subsequent commands

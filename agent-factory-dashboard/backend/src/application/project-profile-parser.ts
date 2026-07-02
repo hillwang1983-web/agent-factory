@@ -59,6 +59,70 @@ function extractCommandsFromLegacy(commandsVal: any, defaultIdPrefix: string): a
   return extracted;
 }
 
+function validateV2Profile(profile: any): void {
+  if (!profile.project_id || typeof profile.project_id !== 'string' || !profile.project_id.trim()) {
+    throw new ProjectProfileParseError('Missing or invalid project_id in V2 profile.');
+  }
+  if (!profile.project_type || typeof profile.project_type !== 'string' || !profile.project_type.trim()) {
+    throw new ProjectProfileParseError('Missing or invalid project_type in V2 profile.');
+  }
+
+  if (!profile.detected_stack || !Array.isArray(profile.detected_stack)) {
+    throw new ProjectProfileParseError('Missing or invalid detected_stack in V2 profile.');
+  }
+  profile.detected_stack.forEach((item: any, idx: number) => {
+    if (!item || typeof item !== 'object' || !item.language || typeof item.language !== 'string' || !item.language.trim() || typeof item.percentage !== 'number') {
+      throw new ProjectProfileParseError(`Invalid detected_stack item at index ${idx} in V2 profile.`);
+    }
+  });
+
+  if (!profile.commands || typeof profile.commands !== 'object') {
+    throw new ProjectProfileParseError('Missing or invalid commands in V2 profile.');
+  }
+  const commands = profile.commands;
+  if (!commands.safe || typeof commands.safe !== 'object') {
+    throw new ProjectProfileParseError('Missing or invalid commands.safe in V2 profile.');
+  }
+  if (!commands.safe.build || !Array.isArray(commands.safe.build) || !commands.safe.test || !Array.isArray(commands.safe.test)) {
+    throw new ProjectProfileParseError('Missing or invalid commands.safe.build/test in V2 profile.');
+  }
+  if (!commands.ambiguous || !Array.isArray(commands.ambiguous)) {
+    throw new ProjectProfileParseError('Missing or invalid commands.ambiguous in V2 profile.');
+  }
+  if (!commands.unsafe || !Array.isArray(commands.unsafe)) {
+    throw new ProjectProfileParseError('Missing or invalid commands.unsafe in V2 profile.');
+  }
+
+  const checkCmdItem = (item: any, path: string) => {
+    if (!item || typeof item !== 'object') {
+      throw new ProjectProfileParseError(`Command item under ${path} must be an object.`);
+    }
+    const keys: ('id' | 'command' | 'source')[] = ['id', 'command', 'source'];
+    keys.forEach(k => {
+      if (!item[k] || typeof item[k] !== 'string' || !item[k].trim()) {
+        throw new ProjectProfileParseError(`Missing or invalid ${k} in command item under ${path}.`);
+      }
+    });
+  };
+
+  commands.safe.build.forEach((item: any, idx: number) => checkCmdItem(item, `commands.safe.build[${idx}]`));
+  commands.safe.test.forEach((item: any, idx: number) => checkCmdItem(item, `commands.safe.test[${idx}]`));
+  commands.ambiguous.forEach((item: any, idx: number) => checkCmdItem(item, `commands.ambiguous[${idx}]`));
+  commands.unsafe.forEach((item: any, idx: number) => checkCmdItem(item, `commands.unsafe[${idx}]`));
+
+  if (!profile.risk_profile || typeof profile.risk_profile !== 'object') {
+    throw new ProjectProfileParseError('Missing or invalid risk_profile in V2 profile.');
+  }
+  const rp = profile.risk_profile;
+  const validRiskLevels = ['low', 'medium', 'high', 'unknown'];
+  if (!rp.risk_level || typeof rp.risk_level !== 'string' || !validRiskLevels.includes(rp.risk_level)) {
+    throw new ProjectProfileParseError('Missing or invalid risk_level in risk_profile in V2 profile.');
+  }
+  if (!rp.reasons || !Array.isArray(rp.reasons) || !rp.reasons.every((x: any) => typeof x === 'string')) {
+    throw new ProjectProfileParseError('Missing or invalid reasons in risk_profile in V2 profile.');
+  }
+}
+
 export function parseProjectProfileSummary(parsed: unknown): ProjectProfileSummary {
   if (!parsed || typeof parsed !== 'object') {
     throw new ProjectProfileParseError('Profile must be a non-null object');
@@ -66,6 +130,9 @@ export function parseProjectProfileSummary(parsed: unknown): ProjectProfileSumma
 
   const profile = parsed as any;
   const isV2 = profile.schema_version === 2;
+  if (isV2) {
+    validateV2Profile(profile);
+  }
 
   // 1. Project Type
   const projectType = String(profile.project_type || 'unknown');
@@ -155,7 +222,7 @@ export function parseProjectProfileSummary(parsed: unknown): ProjectProfileSumma
     const safeObj = commandsObj.safe || {};
     buildCommandsRaw = safeObj.build || [];
     testCommandsRaw = safeObj.test || [];
-    
+
     if (!Array.isArray(buildCommandsRaw) || !Array.isArray(testCommandsRaw)) {
       throw new ProjectProfileParseError('V2 profile commands.safe.build/test must be arrays');
     }

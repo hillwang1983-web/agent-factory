@@ -16,13 +16,13 @@ def run_tests():
         "allowed_read_paths": ["lib/app/ogs-license.c"],
         "allowed_write_paths": ["lib/app/ogs-license.c"]
     }
-    
+
     project_info = {
         "project_id": "open5gs"
     }
 
     import hermes_agent_run
-    
+
     orig_profile = getattr(hermes_agent_run, "load_project_profile", None)
     orig_knowledge = getattr(hermes_agent_run, "load_knowledge_pack", None)
 
@@ -131,7 +131,7 @@ def run_tests():
         except RuntimeError as exc:
             if "CONTEXT_BUDGET_EXCEEDED" in str(exc):
                 threw = True
-        
+
         assert threw, "Expected CONTEXT_BUDGET_EXCEEDED"
 
         print("✅ All Context Payload Builder Tests Passed!")

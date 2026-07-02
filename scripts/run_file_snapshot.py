@@ -34,7 +34,7 @@ def parse_porcelain_status(status_out: str) -> tuple[set[tuple[str, str]], set[s
     entries = status_out.split("\x00") if status_out else []
     dirty_tracked = set()
     untracked = set()
-    
+
     idx = 0
     while idx < len(entries):
         entry = entries[idx]
@@ -43,7 +43,7 @@ def parse_porcelain_status(status_out: str) -> tuple[set[tuple[str, str]], set[s
             continue
         xy = entry[:2]
         path_str = entry[3:]
-        
+
         # If renamed/copied
         if "R" in xy or "C" in xy:
             idx += 1
@@ -53,6 +53,10 @@ def parse_porcelain_status(status_out: str) -> tuple[set[tuple[str, str]], set[s
             dirty_tracked.add((xy, path_str))
         elif xy == "??":
             untracked.add(path_str)
+        elif xy == "!!":
+            # Only monitor ignored files in .agent-factory/ or .ai-agent/ to prevent scanning node_modules/build/dist
+            if path_str.startswith(".agent-factory/") or path_str.startswith(".ai-agent/"):
+                untracked.add(path_str)
         else:
             dirty_tracked.add((xy, path_str))
         idx += 1
@@ -64,13 +68,13 @@ def capture_repository_baseline(
     sensitive_targets: list[str],
 ) -> dict:
     git_root = get_git_root(repo_root)
-    
+
     try:
         head = run_git(["rev-parse", "HEAD"], repo_root).strip()
     except Exception:
         head = None
 
-    status_out = run_git(["status", "--porcelain", "-uall", "-z"], repo_root)
+    status_out = run_git(["status", "--porcelain", "--ignored", "-uall", "-z"], repo_root)
     dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
     pre_dirty_hashes = {}
@@ -113,7 +117,7 @@ def capture_repository_baseline(
     }
 
 def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
-    status_out = run_git(["status", "--porcelain", "-uall", "-z"], repo_root)
+    status_out = run_git(["status", "--porcelain", "--ignored", "-uall", "-z"], repo_root)
     dirty_tracked_entries, untracked_entries = parse_porcelain_status(status_out)
 
     created = set()
@@ -122,14 +126,14 @@ def calculate_repository_delta(repo_root: Path, baseline: dict) -> dict:
 
     # Tracked files handling
     pre_dirty_hashes = baseline.get("pre_dirty_hashes", {})
-    
+
     # We also keep track of what files were seen in git status
     seen_in_status = set()
 
     for xy, p in dirty_tracked_entries:
         seen_in_status.add(p)
         full_path = repo_root / p
-        
+
         if "D" in xy:
             deleted.add(p)
         elif "A" in xy:

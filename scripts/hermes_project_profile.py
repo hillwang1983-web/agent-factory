@@ -100,7 +100,7 @@ def main():
     # 2. Run deterministic scan
     scan_out_path = f"/tmp/{args.project}-scan.json"
     scan_script = os.path.join(workspace_root, "scripts", "project_profile_scan.py")
-    
+
     scan_ok, scan_stdout, scan_stderr = run_cmd([
         "python3", scan_script,
         "--project-id", args.project,
@@ -126,7 +126,7 @@ def main():
     # 4. Validate output files
     profile_json_path = os.path.join(repo_path, ".agent-factory", "project-profile.json")
     knowledge_dir = os.path.join(repo_path, ".agent-factory", "knowledge")
-    
+
     req_docs = [
         "project-summary.md",
         "module-map.md",

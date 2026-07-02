@@ -8,7 +8,7 @@ import validate_epic_flow
 
 def run_tests():
     print("Running validate_epic_flow clarification tests...")
-    
+
     # Set mock fail
     def mock_fail(msg):
         raise AssertionError(msg)

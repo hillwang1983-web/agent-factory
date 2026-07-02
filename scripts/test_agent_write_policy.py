@@ -12,7 +12,7 @@ class TestAgentWritePolicy(unittest.TestCase):
     def test_normalize_repo_path(self):
         self.assertEqual(normalize_repo_path("src/allowed.c"), "src/allowed.c")
         self.assertEqual(normalize_repo_path("src\\allowed.c"), "src/allowed.c")
-        
+
         with self.assertRaises(WritePolicyError):
             normalize_repo_path("/src/allowed.c")
         with self.assertRaises(WritePolicyError):
