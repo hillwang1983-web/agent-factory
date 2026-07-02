@@ -37,6 +37,20 @@ def setup_temp_registry():
     registry = Path(tmp) / "registry"
     registry.mkdir(parents=True)
 
+    subprocess.run(["git", "init"], cwd=tmp, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=tmp,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp,
+        check=True,
+        capture_output=True,
+    )
+
     # Write epics.json with a test Epic
     epics_data = {
         "version": 1,

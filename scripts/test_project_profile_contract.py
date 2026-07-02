@@ -166,6 +166,12 @@ class TestProjectProfileContract(unittest.TestCase):
                     if f.is_file() and f.name != "projects.json":
                         shutil.copy(str(f), str(registry_dir / f.name))
 
+            # Runtime registries are intentionally not tracked, so a clean CI
+            # checkout must seed the files required by the runner explicitly.
+            (registry_dir / "runs.json").write_text(
+                json.dumps({"version": 1, "runs": []}), encoding="utf-8"
+            )
+
             # Set up matching project in projects.json
             registry_data = {
                 "version": 1,
