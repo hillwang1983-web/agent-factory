@@ -1,66 +1,66 @@
 {
   "requirement-analyst": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
   },
   "context-pack": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "detail-designer": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
   },
   "contract": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
   },
   "testwriter": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "developer": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "buildfix-debugger": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "evidence": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "code-reviewer": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
   },
   "acceptance-reviewer": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro"
   },
   "project-profiler": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "adu-intake-agent": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "system-flow-designer": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "adu-splitter": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "rework-planner": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   },
   "epic-acceptance-reviewer": {
-    "provider": "vertexai",
-    "model": "google/gemini-3.5-flash"
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
   }
 }

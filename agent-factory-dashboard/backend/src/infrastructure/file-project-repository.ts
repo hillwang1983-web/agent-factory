@@ -4,6 +4,7 @@ import pino from 'pino';
 import os from 'os';
 import { ProjectRepository } from '../domain/project-repository';
 import { AgentFactoryProject, RegisterProjectInput, ProjectStatus } from '../domain/project';
+import { parseProjectProfileSummary } from '../application/project-profile-parser';
 
 export class FileProjectRepository implements ProjectRepository {
   private readonly registryPath: string;
@@ -37,94 +38,7 @@ export class FileProjectRepository implements ProjectRepository {
     this.logger = logger.child({ component: 'FileProjectRepository' });
   }
 
-  private parseProfileSummary(parsed: any): AgentFactoryProject['profile_summary'] {
-    let detectedStack = parsed.detected_stack || [];
-    if (detectedStack.length > 0 && typeof detectedStack[0] === 'string') {
-      detectedStack = detectedStack.map((lang: any) => ({
-        language: lang,
-        percentage: Math.round(100 / Math.max(detectedStack.length, 1))
-      }));
-    } else if ((!detectedStack || detectedStack.length === 0) && parsed.stack) {
-      const langs = parsed.stack.languages || [];
-      detectedStack = langs.map((lang: string) => ({
-        language: lang,
-        percentage: Math.round(100 / Math.max(langs.length, 1))
-      }));
-    } else if ((!detectedStack || detectedStack.length === 0) && parsed.tech_stack) {
-      const primary = parsed.tech_stack.primary_language;
-      const secondary = parsed.tech_stack.secondary_languages || [];
-      const langs: string[] = [];
-      if (primary) {
-        langs.push(primary.split(' ')[0].toLowerCase());
-      }
-      for (const s of secondary) {
-        const cleaned = s.toLowerCase();
-        if (cleaned === 'node.js') {
-          langs.push('javascript');
-        } else {
-          langs.push(cleaned);
-        }
-      }
-      const uniqueLangs = Array.from(new Set(langs));
-      detectedStack = uniqueLangs.map((lang: string) => ({
-        language: lang,
-        percentage: Math.round(100 / Math.max(uniqueLangs.length, 1))
-      }));
-      const totalPct = detectedStack.reduce((sum: number, item: any) => sum + item.percentage, 0);
-      if (totalPct > 0 && totalPct !== 100 && detectedStack.length > 0) {
-        detectedStack[0].percentage += (100 - totalPct);
-      }
-    }
 
-    let projectType = parsed.project_type || 'unknown';
-    if (projectType === 'unknown' && parsed.tech_stack) {
-      const buildSystem = parsed.tech_stack.build_system || '';
-      const primaryLang = parsed.tech_stack.primary_language || '';
-      if (buildSystem.toLowerCase() === 'meson' || buildSystem.toLowerCase() === 'cmake' || primaryLang.toLowerCase().startsWith('c')) {
-        projectType = 'c-cpp-project';
-      }
-    }
-
-    let riskLevel = parsed.risk_level || 'unknown';
-    if (riskLevel === 'unknown') {
-      if (parsed.risk_map && parsed.risk_map.high_risk_paths) {
-        const count = parsed.risk_map.high_risk_paths.length;
-        riskLevel = count >= 5 ? 'high' : count >= 2 ? 'medium' : 'low';
-      } else if (parsed.risks) {
-        const count = parsed.risks.length;
-        riskLevel = count >= 5 ? 'high' : count >= 2 ? 'medium' : 'low';
-      }
-    }
-
-    let buildCommandsRaw = parsed.discovered_commands?.build || parsed.commands?.build || [];
-    let buildCommands: string[] = [];
-    if (Array.isArray(buildCommandsRaw)) {
-      buildCommands = buildCommandsRaw;
-    } else if (buildCommandsRaw && typeof buildCommandsRaw === 'object') {
-      buildCommands = Object.values(buildCommandsRaw);
-    } else if (typeof buildCommandsRaw === 'string') {
-      buildCommands = [buildCommandsRaw];
-    }
-
-    let testCommandsRaw = parsed.discovered_commands?.test || parsed.commands?.test || [];
-    let testCommands: string[] = [];
-    if (Array.isArray(testCommandsRaw)) {
-      testCommands = testCommandsRaw;
-    } else if (testCommandsRaw && typeof testCommandsRaw === 'object') {
-      testCommands = Object.values(testCommandsRaw);
-    } else if (typeof testCommandsRaw === 'string') {
-      testCommands = [testCommandsRaw];
-    }
-
-    return {
-      detected_stack: detectedStack,
-      project_type: projectType,
-      risk_level: riskLevel,
-      build_commands: buildCommands,
-      test_commands: testCommands,
-      scan_summary: parsed.scan_summary || {},
-    };
-  }
 
   private async ensureRegistryExists(): Promise<void> {
     try {
@@ -151,13 +65,15 @@ export class FileProjectRepository implements ProjectRepository {
         // If project-profile exists, we can set status to profiled
         try {
           await fs.access(defaultProject.profile_path!);
-          defaultProject.status = 'profiled';
           const profileData = await fs.readFile(defaultProject.profile_path!, 'utf-8');
           const parsed = JSON.parse(profileData);
-          defaultProject.profile_summary = this.parseProfileSummary(parsed);
+          defaultProject.profile_summary = parseProjectProfileSummary(parsed);
+          defaultProject.status = 'profiled';
           defaultProject.last_profiled_at = new Date().toISOString();
-        } catch {
-          // No profile found, leave status as registered
+        } catch (err) {
+          if (err instanceof Error && err.name === 'ProjectProfileParseError') {
+            defaultProject.status = 'profile_failed';
+          }
         }
 
         const data = {
@@ -183,20 +99,34 @@ export class FileProjectRepository implements ProjectRepository {
       const parsed = JSON.parse(data) as { projects?: AgentFactoryProject[] };
       const projects = parsed.projects || [];
 
-      // Dynamic status validation based on existence of profile_path
+      // Dynamic status validation based on existence of profile_path and summary recovery
       for (const p of projects) {
-        if (p.status !== 'registered') {
-          continue;
-        }
+        let parsedProfile: any = null;
         if (p.profile_path) {
           try {
             await fs.access(p.profile_path);
-            p.status = 'profiled';
+            if (p.status === 'registered') {
+              p.status = 'profiled';
+            }
             const profileData = await fs.readFile(p.profile_path, 'utf-8');
-            const parsedProfile = JSON.parse(profileData);
-            p.profile_summary = this.parseProfileSummary(parsedProfile);
+            parsedProfile = JSON.parse(profileData);
           } catch {
             // Profile not found/readable, status remains whatever it was
+          }
+        }
+
+        if (parsedProfile) {
+          const needsRefresh = !p.profile_summary || (
+            p.profile_summary.risk_level === 'unknown' &&
+            p.profile_summary.build_commands.length === 0 &&
+            p.profile_summary.test_commands.length === 0
+          );
+          if (needsRefresh) {
+            try {
+              p.profile_summary = parseProjectProfileSummary(parsedProfile);
+            } catch (err) {
+              p.status = 'profile_failed';
+            }
           }
         }
       }

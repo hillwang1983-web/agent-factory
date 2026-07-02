@@ -5,6 +5,30 @@ import json
 import argparse
 import subprocess
 from datetime import datetime
+from pathlib import Path
+
+# Ensure local script directory is in sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from project_profile_contract import (
+    normalize_profile_document,
+    normalize_profile_summary,
+    ProjectProfileContractError
+)
+
+def write_json_atomic(path, data):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, target)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
 
 def load_projects(projects_json_path):
     if not os.path.exists(projects_json_path):
@@ -133,116 +157,6 @@ def main():
     try:
         with open(profile_json_path, "r", encoding="utf-8") as f:
             profile_data = json.load(f)
-            
-        llm_langs = []
-        if "detected_stack" in profile_data:
-            if isinstance(profile_data["detected_stack"], list):
-                for item in profile_data["detected_stack"]:
-                    if isinstance(item, str):
-                        llm_langs.append(item.lower())
-                    elif isinstance(item, dict) and "language" in item:
-                        llm_langs.append(item["language"].lower())
-        elif "stack" in profile_data and "languages" in profile_data["stack"]:
-            llm_langs = [l.lower() for l in profile_data["stack"]["languages"]]
-        elif "tech_stack" in profile_data:
-            primary = profile_data["tech_stack"].get("primary_language", "")
-            secondary = profile_data["tech_stack"].get("secondary_languages", [])
-            if primary:
-                llm_langs.append(primary.split(" ")[0].lower())
-            for s in secondary:
-                llm_langs.append(s.lower())
-
-        # Normalize names
-        normalized_llm_langs = []
-        for lang in llm_langs:
-            lang = lang.replace("node.js", "javascript").replace("c++", "cpp").strip()
-            if lang:
-                normalized_llm_langs.append(lang)
-        normalized_llm_langs = list(dict.fromkeys(normalized_llm_langs))
-
-        # 5.2 Read language breakdown from the deterministic scan file
-        scan_langs = {}
-        if os.path.exists(scan_out_path):
-            try:
-                with open(scan_out_path, "r", encoding="utf-8") as sf:
-                    scan_data = json.load(sf)
-                    for item in scan_data.get("language_breakdown", []):
-                        l_name = item["language"].lower().replace("c++", "cpp").replace("node.js", "javascript").strip()
-                        scan_langs[l_name] = item.get("bytes", 0)
-            except Exception as se:
-                print(f"Warning: Failed to load scan summary: {se}", file=sys.stderr)
-
-        # 5.3 Compute percentages based on byte size (fallback to equal split if no scan info or no bytes)
-        detected_stack = []
-        if scan_langs and normalized_llm_langs:
-            lang_bytes = {}
-            total_bytes = 0
-            for lang in normalized_llm_langs:
-                b = scan_langs.get(lang, 0)
-                lang_bytes[lang] = b
-                total_bytes += b
-
-            if total_bytes > 0:
-                for lang in normalized_llm_langs:
-                    pct = round((lang_bytes[lang] / total_bytes) * 100)
-                    detected_stack.append({"language": lang, "percentage": pct})
-                
-                # Ensure a minimum of 1% for any language identified by the LLM
-                for item in detected_stack:
-                    if item["percentage"] < 1:
-                        item["percentage"] = 1
-                
-                # Adjust sum to exactly 100%
-                total_pct = sum(item["percentage"] for item in detected_stack)
-                if total_pct != 100 and len(detected_stack) > 0:
-                    max_item = max(detected_stack, key=lambda x: x["percentage"])
-                    max_item["percentage"] += (100 - total_pct)
-            
-        if not detected_stack and normalized_llm_langs:
-            pct = round(100 / max(len(normalized_llm_langs), 1))
-            detected_stack = [{"language": lang, "percentage": pct} for lang in normalized_llm_langs]
-            total_pct = sum(item["percentage"] for item in detected_stack)
-            if total_pct != 100 and len(detected_stack) > 0:
-                detected_stack[0]["percentage"] += (100 - total_pct)
-
-        project_type = profile_data.get("project_type", "unknown")
-        if project_type == "unknown" and "tech_stack" in profile_data:
-            build_system = profile_data["tech_stack"].get("build_system", "").lower()
-            primary_lang = profile_data["tech_stack"].get("primary_language", "").lower()
-            if build_system in ("meson", "cmake") or primary_lang.startswith("c"):
-                project_type = "c-cpp-project"
-
-        risk_level = profile_data.get("risk_level", "unknown")
-        if risk_level == "unknown":
-            if "risk_map" in profile_data and "high_risk_paths" in profile_data["risk_map"]:
-                count = len(profile_data["risk_map"]["high_risk_paths"])
-                risk_level = "high" if count >= 5 else "medium" if count >= 2 else "low"
-            elif "risks" in profile_data:
-                count = len(profile_data["risks"])
-                risk_level = "high" if count >= 5 else "medium" if count >= 2 else "low"
-        
-        disc_cmds = profile_data.get("discovered_commands", {})
-        build_val = disc_cmds.get("build", [])
-        if (not build_val or len(build_val) == 0) and "commands" in profile_data:
-            build_val = profile_data["commands"].get("build", [])
-        
-        if isinstance(build_val, dict):
-            build_commands = list(build_val.values())
-        elif isinstance(build_val, str):
-            build_commands = [build_val]
-        else:
-            build_commands = build_val if build_val else []
-
-        test_val = disc_cmds.get("test", [])
-        if (not test_val or len(test_val) == 0) and "commands" in profile_data:
-            test_val = profile_data["commands"].get("test", [])
-            
-        if isinstance(test_val, dict):
-            test_commands = list(test_val.values())
-        elif isinstance(test_val, str):
-            test_commands = [test_val]
-        else:
-            test_commands = test_val if test_val else []
 
         # Load scan summary from deterministic scanner output
         scan_summary = {}
@@ -254,24 +168,24 @@ def main():
             except Exception as se:
                 print(f"Warning: Failed to load scan summary from {scan_out_path}: {se}", file=sys.stderr)
 
-        # Write the normalized values back to project-profile.json to keep in sync
-        profile_data["detected_stack"] = detected_stack
-        profile_data["project_type"] = project_type
-        profile_data["risk_level"] = risk_level
-        with open(profile_json_path, "w", encoding="utf-8") as pf:
-            json.dump(profile_data, pf, indent=2)
-            pf.write("\n")
+        if scan_summary:
+            profile_data["scan_summary"] = scan_summary
 
-        project["profile_summary"] = {
-            "detected_stack": detected_stack,
-            "project_type": project_type,
-            "risk_level": risk_level,
-            "build_commands": build_commands,
-            "test_commands": test_commands,
-            "scan_summary": scan_summary
-        }
+        # Normalize via Project Profile Contract
+        canonical_profile = normalize_profile_document(profile_data)
+        summary = normalize_profile_summary(canonical_profile)
+
+        # Write back canonical v2 atomically
+        write_json_atomic(profile_json_path, canonical_profile)
+
+        project["profile_summary"] = summary
+
     except Exception as e:
-        print(f"Warning: Failed to parse generated project-profile.json: {e}", file=sys.stderr)
+        print(f"Error: Failed to parse or normalize project profile: {e}", file=sys.stderr)
+        project["status"] = "profile_failed"
+        project["updated_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        save_projects(projects_json_path, registry)
+        sys.exit(1)
 
     project["status"] = "profiled"
     project["last_profiled_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

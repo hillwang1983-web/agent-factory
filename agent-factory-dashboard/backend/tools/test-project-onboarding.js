@@ -70,14 +70,23 @@ function setupTestDir() {
     'const knowledgeDir = path.join(factoryDir, "knowledge");',
     'fs.mkdirSync(knowledgeDir, { recursive: true });',
     'const profile = {',
+    '  schema_version: 2,',
+    '  project_id: "my-mock-project",',
+    '  project_type: "nodejs",',
     '  detected_stack: [',
     '    { language: "JavaScript", percentage: 100 }',
     '  ],',
-    '  project_type: "nodejs",',
-    '  risk_level: "low",',
-    '  discovered_commands: {',
-    '    build: ["npm run build"],',
-    '    test: ["npm test"]',
+    '  commands: {',
+    '    safe: {',
+    '      build: [{ id: "build", command: "npm run build", source: "package.json" }],',
+    '      test: [{ id: "test", command: "npm test", source: "package.json" }]',
+    '    },',
+    '    ambiguous: [],',
+    '    unsafe: [{ id: "deploy", command: "npm run deploy", source: "package.json" }]',
+    '  },',
+    '  risk_profile: {',
+    '    risk_level: "low",',
+    '    reasons: []',
     '  }',
     '};',
     'fs.writeFileSync(path.join(factoryDir, "project-profile.json"), JSON.stringify(profile, null, 2), "utf-8");',
@@ -90,6 +99,51 @@ function setupTestDir() {
     'reqDocs.forEach(doc => {',
     '  fs.writeFileSync(path.join(knowledgeDir, doc), "# Mock Doc\\nThis is a mock document.", "utf-8");',
     '});',
+    'const runsDir = path.join(repoPath, ".ai-agent", "runs");',
+    'console.log("DEBUG: runsDir =", runsDir);',
+    'if (fs.existsSync(runsDir)) {',
+    '  const subdirs = fs.readdirSync(runsDir).map(d => path.join(runsDir, d)).filter(p => fs.statSync(p).isDirectory());',
+    '  console.log("DEBUG: subdirs =", subdirs);',
+    '  const latestRunDir = subdirs.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];',
+    '  console.log("DEBUG: latestRunDir =", latestRunDir);',
+    '  if (latestRunDir) {',
+    '    try {',
+    '      const completionData = {',
+    '        version: 1,',
+    '        status: "success",',
+    '        result: {',
+    '          result: "success",',
+    '          next_state: "project_profiled",',
+    '          changed_files: [',
+    '            ".agent-factory/project-profile.json",',
+    '            ".agent-factory/knowledge/project-summary.md",',
+    '            ".agent-factory/knowledge/module-map.md",',
+    '            ".agent-factory/knowledge/test-strategy.md",',
+    '            ".agent-factory/knowledge/risk-map.md"',
+    '          ],',
+    '          artifacts: [',
+    '            ".agent-factory/project-profile.json",',
+    '            ".agent-factory/knowledge/project-summary.md",',
+    '            ".agent-factory/knowledge/module-map.md",',
+    '            ".agent-factory/knowledge/test-strategy.md",',
+    '            ".agent-factory/knowledge/risk-map.md"',
+    '          ],',
+    '          commands_run: [],',
+    '          risks: [],',
+    '          next_agent: null',
+    '        }',
+    '      };',
+    '      const compPath = path.join(latestRunDir, "completion_att1.json");',
+    '      const fd = fs.openSync(compPath, "w");',
+    '      fs.writeSync(fd, JSON.stringify(completionData, null, 2), 0, "utf-8");',
+    '      fs.fsyncSync(fd);',
+    '      fs.closeSync(fd);',
+    '      console.log("DEBUG: wrote completion to", compPath);',
+    '    } catch (e) {',
+    '      console.error("DEBUG: failed to write completion:", e);',
+    '    }',
+    '  }',
+    '}',
     'console.log("\\n# Mock Output\\n\\n\`\`\`json\\n{\\n  \\\"result\\\": \\\"success\\\",\\n  \\\"status\\\": \\\"success\\\",\\n  \\\"token_usage\\\": {\\n    \\\"inputTokens\\\": 120,\\n    \\\"outputTokens\\\": 80,\\n    \\\"totalTokens\\\": 200\\n  }\\n}\\n\`\`\`\\n");',
     'process.exit(0);'
   ].join('\n');
@@ -200,6 +254,12 @@ async function runTests() {
     assert.ok(profile.detected_stack.some(s =>
       (typeof s === 'string' ? s : (s.language || '')).toLowerCase() === 'javascript'
     ));
+
+    const summary = profiledProj.profile_summary;
+    assert.ok(summary, 'profile_summary should exist');
+    assert.deepStrictEqual(summary.build_commands, ['npm run build']);
+    assert.deepStrictEqual(summary.test_commands, ['npm test']);
+    assert.strictEqual(summary.risk_level, 'low');
 
     const knowledgeList = await onboarding.getProjectKnowledgeList(project.project_id);
     assert.ok(knowledgeList.includes('project-summary.md'));
@@ -320,6 +380,69 @@ async function runTests() {
     // 再次判定，发现 Git dirty 异常，应拦截
     assert.strictEqual(mockGitDirtyCheck(mockProjDir), false, '无法检测到非预期源码篡改');
     console.log('✅ 场景 5 通过: 物理状态防源码篡改越权拦截测试成功\n');
+
+    // ==========================================
+    // 场景 6: 已有项目空摘要动态恢复测试
+    // ==========================================
+    console.log('--- 场景 6: 已有项目空摘要动态恢复测试 ---');
+    // Write valid project-profile.json inside mockProjDir/.agent-factory
+    const mockFactoryDir = path.join(mockProjDir, '.agent-factory');
+    fs.mkdirSync(mockFactoryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(mockFactoryDir, 'project-profile.json'),
+      JSON.stringify({
+        schema_version: 2,
+        project_id: 'empty-summary-project',
+        project_type: 'nodejs',
+        detected_stack: [{ language: 'JavaScript', percentage: 100 }],
+        commands: {
+          safe: {
+            build: [{ id: 'build', command: 'npm run build', source: 'package.json' }],
+            test: [{ id: 'test', command: 'npm test', source: 'package.json' }]
+          },
+          ambiguous: [],
+          unsafe: []
+        },
+        risk_profile: { risk_level: 'low', reasons: [] }
+      }, null, 2),
+      'utf-8'
+    );
+
+    const emptySummaryProj = {
+      project_id: 'empty-summary-project',
+      name: 'Empty Summary Project',
+      repo_path: mockProjDir,
+      git_root: mockProjDir,
+      default_branch: 'main',
+      status: 'profiled',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      profile_path: path.join(mockProjDir, '.agent-factory', 'project-profile.json'),
+      knowledge_dir: path.join(mockProjDir, '.agent-factory', 'knowledge'),
+      last_profiled_at: new Date().toISOString(),
+      profile_summary: {
+        detected_stack: [],
+        project_type: '',
+        risk_level: 'unknown',
+        build_commands: [],
+        test_commands: []
+      }
+    };
+
+    // Update projects.json directly
+    const currentRegistry = JSON.parse(fs.readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
+    currentRegistry.projects.push(emptySummaryProj);
+    fs.writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(currentRegistry, null, 2), 'utf-8');
+
+    // listProjects should dynamically recover it
+    const listed = await projectRepo.listProjects();
+    const recovered = listed.find(p => p.project_id === 'empty-summary-project');
+    assert.ok(recovered);
+    assert.ok(recovered.profile_summary);
+    assert.deepStrictEqual(recovered.profile_summary.build_commands, ['npm run build']);
+    assert.deepStrictEqual(recovered.profile_summary.test_commands, ['npm test']);
+    assert.strictEqual(recovered.profile_summary.risk_level, 'low');
+    console.log('✅ 场景 6 通过: 空摘要项目自动恢复\n');
 
     // 清理临时 Git 项目
     fs.rmSync(mockProjDir, { recursive: true, force: true });

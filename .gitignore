@@ -57,6 +57,7 @@ __pycache__/
 node_modules/
 dist/
 build/
+agent-factory-dashboard/backend/build-info.json
 *.tsbuildinfo
 .vite/
 

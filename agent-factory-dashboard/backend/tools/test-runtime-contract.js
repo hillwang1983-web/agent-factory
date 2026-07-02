@@ -44,6 +44,9 @@ assert('runtime-info returns valid phase and api_version', () => {
   if (!controllerCode.includes('phase:') || !controllerCode.includes('api_version:')) {
     throw new Error('RuntimeInfo interface missing required fields');
   }
+  if (!controllerCode.includes('dirty:')) {
+    throw new Error('RuntimeInfo interface missing dirty build-state field');
+  }
   if (controllerCode.includes("'3.7'") && controllerCode.includes("'2026-06-19'")) {
     // OK — correct phase and API version
   } else {

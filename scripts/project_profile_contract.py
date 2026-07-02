@@ -174,7 +174,10 @@ def normalize_profile_summary(profile: dict) -> dict:
                 test_commands.append(cmd_cleaned)
 
     return {
+        "detected_stack": canonical.get("detected_stack") or [],
+        "project_type": canonical.get("project_type") or "unknown-type",
+        "risk_level": risk_level,
         "build_commands": build_commands,
         "test_commands": test_commands,
-        "risk_level": risk_level
+        "scan_summary": canonical.get("scan_summary") or {}
     }
